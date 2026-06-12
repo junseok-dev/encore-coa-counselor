@@ -1,0 +1,53 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Deploy
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          CHANNEL_TALK_URL: ${{ secrets.CHANNEL_TALK_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_PROJECT: ${{ secrets.LANGSMITH_PROJECT }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+        run: |
+          cd ~/document-chatbot_practice
+          git fetch origin
+          git reset --hard origin/main
+          cat > backend/.env << EOF
+          OPENAI_API_KEY=$OPENAI_API_KEY
+          ENCRYPTION_KEY=$ENCRYPTION_KEY
+          ADMIN_PASSWORD=$ADMIN_PASSWORD
+          MODEL_NAME=gpt-5.4-nano
+          CHANNEL_TALK_URL=$CHANNEL_TALK_URL
+          DATABASE_URL=$DATABASE_URL
+          AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+          AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+          AWS_REGION=ap-northeast-2
+          AWS_S3_BUCKET=$AWS_S3_BUCKET
+          AWS_S3_PREFIX=document-chatbot
+          LANGSMITH_API_KEY=$LANGSMITH_API_KEY
+          LANGSMITH_PROJECT=$LANGSMITH_PROJECT
+          LANGSMITH_TRACING_V2=true
+          GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
+          JWT_SECRET=$JWT_SECRET
+          ADMIN_EMAIL=$ADMIN_EMAIL
+          EOF
+          echo "VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID" > frontend/.env
+          source backend/venv/bin/activate
+          pip install -r backend/requirements.txt
+          cd frontend && npm install && npm run build
+          sudo systemctl restart chatbot
