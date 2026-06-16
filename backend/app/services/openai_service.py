@@ -4,13 +4,23 @@ from typing import AsyncGenerator
 from langsmith import traceable
 from openai import AsyncOpenAI
 
+try:
+    from langsmith.wrappers import wrap_openai
+except Exception:  # langsmith 버전이 낮아 wrappers가 없으면 패스스루(앱 기동 실패 방지)
+    def wrap_openai(_client):
+        return _client
+
 from app.config import get_settings
 from app.services.model_settings import get_active_model
 from app.services.prompt_service import get_prompt_value
 from app.services.response_formatter import format_chat_response
 
 settings = get_settings()
-client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
+# wrap_openai로 감싸 모든 OpenAI 호출(라우터/의도/생성/스트리밍/verify)을 LangSmith에 자동 추적한다.
+# 라이브 스트리밍 경로(stream_ai_response)와 router_service.route()는 @traceable을 거치지 않고
+# 이 공유 client를 직접 쓰므로, 데코레이터 대신 client 자체를 래핑해야 trace가 남는다.
+# 트레이싱이 꺼져 있으면 wrap_openai는 사실상 패스스루로 동작한다.
+client = wrap_openai(AsyncOpenAI(api_key=settings.openai_api_key)) if settings.openai_api_key else None
 MAX_COMPLETION_TOKENS = 4096
 BUBBLE_PAUSE_SECONDS = 1.0
 TYPE_DELAY_SECONDS = 0.015
