@@ -1,0 +1,102 @@
+{
+  "documents": [
+    {
+      "path": "national_training_card_regulation.md",
+      "title": "국민내일배움카드 운영규정",
+      "category": "국민내일배움카드 발급",
+      "source": "국민내일배움카드 운영규정.pdf"
+    },
+    {
+      "path": "national_training_card_eligibility.md",
+      "title": "국민내일배움카드 발급자격",
+      "category": "국민내일배움카드 발급",
+      "source": "국민내일배움카드_발급자격.pdf"
+    },
+    {
+      "path": "vocational_training_regulation.md",
+      "title": "직업능력개발훈련 운영규정",
+      "category": "HRD-Net 수강신청",
+      "source": "직업능력개발훈련 운영규정.pdf"
+    },
+    {
+      "path": "course_ai_orchestration.md",
+      "title": "멀티 에이전트 AI 오케스트레이션 캠프 상세",
+      "category": "교육 프로그램",
+      "source": "과정상세내용_AI 오케스트레이션.pdf"
+    },
+    {
+      "path": "course_mlops.md",
+      "title": "AI Ready 데이터 엔지니어링 캠프 상세",
+      "category": "교육 프로그램",
+      "source": "과정상세내용_MLOps 엔지니어.pdf"
+    },
+    {
+      "path": "course_ml_engineer.md",
+      "title": "데이터 분석 & AI 머신러닝 캠프 상세",
+      "category": "교육 프로그램",
+      "source": "과정상세내용_머신러닝 엔지니어.pdf"
+    },
+    {
+      "path": "playdata_intro.md",
+      "title": "엔코아 ai 캠퍼스 기관 정보 소개",
+      "category": "교육대상",
+      "source": "엔코아 ai 캠퍼스_기관정보_소개서.pdf"
+    },
+    {
+      "path": "campus_info.md",
+      "title": "엔코아 ai 캠퍼스 캠퍼스 정보",
+      "category": "교육대상",
+      "source": "엔코아 ai 캠퍼스 캠퍼스 정보.pdf"
+    },
+    {
+      "path": "homepage_intro.md",
+      "title": "엔코아 ai 캠퍼스 홈페이지 소개",
+      "category": "인터뷰 문의",
+      "source": "엔코아 ai 캠퍼스_홈페이지_소개.pdf"
+    }
+  ],
+  "categories": [
+    {
+      "id": "interview",
+      "label": "인터뷰 문의",
+      "description": "인터뷰 방식, 질문 유형, 선발 기준, 합격 발표 안내",
+      "query": "엔코아 AI 캠퍼스 인터뷰는 어떻게 진행되나요?"
+    },
+    {
+      "id": "program",
+      "label": "교육 프로그램",
+      "description": "3가지 과정 소개, 커리큘럼, 교육 기간, 수업 방식 안내",
+      "query": "엔코아 AI 캠퍼스 교육 프로그램을 소개해 주세요"
+    },
+    {
+      "id": "target",
+      "label": "교육대상",
+      "description": "지원 자격, 나이·전공 제한, 비전공자·경력자 지원 가능 여부",
+      "query": "엔코아 AI 캠퍼스 교육 대상이 어떻게 되나요?"
+    },
+    {
+      "id": "selection",
+      "label": "교육생 선발",
+      "description": "선발 절차, 입과 순서, 추가선발 대기 안내",
+      "query": "엔코아 AI 캠퍼스 교육생 선발 과정이 어떻게 되나요?"
+    },
+    {
+      "id": "employment",
+      "label": "취업지원",
+      "description": "취업 지원 프로그램, 채용 연계, 우수 수료생 혜택",
+      "query": "엔코아 AI 캠퍼스 취업 지원 프로그램이 궁금해요"
+    },
+    {
+      "id": "hrd",
+      "label": "HRD-Net 수강신청",
+      "description": "고용24 수강신청 방법, 신청 기한, 수료 조건, 훈련장려금",
+      "query": "고용24 수강신청은 어떻게 하나요?"
+    },
+    {
+      "id": "card",
+      "label": "국민내일배움카드 발급",
+      "description": "내일배움카드 발급 방법, 발급 자격, KDT 수강 조건",
+      "query": "국민내일배움카드 발급은 어떻게 하나요?"
+    }
+  ]
+}
