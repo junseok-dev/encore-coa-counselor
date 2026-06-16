@@ -89,17 +89,17 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 - '취업률 몇 %/취업 퍼센트' 처럼 수치만 묻는 것 = faq_btn_002b(취업률). 그 외 '취업 지원'은 faq_btn_005.
 - '교육 프로그램/과정 소개해줘, 어떤 과정 있어' = faq_btn_002(프로그램 소개). 취업률(002b)과 헷갈리지 마세요.
 - '세 과정 차이/비교/뭐가 달라' = rag(문서 비교). guide가 아님.
-- 'AI 오케스트레이션/머신러닝/MLOps 과정 알려줘/소개/커리큘럼/어떤 사람한테 맞아' = 직접 FAQ가 아니므로 rag(과정 상세는 문서에서). 단 '과정 일정/개강'은 schedule.
+- '멀티 에이전트 AI 오케스트레이션 캠프(오케스트레이션)/데이터 분석 & AI 머신러닝 캠프(머신러닝)/AI Ready 데이터 엔지니어링 캠프(MLOps·데이터 엔지니어링) 알려줘/소개/커리큘럼/어떤 사람한테 맞아' = 직접 FAQ가 아니므로 rag(과정 상세는 문서에서). 단 '과정 일정/개강'은 schedule.
 - '환불 규정/중도포기하면?/돈 돌려받아?' = 정보 질문 → faq(faq_031). '환불해줘/취소할래' = 처리 요청 → cancel.
 - guide는 사용자가 "무엇을 물어볼 수 있는지(메뉴/카테고리)"를 물을 때만. 구체적 주제(과정·선발·취업·환불 등)가 조금이라도 있으면 guide로 보내지 말고 해당 faq/rag로.
-- 직전 대화 맥락을 반영하세요. 예: 직전이 'AI 오케스트레이션 과정'인데 '그거 수강료는?' → rag, search_query="AI 오케스트레이션 과정 수강료", slots.course="AI 오케스트레이션".
+- 직전 대화 맥락을 반영하세요. 예: 직전이 '멀티 에이전트 AI 오케스트레이션 캠프'인데 '그거 수강료는?' → rag, search_query="멀티 에이전트 AI 오케스트레이션 캠프 수강료", slots.course="멀티 에이전트 AI 오케스트레이션 캠프".
 - 직전이 개강 일정인데 '서초 캠퍼스는?' → rag, search_query="서초 캠퍼스 위치/정보", slots.campus="서초".
 - 애매하면 faq로 단정하지 말고 rag 또는 guide.
 
 [예시]
 "안녕!" → {{"handler":"greeting","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.95}}
 "취업은 어떻게 지원해줘?" → {{"handler":"faq","faq_id":"faq_btn_005","search_query":null,"slots":{{}},"confidence":0.9}}
-"AI 오케스트레이션 과정 알려줘" → {{"handler":"rag","faq_id":null,"search_query":"AI 오케스트레이션 과정 소개 커리큘럼","slots":{{"course":"AI 오케스트레이션"}},"confidence":0.85}}
+"멀티 에이전트 AI 오케스트레이션 캠프 알려줘" → {{"handler":"rag","faq_id":null,"search_query":"멀티 에이전트 AI 오케스트레이션 캠프 소개 커리큘럼","slots":{{"course":"멀티 에이전트 AI 오케스트레이션 캠프"}},"confidence":0.85}}
 "환불 규정 알려줘" → {{"handler":"faq","faq_id":"faq_031","search_query":null,"slots":{{}},"confidence":0.85}}
 "환불해줘" → {{"handler":"cancel","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.9}}
 "상담사랑 통화할래" → {{"handler":"handoff","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.95}}

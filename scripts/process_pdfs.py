@@ -96,19 +96,19 @@ PDF_SPECS = [
     {
         "source": "과정상세내용_AI 오케스트레이션.pdf",
         "output": "course_ai_orchestration.md",
-        "title": "AI 오케스트레이션 과정 상세",
+        "title": "멀티 에이전트 AI 오케스트레이션 캠프 상세",
         "category_id": "course",
     },
     {
         "source": "과정상세내용_MLOps 엔지니어.pdf",
         "output": "course_mlops.md",
-        "title": "MLOps 엔지니어 과정 상세",
+        "title": "AI Ready 데이터 엔지니어링 캠프 상세",
         "category_id": "course",
     },
     {
         "source": "과정상세내용_머신러닝 엔지니어.pdf",
         "output": "course_ml_engineer.md",
-        "title": "머신러닝 엔지니어 과정 상세",
+        "title": "데이터 분석 & AI 머신러닝 캠프 상세",
         "category_id": "course",
     },
     {
@@ -133,7 +133,7 @@ PDF_SPECS = [
 
 COURSE_DETAILS = {
     "course_mlops.md": {
-        "name": "MLOps 엔지니어",
+        "name": "AI Ready 데이터 엔지니어링 캠프",
         "official_name": "AI Ready Data 기반 Cloud-Native 자동화를 위한 MLOps 엔지니어 양성 과정",
         "identity": "AI가 멈추지 않고 안정적으로 운영되도록 만드는 기술",
         "core_value": [
@@ -160,7 +160,7 @@ COURSE_DETAILS = {
         ],
     },
     "course_ml_engineer.md": {
-        "name": "머신러닝 엔지니어",
+        "name": "데이터 분석 & AI 머신러닝 캠프",
         "official_name": "LLM 지식 그래프 기반 지능형 GraphRAG 구축을 위한 머신러닝 엔지니어 양성 과정",
         "identity": "AI가 정확하게 답하고 추론하도록 만드는 기술",
         "core_value": [
@@ -187,7 +187,7 @@ COURSE_DETAILS = {
         ],
     },
     "course_ai_orchestration.md": {
-        "name": "AI 오케스트레이션",
+        "name": "멀티 에이전트 AI 오케스트레이션 캠프",
         "official_name": "Auto-Healing 멀티에이전트 워크플로우 기반 AI 오케스트레이션 애플리케이션 개발자 양성 과정",
         "identity": "상황에 맞게 여러 AI 에이전트를 설계하고 조율하는 기술",
         "core_value": [
@@ -915,14 +915,14 @@ def build_faq_json() -> dict:
                 faq_id,
                 "과정 상세",
                 "세 과정의 차이를 한 번에 설명해 주세요.",
-                "MLOps 엔지니어 과정은 모델 운영과 자동화, 머신러닝 엔지니어 과정은 RAG·GraphRAG와 검색 정확도 개선, AI 오케스트레이션 과정은 멀티에이전트와 워크플로우 설계에 초점이 있습니다.",
+                "AI Ready 데이터 엔지니어링 캠프는 모델 운영과 자동화, 데이터 분석 & AI 머신러닝 캠프는 RAG·GraphRAG와 검색 정확도 개선, 멀티 에이전트 AI 오케스트레이션 캠프는 멀티에이전트와 워크플로우 설계에 초점이 있습니다.",
                 ["과정 비교", "MLOps", "머신러닝", "AI 오케스트레이션"],
                 "system",
             ),
             build_faq_entry(
                 faq_id + 1,
                 "과정 상세",
-                "MLOps 엔지니어 과정은 어떤 사람에게 맞나요?",
+                "AI Ready 데이터 엔지니어링 캠프는 어떤 사람에게 맞나요?",
                 "모델 개발 이후 배포, 운영 자동화, CI/CD/CT, 모니터링까지 이어지는 파이프라인에 관심이 있는 사람에게 가장 잘 맞습니다.",
                 ["MLOps", "추천 대상", "운영 자동화"],
                 "system",
@@ -930,7 +930,7 @@ def build_faq_json() -> dict:
             build_faq_entry(
                 faq_id + 2,
                 "과정 상세",
-                "머신러닝 엔지니어 과정은 어떤 사람에게 맞나요?",
+                "데이터 분석 & AI 머신러닝 캠프는 어떤 사람에게 맞나요?",
                 "RAG, 지식 그래프, 검색 품질, 문서 기반 AI 시스템처럼 정확한 답변과 추론 구조를 설계하는 데 관심이 있는 사람에게 적합합니다.",
                 ["머신러닝", "RAG", "GraphRAG"],
                 "system",
@@ -938,7 +938,7 @@ def build_faq_json() -> dict:
             build_faq_entry(
                 faq_id + 3,
                 "과정 상세",
-                "AI 오케스트레이션 과정은 어떤 사람에게 맞나요?",
+                "멀티 에이전트 AI 오케스트레이션 캠프는 어떤 사람에게 맞나요?",
                 "여러 AI 에이전트를 설계하고 연결해 실제 업무 문제를 풀고 싶은 사람, AI 서비스 기획과 애플리케이션 구현을 함께 경험하고 싶은 사람에게 적합합니다.",
                 ["AI 오케스트레이션", "멀티에이전트", "서비스 기획"],
                 "system",
@@ -946,7 +946,7 @@ def build_faq_json() -> dict:
             build_faq_entry(
                 faq_id + 4,
                 "과정 상세",
-                "AI 오케스트레이션 과정의 프로젝트 예시는 무엇인가요?",
+                "멀티 에이전트 AI 오케스트레이션 캠프의 프로젝트 예시는 무엇인가요?",
                 "Auto-Healing 기반 장애 복구 에이전트, 기업형 비서·자산 관리 멀티에이전트, 금융 상담 에이전트, 시장 조사 자동화 에이전트 같은 프로젝트 예시가 상담 포인트로 적합합니다.",
                 ["AI 오케스트레이션", "프로젝트", "에이전트"],
                 "system",
@@ -954,7 +954,7 @@ def build_faq_json() -> dict:
             build_faq_entry(
                 faq_id + 5,
                 "과정 상세",
-                "MLOps 엔지니어 과정의 프로젝트 예시는 무엇인가요?",
+                "AI Ready 데이터 엔지니어링 캠프의 프로젝트 예시는 무엇인가요?",
                 "RAGOps 데이터 파이프라인, OCR 모델 자동 재학습, 카나리 배포와 모니터링, 데이터 검증 기반 이상 탐지, 모델 이력 관리 플랫폼 같은 예시로 설명할 수 있습니다.",
                 ["MLOps", "프로젝트", "배포", "모니터링"],
                 "system",
@@ -962,7 +962,7 @@ def build_faq_json() -> dict:
             build_faq_entry(
                 faq_id + 6,
                 "과정 상세",
-                "머신러닝 엔지니어 과정의 프로젝트 예시는 무엇인가요?",
+                "데이터 분석 & AI 머신러닝 캠프의 프로젝트 예시는 무엇인가요?",
                 "RAG 기반 질의응답 서비스, 규정 준수 검증 시스템, 커리어 가이드 서비스, 지식 그래프 기반 상담 에이전트처럼 검색과 추론 품질이 중요한 서비스 예시로 설명할 수 있습니다.",
                 ["머신러닝", "프로젝트", "RAG", "지식 그래프"],
                 "system",

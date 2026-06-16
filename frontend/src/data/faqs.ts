@@ -15,6 +15,6 @@ export const faqItems: FaqItem[] = [
     id: 'faq-schedule',
     question: '교육일정이 궁금해요',
     answer:
-      '엔코아 AI 캠퍼스의 교육 일정에 대해 안내해 드릴게요! 저희 과정은 과정별로 개강 일정과 교육이 진행되는 캠퍼스가 다르게 운영되고 있어요. 현재 예정된 개강 일정은 다음과 같으니 참고해주세요!\n\n[AI 오케스트레이션]\n- 2026.07.07 ~ 12.28 / 동작·G밸리캠퍼스\n- 📄 [코스 자세히 보기](https://encorecampus.ai/orchestration?utm_source=chatbot&utm_medium=referral&utm_campaign=orchestration)\n\n[머신러닝 엔지니어]\n- 2026.07.01 ~ 12.21 / 동작캠퍼스\n- 📄 [코스 자세히 보기](https://encorecampus.ai/ml?utm_source=chatbot&utm_medium=referral&utm_campaign=ml)\n\n[MLOps 엔지니어]\n- 2026.07.13 ~ 2027.01.04 / G밸리캠퍼스\n- 📄 [코스 자세히 보기](https://encorecampus.ai/mlops?utm_source=chatbot&utm_medium=referral&utm_campaign=mlops)',
+      '엔코아 AI 캠퍼스의 교육 일정에 대해 안내해 드릴게요! 저희 과정은 과정별로 개강 일정과 교육이 진행되는 캠퍼스가 다르게 운영되고 있어요. 현재 예정된 개강 일정은 다음과 같으니 참고해주세요!\n\n[멀티 에이전트 AI 오케스트레이션 캠프]\n- 2026.07.07 ~ 12.28 / 동작·G밸리캠퍼스\n- 📄 [코스 자세히 보기](https://encorecampus.ai/orchestration?utm_source=chatbot&utm_medium=referral&utm_campaign=orchestration)\n\n[데이터 분석 & AI 머신러닝 캠프]\n- 2026.07.01 ~ 12.21 / 동작캠퍼스\n- 📄 [코스 자세히 보기](https://encorecampus.ai/ml?utm_source=chatbot&utm_medium=referral&utm_campaign=ml)\n\n[AI Ready 데이터 엔지니어링 캠프]\n- 2026.07.13 ~ 2027.01.04 / G밸리캠퍼스\n- 📄 [코스 자세히 보기](https://encorecampus.ai/mlops?utm_source=chatbot&utm_medium=referral&utm_campaign=mlops)',
   },
 ];
