@@ -167,7 +167,26 @@ def _build_messages(system_prompt: str, user_message: str, history: list[dict]) 
     return msgs
 
 
-def _build_user_message(question: str, context: str, channel_talk_url: str | None = None) -> str:
+NO_REASK_DIRECTIVE = (
+    "[되묻기 금지 — 이번 턴, 매우 중요] 직전 답변에서 이미 확인 질문을 했고 사용자가 방금 거기에 답했습니다. "
+    "이번 답변은 **절대 질문으로 끝내지 마세요.** 양자택일·확인 질문('A에 가까워요, B에 가까워요?'·'어느 쪽이 더 가까울까요?'류)을 "
+    "추가로 던지는 것을 금지합니다. 지금까지 모인 정보로 핵심 답변과 결론을 구체적으로 제시한 뒤, 마지막 문장은 "
+    "물음표 없는 **명확한 다음 행동 안내**(예: 지원·신청 절차, 상담 매니저 연결)로 닫으세요. "
+    "정보가 일부 부족해도 되묻지 말고, 합리적 가정을 한 줄로 밝힌 뒤 그 가정 위에서 결론을 주세요.\n"
+)
+
+
+def _recent_assistant_question(history: list[dict] | None) -> bool:
+    """직전 어시스턴트 답변이 (확인용) 질문으로 끝났는지 — 되묻기 연쇄를 끊기 위한 신호."""
+    if not history:
+        return False
+    last = history[-1]
+    if (last.get("role") or "") != "assistant":
+        return False
+    return "?" in (last.get("content") or "")[-150:]
+
+
+def _build_user_message(question: str, context: str, channel_talk_url: str | None = None, no_reask: bool = False) -> str:
     homepage_url = (get_settings().homepage_url or "").strip()
     system_info_parts: list[str] = []
     if channel_talk_url:
@@ -184,9 +203,11 @@ def _build_user_message(question: str, context: str, channel_talk_url: str | Non
             "마크다운 링크를 한 줄 포함하세요. 자료에 충분한 답이 있으면 굳이 붙이지 않습니다."
         )
     system_info = ("\n\n[시스템 정보]\n" + "\n\n".join(system_info_parts)) if system_info_parts else ""
+    reask = NO_REASK_DIRECTIVE if no_reask else ""
 
     if not context:
-        return f"[사용자 질문]\n{question}{system_info}"
+        head = f"[답변 지침]\n{reask}\n" if reask else ""
+        return f"{head}[사용자 질문]\n{question}{system_info}"
 
     return (
         "[상담 참고 자료]\n"
@@ -203,7 +224,8 @@ def _build_user_message(question: str, context: str, channel_talk_url: str | Non
         "[상담 참고 자료]에서 확인되지 않으면 '네 맞아요'라고 동의하지 마세요. 대신 '그 부분은 지금 확인되는 자료 기준으로는 그렇게 단정하기 어려워요'라고 "
         "분명히 바로잡으세요. 앞 턴에서 당신이 한 답변이 지금 자료와 어긋나거나 자료에 없으면, 그대로 반복·확장하지 말고 정정하세요. "
         "특히 Kubernetes·ArgoCD·CI/CD·무중단 배포처럼 이 과정 자료에 없는 항목을 '쓴다/포함된다/필수다'로 확정하지 마세요. "
-        "단, 지금 자료에서 확인되는 사실(예: 교육비 0원, 6개월 등)은 자신 있게 그대로 인정하세요.\n\n"
+        "단, 지금 자료에서 확인되는 사실(예: 교육비 0원, 6개월 등)은 자신 있게 그대로 인정하세요.\n"
+        f"{reask}\n"
         "[사용자 질문]\n"
         f"{question}{system_info}"
     )
@@ -215,7 +237,8 @@ async def get_ai_response(question: str, context: str, history: list[dict] | Non
         return format_chat_response(STANDARD_REFUSAL), 0.0
 
     system_prompt = f"{get_prompt_value('counseling_prompt')}\n\n{CHAT_STYLE_GUIDE}"
-    messages = _build_messages(system_prompt, _build_user_message(question, context, channel_talk_url), history or [])
+    no_reask = _recent_assistant_question(history)
+    messages = _build_messages(system_prompt, _build_user_message(question, context, channel_talk_url, no_reask), history or [])
 
     response = await client.chat.completions.create(
         model=get_active_model(),
@@ -247,7 +270,8 @@ async def stream_ai_response(
         return
 
     system_prompt = f"{get_prompt_value('counseling_prompt')}\n\n{CHAT_STYLE_GUIDE}"
-    messages = _build_messages(system_prompt, _build_user_message(question, context, channel_talk_url), history or [])
+    no_reask = _recent_assistant_question(history)
+    messages = _build_messages(system_prompt, _build_user_message(question, context, channel_talk_url, no_reask), history or [])
 
     stream = await client.chat.completions.create(
         model=get_active_model(),
