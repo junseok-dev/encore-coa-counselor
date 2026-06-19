@@ -69,7 +69,7 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 - "rag": 과정 상세·커리큘럼·캠퍼스 위치 등 문서를 찾아 설명해야 하는데 딱 맞는 FAQ가 없을 때. search_query를 채우세요.
 - "cancel": 수강 취소·환불·일정 변경을 '요청'하는 경우(정보 질문이 아니라 처리 요청).
 - "handoff": 사람(상담 매니저)과 직접 상담하고 싶다는 요청. 강한 불만/항의도 여기.
-- "out_of_scope": 교육과 무관(날씨·일반상식·코드 자문 등). 법률(정의·해석·적용)도 여기 — 법 내용 자체는 안내하지 않음.
+- "out_of_scope": 교육과 무관(날씨·일반상식·코드 자문 등). 법률(정의·해석·적용)도 여기 — 법 내용 자체는 안내하지 않음. 단, 취업·취업연계·취업지원, 수료 후 진로·진출, 과정·커리큘럼·비용·혜택·선발·인터뷰처럼 엔코아 AI 캠퍼스 교육·진로와 조금이라도 관련된 질문은 절대 out_of_scope가 아니다(faq 또는 rag로).
 - "guide": "뭘 물어볼 수 있어?"처럼 메뉴/카테고리를 묻거나, 너무 모호해 무엇을 도울지 되물어야 할 때.
 
 [FAQ 후보 — faq일 때 이 중에서 faq_id를 고르세요. 의미가 정확히 맞지 않으면 faq 말고 rag]
@@ -85,7 +85,7 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 }}
 
 [중요 규칙]
-- '취업 지원/취업 도와줘/일자리 연결/수료 후 취업' = faq_btn_005(취업지원). '선발 과정/어떻게 뽑아/들어가려면 뭐부터' = faq_btn_004(선발). 둘을 섞지 마세요.
+- '취업 지원/취업 도와줘/일자리 연결/취업 연계/취업이 연계되어 있나/수료 후 취업·진로·진출/수료하면 어디로' = faq_btn_005(취업지원) — 이건 절대 out_of_scope가 아니다. '선발 과정/어떻게 뽑아/들어가려면 뭐부터' = faq_btn_004(선발). 둘을 섞지 마세요.
 - '취업률 몇 %/취업 퍼센트' 처럼 수치만 묻는 것 = faq_btn_002b(취업률). 그 외 '취업 지원'은 faq_btn_005.
 - '교육 프로그램/과정 소개해줘, 어떤 과정 있어' = faq_btn_002(프로그램 소개). 취업률(002b)과 헷갈리지 마세요.
 - '세 과정 차이/비교/뭐가 달라' = rag(문서 비교). guide가 아님.
@@ -104,6 +104,8 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 "환불해줘" → {{"handler":"cancel","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.9}}
 "상담사랑 통화할래" → {{"handler":"handoff","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.95}}
 "오늘 날씨 어때?" → {{"handler":"out_of_scope","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.9}}
+"취업이 연계되어 있나요?" → {{"handler":"faq","faq_id":"faq_btn_005","search_query":null,"slots":{{}},"confidence":0.9}}
+"수료하면 어디로 갈 수 있어?" → {{"handler":"faq","faq_id":"faq_btn_005","search_query":null,"slots":{{}},"confidence":0.85}}
 """
 
 
@@ -176,6 +178,52 @@ async def _route_llm(message, history, faqs, client, model) -> Optional[RouteDec
     )
 
 
+# LLM 라우팅 결과 보정용 ──────────────────────────────────────────
+# 운영 로그(5.5주) 분석에서, "취업이 연계되어 있나요?"·"수료하면 어디로 갈 수 있어?" 같은
+# 핵심 도메인 질문이 out_of_scope로 거절되거나, 저신뢰(conf<0.5) 추정이 메뉴(guide)로 단정되는
+# 오분류가 확인됨. 이런 경우 안전한 일반 경로(rag)로 강등해, retrieve의 reject_threshold가
+# '진짜 범위 밖'만 걸러내도록 둔다(범위 밖이면 RAG가 어차피 reject→유도응답으로 처리).
+CONFIDENCE_FLOOR = 0.5
+
+_IN_DOMAIN_SIGNALS = (
+    "취업", "연계", "진로", "진출", "커리큘럼", "수강", "수료", "장려금", "내일배움",
+    "선발", "인터뷰", "면접", "수강료", "교육비", "개강", "모집", "캠퍼스", "출석",
+    "출결", "코딩테스트", "프리코스", "자격증", "노트북", "강사", "멘토", "과정", "수업",
+)
+
+
+def _looks_in_domain(message: str) -> bool:
+    """엔코아 AI 캠퍼스 교육·진로와 명백히 관련된 신호가 있는지(오분류된 거절 방지용)."""
+    c = _compact(message)
+    return any(sig in c for sig in _IN_DOMAIN_SIGNALS)
+
+
+def _to_rag(decision: RouteDecision, message: str) -> RouteDecision:
+    decision.handler = "rag"
+    decision.search_query = decision.search_query or message
+    decision.faq_id = None
+    return decision
+
+
+def _guard_decision(decision: RouteDecision, message: str, history) -> RouteDecision:
+    """LLM 라우팅 오분류 보정. guardrail은 호출 전 단계에서 이미 처리됨."""
+    # 명시적으로 '뭘 물어볼 수 있어?'(메뉴 요청)면 guide 그대로 둔다.
+    if is_guide_query(message):
+        return decision
+    # 1) 도메인 질문인데 out_of_scope(거절)·guide(메뉴)로 빠졌으면 → rag
+    if decision.handler in ("out_of_scope", "guide") and _looks_in_domain(message):
+        return _to_rag(decision, message)
+    # 2) 후속 맥락에서 guide로 새는 것 방지(기존 동작 유지) → rag
+    if decision.handler == "guide" and history:
+        return _to_rag(decision, message)
+    # 3) 저신뢰 guide(메뉴) 단정만 일반 경로로 폴백(예: 단답 "기간").
+    #    out_of_scope는 여기서 내리지 않는다 — 저신뢰 거절(인젝션·모호한 범위밖)을 rag로 끌어들이면
+    #    오히려 위험. 도메인 질문이 out_of_scope로 빠진 건 위 1)에서 in-domain 신호로만 보정한다.
+    if decision.confidence < CONFIDENCE_FLOOR and decision.handler == "guide":
+        return _to_rag(decision, message)
+    return decision
+
+
 def _fallback(message: str, faqs: list[dict]) -> RouteDecision:
     """LLM 실패 시 키워드 안전망(기존 동작 근사)."""
     if is_schedule_query(message):
@@ -220,13 +268,8 @@ async def route(
     if client is not None:
         decision = await _route_llm(message, history, faqs, client, model)
         if decision is not None:
-            # 후속 답변이 메뉴(guide)로 잘못 빠지는 것 방지: 대화 맥락이 있고 명시적
-            # '뭘 물어볼 수 있어?'(is_guide_query)가 아니면 guide 대신 직전 주제를 rag로 이어간다.
-            # (예: 코아가 "토/일 둘 다?"라고 되물은 뒤 사용자가 "둘다 알바야"라고 답한 경우)
-            if decision.handler == "guide" and history and not is_guide_query(message):
-                decision.handler = "rag"
-                decision.search_query = decision.search_query or message
-            return decision
+            # out_of_scope 거절·guide 메뉴·저신뢰 단정의 오분류를 안전한 rag로 보정.
+            return _guard_decision(decision, message, history)
 
     # 3) 키워드 fallback
     return _fallback(message, faqs)

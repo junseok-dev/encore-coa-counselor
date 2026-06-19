@@ -19,7 +19,7 @@ from app.services.intent_service import classify_intent
 from app.services.openai_service import stream_ai_response
 from app.services.router_service import route
 from app.services.prompt_service import get_prompt_value
-from app.services.response_formatter import apply_link_tracking, course_link_for, format_chat_response
+from app.services.response_formatter import apply_link_tracking, course_link_for, format_chat_response, _strip_meta_disclaimer
 from app.utils.crypto import maybe_encrypt
 
 router = APIRouter()
@@ -65,6 +65,7 @@ def _clean_stream_segment(text: str) -> str:
     url = (get_settings().channel_talk_url or "").strip()
     if url and url in cleaned:
         cleaned = cleaned.replace(url, "")
+    cleaned = _strip_meta_disclaimer(cleaned)  # 금지된 '자료 확인 한계' 프레이밍 제거(라인 경계에서 처리)
     return apply_link_tracking(cleaned)  # encorecampus.ai 링크에 트래킹 파라미터 자동 부착(설정 시)
 
 
@@ -246,7 +247,9 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             )
             answer, source = _sanitize_and_promote(answer, source)
             if source == "handoff":
-                processing_status = "handoff"
+                # 답변 본문이 '채널톡' 언급으로 승격된 경우(=봇이 권유) — 사용자가 명시 요청한
+                # cancel/handoff(_set_cancel/_set_handoff: "handoff")와 구분해 지표 오염을 막는다.
+                processing_status = "handoff_offer"
         except Exception as exc:
             answer = get_prompt_value("fallback_prompt")
             source = "fallback"
@@ -271,6 +274,10 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     if blocked:
         answer = blocked
         source = "guardrail"
+    elif is_employment_rate_query(request.message):
+        # 취업률은 표시·광고법 민감 영역 → LLM/RAG 우회, 확정 수치 없는 안전 답변(결정적 가드).
+        answer = EMPLOYMENT_RATE_ANSWER
+        source = "faq"
     else:
         # 하이브리드 라우터: 결정적(일정·버튼) + LLM(의미) 단일 결정 → handler 분기
         decision = await route(request.message, history)
@@ -396,10 +403,11 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     yield _sse({"token": seg})
 
                 full_answer = full_answer.strip()
-                # 본문에 채널톡 언급이 있으면 상담 매니저 연결(handoff)로 승격 → 버튼 노출
+                # 본문에 채널톡 언급이 있으면 상담 매니저 연결(handoff)로 승격 → 버튼 노출.
+                # 단 사용자가 명시 요청한 cancel/handoff("handoff")와 구분해 지표 오염 방지("handoff_offer").
                 if "채널톡" in full_answer or _CHANNEL_MARKDOWN_LINK.search(full_answer):
                     source = "handoff"
-                    processing_status = "handoff"
+                    processing_status = "handoff_offer"
             except Exception as exc:
                 fallback = get_prompt_value("fallback_prompt")
                 source = "fallback"
@@ -417,6 +425,11 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
         if blocked:
             source = "guardrail"
             async for chunk in _stream_static(blocked):
+                yield chunk
+        elif is_employment_rate_query(request.message):
+            # 취업률은 표시·광고법 민감 영역 → LLM/RAG 우회, 확정 수치 없는 안전 답변(결정적 가드).
+            source = "faq"
+            async for chunk in _stream_static(EMPLOYMENT_RATE_ANSWER, max_bubbles=10):
                 yield chunk
         else:
             # 하이브리드 라우터: 결정적(일정·버튼) + LLM(의미) 단일 결정 → handler 분기
