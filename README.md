@@ -20,12 +20,15 @@
 12. [RAGAS 품질 평가](#12-rag-품질-평가-결과-ragas)
 13. [디렉토리 구조](#13-디렉토리-구조)
 14. [로컬 개발 환경](#14-로컬-개발-환경)
+15. [프로젝트 진화 (Before → After)](#15-프로젝트-진화-before--after)
 
 ---
 
 ## 1. 프로젝트 개요
 
 엔코어캠퍼스의 교육 과정(AI 오케스트레이션, ML 엔지니어, MLOps 등) 관련 문서와 FAQ를 기반으로 사용자 질문에 자동 답변하는 상담 챗봇입니다.
+
+> 📈 최초 릴리스 이후 운영 로그를 분석하며 라우팅·검색·모델·답변 스타일을 단계적으로 개선해 왔습니다. 무엇이 왜 어떻게 바뀌었고 결과가 어땠는지는 **[15. 프로젝트 진화 (Before → After)](#15-프로젝트-진화-before--after)** 에 정리되어 있습니다.
 
 **주요 기능:**
 
@@ -59,8 +62,8 @@
 | 웹 프레임워크     | FastAPI + Uvicorn                                                           |
 | ORM               | SQLAlchemy                                                                  |
 | 데이터베이스      | AWS Aurora RDS (PostgreSQL 호환)                                            |
-| LLM               | OpenAI GPT (런타임 모델 선택 가능, 기본 `gpt-5-mini`)                     |
-| 임베딩            | OpenAI `text-embedding-3-small` (1536차원)                                |
+| LLM               | OpenAI GPT (런타임 모델 선택 가능, 기본 `gpt-5.4-nano`)                   |
+| 임베딩            | OpenAI `text-embedding-3-large` (3072차원)                                |
 | 벡터 DB           | FAISS (로컬 인덱스, S3 동기화)                                              |
 | LangChain         | `langchain-openai`, `langchain-community`, `langchain-text-splitters` |
 | PDF 처리          | `opendataloader-pdf`                                                      |
@@ -128,7 +131,7 @@
 │  │ (PostgreSQL 호환)  │  │  (EC2 로컬 캐시)  │  │             │  │
 │  │                   │  │                  │  │ /faiss/     │  │
 │  │ chat_sessions     │  │ text-embedding   │  │ /documents/ │  │
-│  │ chat_messages     │  │ -3-small 1536dim  │  │ /faq/       │  │
+│  │ chat_messages     │  │ -3-large 3072dim  │  │ /faq/       │  │
 │  │ chat_logs         │  │                  │  │             │  │
 │  │ documents         │  └──────────────────┘  └─────────────┘  │
 │  │ chunks            │         ↕ (동기화)                        │
@@ -142,7 +145,7 @@
 └─────────────────────────────────────────────────────────────────┘
                       │
                       ▼ OpenAI API
-              gpt-5-mini  +  text-embedding-3-small
+              gpt-5.4-nano  +  text-embedding-3-large
 ```
 
 ---
@@ -199,7 +202,7 @@
 │                                                       │
 │                 │ No                                  │
 │                 ▼                                     │
-│              generate_node (gpt-5-mini)               │
+│              generate_node (gpt-5.4-nano)             │
 │                 │                                     │
 │                 ▼                                     │
 │              (top_score < VERIFY_THRESHOLD?)          │
@@ -213,15 +216,15 @@
         + 후처리: 채널톡 언급 시 source="handoff" 자동 승격
 ```
 
-- `REJECT_THRESHOLD = 1.0` — 검색 점수가 이 미만이거나 context가 비면 LLM 호출 없이 유도 응답
-- `VERIFY_THRESHOLD = 3.5` — 점수가 낮은 경우 verify_node가 문서 기반으로 답변을 재검증
-- LangSmith 추적 가능 (`LANGSMITH_TRACING_V2=true`)
+- `reject_threshold = 1.0` (`.env`로 조정 가능) — 검색 점수가 이 미만이거나 context가 비면 LLM 호출 없이 유도 응답
+- `verify_threshold = 3.5` (`.env`로 조정 가능) — 점수가 낮은 경우 verify_node가 문서 기반으로 답변을 재검증 (비스트리밍 경로)
+- LangSmith 추적 가능 — `.env`에 `LANGSMITH_TRACING=true` (구 비표준 키 `LANGSMITH_TRACING_V2`도 자동 호환). 공유 OpenAI client를 `wrap_openai`로 래핑해 라우터·의도·생성·스트리밍·verify 전 경로가 기록됨
 
 ### 4.2 임베딩 및 벡터 저장소
 
 ```python
-# 임베딩 모델
-OpenAIEmbeddings(model="text-embedding-3-small")  # 1536차원
+# 임베딩 모델 (settings.embedding_model, .env로 교체 가능)
+OpenAIEmbeddings(model="text-embedding-3-large")  # 3072차원
 
 # FAISS 인덱스 — EC2 로컬에 캐시, S3와 양방향 동기화
 vectorstore = FAISS.load_local(FAISS_DIR, embeddings)
@@ -280,7 +283,7 @@ POST /api/chat/stream
         ▼
 [2] 하이브리드 라우터 (router_service.route)
     ├─ 결정적 패스: is_schedule_query(개강 '시점') / 버튼·질문 정확일치 → 즉시 결정 (LLM 미경유)
-    ├─ LLM 라우터 (nano, temperature=0, 구조화 출력):
+    ├─ LLM 라우터 (gpt-5.4-nano, temperature=0, 구조화 출력):
     │     handler + faq_id(FAQ 후보를 '의미'로 선택) + search_query(맥락 반영) + slots
     └─ LLM 실패 시 → 키워드 fallback (안전망)
         │
@@ -327,6 +330,7 @@ alias에 없는 패러프레이즈("일자리 연결해줘?"→취업지원)도 
 | `chunks`           | 문서 청크                                           | `content`                                            |
 | `faqs`             | FAQ 항목                                            | 암호화 설정에 따라 선택적 적용                         |
 | `prompt_configs`   | 시스템 프롬프트 관리                                | 암호화 설정에 따라 선택적 적용                         |
+| `app_settings`     | 런타임 앱 설정 (활성 LLM 모델 등 — 재시작·.env 없이 영구화) | —                                              |
 | `admin_users`      | 관리자 권한 이메일 목록                             | —                                                     |
 | `admin_audit_logs` | 관리자 작업 감시 로그                               | —                                                     |
 | `cancel_requests`  | 취소/환불 요청 기록                                 | —                                                     |
@@ -434,7 +438,9 @@ python scripts/migrate_sqlite_to_rds.py
 | 메서드   | 경로                                          | 설명                                                  |
 | -------- | --------------------------------------------- | ----------------------------------------------------- |
 | `GET`  | `/api/admin/settings/model`                 | 현재 모델 + OpenAI 사용 가능 모델 목록                |
-| `PUT`  | `/api/admin/settings/model`                 | LLM 모델 변경 (.env 갱신 + 캐시 clear, 재시작 불필요) |
+| `PUT`  | `/api/admin/settings/model`                 | LLM 모델 변경 (`app_settings`에 영구화 + 캐시 clear, 재시작 불필요) |
+| `PUT`  | `/api/admin/settings/superadmin`            | 최상위 관리자 이메일 변경 (슈퍼어드민 본인만)         |
+| `PUT`  | `/api/admin/password`                       | 레거시 관리자 비밀번호 변경                           |
 | `GET`  | `/api/admin/settings/encryption`            | 카테고리별 암호화 설정 + 암호화/평문 레코드 수        |
 | `PUT`  | `/api/admin/settings/encryption/{category}` | 암호화 ON/OFF 토글 (faq / prompt / document)          |
 | `POST` | `/api/admin/settings/encryption/migrate`    | 해당 카테고리 전체 레코드 일괄 암호화↔복호화         |
@@ -803,7 +809,11 @@ document-chatbot_practice/
 │   │   ├── services/
 │   │   │   ├── rag_service.py      ← FAISS 벡터 검색 + 하이브리드 검색
 │   │   │   ├── document_service.py ← 검색 전략 결정 (build_retrieval_plan)
-│   │   │   ├── openai_service.py   ← gpt-5-mini 호출 + SSE 스트리밍
+│   │   │   ├── openai_service.py   ← gpt-5.4-nano 호출 + SSE 스트리밍 (wrap_openai 추적)
+│   │   │   ├── router_service.py    ← 하이브리드 라우터 (결정적 패스 + LLM 의미 라우팅)
+│   │   │   ├── graph_service.py     ← LangGraph 파이프라인 (retrieve→reject/generate→verify)
+│   │   │   ├── intent_service.py    ← LLM 의도 분류 (라우터 보조)
+│   │   │   ├── model_settings.py    ← 런타임 LLM 모델 영구화 (app_settings 테이블)
 │   │   │   ├── faq_service.py      ← FAQ 유사도 매칭
 │   │   │   ├── guardrail_service.py← 입력 안전 필터
 │   │   │   ├── admin_service.py    ← 문서 업로드/처리/승인 워크플로우
@@ -870,6 +880,11 @@ document-chatbot_practice/
 ```env
 # OpenAI
 OPENAI_API_KEY=sk-...
+MODEL_NAME=gpt-5.4-nano                 # 생성 모델 (관리자 콘솔에서 런타임 교체 가능)
+INTENT_MODEL_NAME=gpt-5.4-nano         # 라우터/의도 분류 모델
+EMBEDDING_MODEL=text-embedding-3-large # 검색 임베딩 (3072차원)
+REJECT_THRESHOLD=1.0                    # 이 미만이면 LLM 호출 없이 유도 응답
+VERIFY_THRESHOLD=3.5                    # 이 미만이면 사실성 재검증
 
 # Database (Aurora RDS 또는 로컬 PostgreSQL)
 DATABASE_URL=postgresql://user:password@host:5432/chatbot
@@ -896,7 +911,7 @@ HOMEPAGE_URL=https://encorecampus.ai/
 # LangSmith (선택)
 LANGSMITH_API_KEY=...
 LANGSMITH_PROJECT=document-chatbot
-LANGSMITH_TRACING_V2=true
+LANGSMITH_TRACING=true
 ```
 
 `backend/.env.example`을 복사해서 시작하세요. ENCRYPTION_KEY는 다음으로 생성:
@@ -975,6 +990,61 @@ start_servers.bat
 - **OpenAI 401**: API 키 만료 또는 사용량 초과
 - **FAISS 인덱스 없음**: 서버 첫 시작 시 S3에서 다운로드. S3 권한 또는 버킷명 확인
 - **관리자 로그인 실패**: `ADMIN_EMAIL`이 `.env`에 설정돼 있는지 + Google OAuth Client ID가 같은 도메인(localhost)에 등록돼 있는지
+
+---
+
+## 15. 프로젝트 진화 (Before → After)
+
+> 최초 릴리스(2026-06-12) 이후 **운영 대화 로그(약 854건, 5.5주)** 를 분석해
+> "데이터 → 분석 → 실모델 A/B 검증 → 패치" 사이클로 시스템을 다듬어 왔습니다.
+> 아래는 주요 변화의 전/후 대조와 그 근거·결과입니다.
+
+### 한눈에 보기
+
+| 영역          | Before                                          | After                                                          | 결과 / 근거                                  |
+| ------------- | ----------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------- |
+| 라우팅        | 5겹 휴리스틱 (키워드 점수·의도분류·결정 단축 혼재) | 1 게이트 + 1 하이브리드 라우터 (결정적 패스 + LLM 의미 라우팅)   | 회귀 게이트 41/48(85%) → **48/48(100%)**     |
+| 검색 임베딩   | `text-embedding-3-small` (1536d)                | `text-embedding-3-large` (3072d) + 인덱스 재구성               | **Context Recall 0.93**                      |
+| 생성 모델     | `gpt-5-mini`                                     | `gpt-5.4-nano` (런타임 교체 가능, `app_settings` 영구화)        | 비용·속도↓, 사실성은 모델 무관(아래)         |
+| 답변 스타일   | 캐묻기형 (되묻기 잦음)                           | "먼저 답하기" (결론 우선, 1회만 되묻기) + 되묻기 연쇄 차단      | 대화 단축, 결론 도달률↑                      |
+| 사실성        | 일반론·과정 혼입·취업률 환각 위험                | 과정 격리 + 멀티턴 정정 + 취업률/법률 결정적 가드              | 환각 **사실 날조 0건** (실질 ~14/15)         |
+| 관측성        | trace 미기록                                    | `wrap_openai`로 전 경로 LangSmith 추적                          | 운영 로그 기반 회귀 검증 루프 확립           |
+| 안전 정책     | 욕설·분노 일괄 차단                             | 디에스컬레이션 (서비스 의도 동반 시 상담 연결)                 | 진성 고객 이탈 방지                          |
+
+### 1) 라우팅 재설계 — 5겹 휴리스틱 → 1게이트 + 1라우터
+
+- **무엇을·왜**: 키워드 점수 매칭·의도분류·결정적 단축이 겹쳐 의미 충돌이 잦았다 (예: "취업"이 "선발"로 오라우팅).
+- **어떻게**: 명백한 질문(개강 시점·버튼 정확일치)은 LLM 없이 결정적으로 처리하고, 애매한 자연어는 LLM 라우터(`gpt-5.4-nano`, temperature=0, 구조화 출력)가 handler + faq_id + search_query를 '의미'로 선택. LLM 실패 시 키워드 fallback 안전망.
+- **결과**: `scripts/diag_router.py`(48케이스 회귀 게이트) 기준 **85% → 100%**. alias에 없는 패러프레이즈("일자리 연결해줘?" → 취업지원)도 정확 분류.
+
+### 2) 검색 임베딩 상향 — 1536d → 3072d
+
+- **무엇을·왜**: 근거 문서 검색 재현율을 높이려고 `text-embedding-3-large`(3072차원)로 교체하고 FAISS 인덱스를 재구성.
+- **결과**: **Context Recall 0.93** — 거의 모든 질문에서 근거 문서를 확보.
+
+### 3) 생성 모델 — gpt-5-mini → gpt-5.4-nano (+ 런타임 교체)
+
+- **무엇을·왜**: 비용·속도 최적화를 위해 nano 계열로 이동. 관리자 콘솔에서 재시작 없이 모델 교체가 가능하고, 선택값은 `app_settings` 테이블에 영구 저장돼 배포 후에도 유지된다.
+- **핵심 발견**: 생성 모델 A/B(`nano` ↔ `mini`)에서 Faithfulness가 **동일** → 답변 사실성은 모델이 아니라 **프롬프트가 좌우**한다. 프롬프트 강화로 **Faithfulness 0.69 → 0.74** 개선.
+
+### 4) 답변 스타일 — 캐묻기 → "먼저 답하기"
+
+- **무엇을·왜**: 과도하게 되묻는 흐름을 결론 우선으로 전환. 다만 "먼저 답하기"가 **되묻기 연쇄**로 변질되는 부작용을 운영 로그에서 발견.
+- **어떻게**: 직전 답변이 질문이고 사용자가 방금 답한 턴에는 추가 확인질문을 막고, 결론 + 다음 행동(지원/상담)으로 닫도록 강제(`NO_REASK_DIRECTIVE`). 첫 되묻기는 허용, 결론을 주면 자동 해제.
+
+### 5) 사실성·안전 강화 (운영 로그 854건 분석)
+
+- **과정 간 커리큘럼 혼입 차단**: 한 과정만 지목된 질문은 타 과정 문서를 검색에서 제외 (오케스트레이션 질문에 MLOps의 Kubernetes·CI/CD를 끌어오는 환각 방지) + 프롬프트에 전이 금지 규칙.
+- **멀티턴 정정 원칙**: 봇 자신의 과단정 답변을 사실로 굳히지 않고, "맞지?" 식 유도에 무조건 동의하지 않음.
+- **취업률·법률 결정적 가드**: 미사용이던 결정적 답변을 라우터 앞단에 연결해 환각 수치로 인한 표시·광고법 리스크 차단.
+- **결과**: 환각 **사실 날조 0건**(실질 ~14/15).
+
+### 6) 관측성 — LangSmith 추적 복구
+
+- **무엇을·왜**: trace가 전혀 안 남던 문제를 2단계로 수정. ① `.env`를 `os.environ`에도 반영 + 트레이싱 플래그를 표준 키(`LANGSMITH_TRACING`)로 정규화. ② 라이브 `/stream`이 우회하던 공유 OpenAI client를 `wrap_openai`로 래핑해 라우터·의도·생성·스트리밍·verify **전 경로 자동 기록**.
+- **결과**: 운영 로그 기반 회귀 검증 루프의 토대 마련.
+
+> ⚠️ [12. RAG 품질 평가](#12-rag-품질-평가-결과-ragas)의 RAGAS 수치는 **라우터 재설계·"먼저 답하기" 도입 이전** 측정값이다(RAGAS는 라우팅을 거치지 않고 RAG 코어만 측정). 생성 스타일 변화는 재측정 시 Faithfulness에 반영될 수 있다(상향 기대).
 
 ---
 
