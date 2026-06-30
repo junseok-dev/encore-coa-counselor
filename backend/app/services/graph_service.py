@@ -11,7 +11,7 @@ from app.config import get_settings
 # 임계값은 .env로 조정 가능 (임베딩 모델 교체 시 재튜닝). 기동 시점에 로드된다.
 _settings = get_settings()
 VERIFY_THRESHOLD = _settings.verify_threshold
-REJECT_THRESHOLD = _settings.reject_threshold  # 이 점수 미만이면 문서와 무관 → LLM 호출 건너뜀
+REJECT_THRESHOLD = _settings.reject_threshold  # (재설계 후 미사용: 하드 거절 폐지 → LLM이 핵심 사실 시트로 처리. 호환 위해 정의만 유지)
 VERIFY_MODEL = "gpt-5.4-nano"
 
 OUT_OF_SCOPE_ANSWER = (
@@ -50,13 +50,16 @@ def retrieve_node(state: GraphState) -> dict:
     # intent classifier가 만든 요약 쿼리가 있으면 검색에 사용, 없으면 원문.
     search_query = state.get("search_query") or state["query"]
     result = search_documents(search_query)
-    out_of_scope = (not result.context) or (result.top_score < REJECT_THRESHOLD)
+    # 재설계: 검색 점수가 낮아도 하드 거절하지 않는다. 핵심 사실 시트(CANONICAL_FACTS)가 시스템
+    # 프롬프트에 상주하므로, LLM이 사실+상식 추론으로 답하거나(대화체·단답·추론형 질문) 모르면 프롬프트
+    # 가드대로 솔직히 넘긴다. 진짜 범위 밖 질문은 라우터의 out_of_scope 핸들러가 rag 이전에 이미 걸러낸다.
+    has_context = bool(result.context)
     return {
         "context": result.context,
         "chunks": result.chunks,
-        "source": "fallback" if out_of_scope else "document",
-        "needs_verification": (not out_of_scope) and result.top_score < VERIFY_THRESHOLD,
-        "out_of_scope": out_of_scope,
+        "source": "document" if has_context else "ai",
+        "needs_verification": has_context and result.top_score < VERIFY_THRESHOLD,
+        "out_of_scope": False,
     }
 
 

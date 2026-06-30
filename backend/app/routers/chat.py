@@ -13,10 +13,10 @@ from app.db.models import CancelRequest, ChatLog
 from app.models.chat import ChatRequest, ChatResponse, SuggestedQuestionsResponse
 from app.services.document_service import search_documents
 from app.services.faq_service import get_faq_answer_by_id, get_schedule_faq_answer, get_suggested_questions, is_guide_query, is_schedule_query, match_button_faq, match_faq_general, search_faq
-from app.services.graph_service import OUT_OF_SCOPE_ANSWER, REJECT_THRESHOLD, run_rag_graph
+from app.services.graph_service import OUT_OF_SCOPE_ANSWER, run_rag_graph
 from app.services.guardrail_service import check as guardrail_check
 from app.services.intent_service import classify_intent
-from app.services.openai_service import stream_ai_response
+from app.services.openai_service import restyle_faq_answer, stream_ai_response
 from app.services.router_service import route
 from app.services.prompt_service import get_prompt_value
 from app.services.response_formatter import apply_link_tracking, course_link_for, format_chat_response, _strip_meta_disclaimer
@@ -286,11 +286,12 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             answer = GREETING_ANSWER
             source = "faq"
         elif h == "schedule":
-            answer = get_schedule_faq_answer() or GUIDE_ANSWER
+            _sched = get_schedule_faq_answer()
+            answer = await restyle_faq_answer(_sched, request.message) if _sched else GUIDE_ANSWER
             source = "faq"
         elif h == "faq":
             if ans := get_faq_answer_by_id(decision.faq_id):
-                answer = ans
+                answer = await restyle_faq_answer(ans, request.message)
                 source = "faq"
             else:  # 유효 답변 없으면 RAG로 안전 강등
                 await _run_rag(search_query=decision.search_query or None)
@@ -377,18 +378,15 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
             nonlocal full_answer, source, retrieval_chunks, processing_status, error_message
             channel_talk_url = (get_settings().channel_talk_url or "").strip() or None
             try:
-                # 검색 + reject 판단을 먼저 수행 (여기서 막히면 LLM 호출/스트리밍 없음)
+                # 재설계: 검색 점수가 낮아도 하드 거절하지 않는다. 핵심 사실 시트가 프롬프트에 상주하므로
+                # LLM이 사실+상식 추론으로 답하거나, 모르면 프롬프트 가드대로 솔직히 넘긴다.
+                # (진짜 범위 밖 질문은 라우터의 out_of_scope 핸들러가 rag 이전에 이미 걸러냄)
                 result = search_documents(search_query or request.message)
                 retrieval_chunks = result.chunks
-                if (not result.context) or (result.top_score < REJECT_THRESHOLD):
-                    source = "fallback"
-                    async for chunk in _stream_static(OUT_OF_SCOPE_ANSWER, max_bubbles=3):
-                        yield chunk
-                    return
 
-                # 통과 → LLM 토큰을 실시간 스트리밍. 라인 경계에서 채널톡 링크를 정화 후 전송.
+                # LLM 토큰을 실시간 스트리밍. 라인 경계에서 채널톡 링크를 정화 후 전송.
                 # (verify 재검증은 이미 보낸 토큰을 되돌릴 수 없어 스트리밍 경로에서는 생략)
-                source = "document"
+                source = "document" if result.context else "ai"
                 pending = ""
                 async for delta in stream_ai_response(request.message, result.context, history, channel_talk_url):
                     pending += delta
@@ -441,12 +439,15 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     yield chunk
             elif h == "schedule":
                 source = "faq"
-                async for chunk in _stream_static(get_schedule_faq_answer() or GUIDE_ANSWER, max_bubbles=10):
+                _sched = get_schedule_faq_answer()
+                _text = await restyle_faq_answer(_sched, request.message) if _sched else GUIDE_ANSWER
+                async for chunk in _stream_static(_text, max_bubbles=10):
                     yield chunk
             elif h == "faq":
                 if ans := get_faq_answer_by_id(decision.faq_id):
                     source = "faq"
-                    async for chunk in _stream_static(ans, max_bubbles=10):
+                    _restyled = await restyle_faq_answer(ans, request.message)
+                    async for chunk in _stream_static(_restyled, max_bubbles=10):
                         yield chunk
                 else:  # 유효 답변 없으면 RAG로 안전 강등
                     async for chunk in _stream_rag(search_query=decision.search_query or None):

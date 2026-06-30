@@ -30,8 +30,8 @@ if _ls_tracing_flag and _ls_tracing_flag.strip().lower() in ("1", "true", "yes",
 
 class Settings(BaseSettings):
     openai_api_key: str = ""
-    model_name: str = "gpt-5.4-nano"
-    intent_model_name: str = "gpt-5.4-nano"
+    model_name: str = "gpt-5.4-mini"  # 생성 모델: nano→mini (재설계 검증에서 품질·지시준수 점프 확인)
+    intent_model_name: str = "gpt-5.4-nano"  # 라우터는 분류라 nano 유지(8갈래 오분류 보이면 mini로)
     embedding_model: str = "text-embedding-3-large"
     # RAG 검색 점수 임계값 (임베딩 모델 교체 시 재튜닝 대상 → .env로 조정 가능)
     reject_threshold: float = 1.0   # 이 점수 미만이면 LLM 호출 없이 유도 응답
@@ -147,10 +147,10 @@ class Settings(BaseSettings):
     )
     default_cancel_prompt: str = Field(
         default=(
-            "수강 취소, 환불, 일정 변경은 상담 매니저 확인이 필요해요. "
-            "아래 '상담 매니저 연결하기' 버튼을 클릭해 주세요!\n\n"
+            "아, 수강 취소·환불·일정 변경은 회원님 상황을 정확히 확인해야 해서 "
+            "상담 매니저가 직접 도와드리는 게 안전해요. 아래 '상담 매니저 연결하기' 버튼으로 바로 이어 드릴게요 🙂\n\n"
             "상담 운영시간 : 평일 오전 9시 ~ 오후 5시\n"
-            "*주말 및 공휴일은 운영하지 않습니다. 평일 상담 가능한 시간에 순차적으로 답변드리겠습니다!"
+            "*주말·공휴일은 쉬어가요. 평일에 순차적으로 꼼꼼히 답변드릴게요!"
         )
     )
     default_fallback_prompt: str = Field(
@@ -161,9 +161,10 @@ class Settings(BaseSettings):
     )
     default_handoff_prompt: str = Field(
         default=(
-            "상담 매니저와 더 자세한 상담을 원하시면 아래 '상담 매니저 연결하기' 버튼을 클릭해 주세요!\n\n"
+            "네, 더 자세한 상담은 상담 매니저가 직접 도와드릴게요. "
+            "아래 '상담 매니저 연결하기' 버튼으로 바로 이어 드릴게요 🙂\n\n"
             "상담 운영시간 : 평일 오전 9시 ~ 오후 5시\n"
-            "*주말 및 공휴일은 운영하지 않습니다. 평일 상담 가능한 시간에 순차적으로 답변드리겠습니다!"
+            "*주말·공휴일은 쉬어가요. 평일에 순차적으로 꼼꼼히 답변드릴게요!"
         )
     )
 
