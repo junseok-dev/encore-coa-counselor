@@ -36,7 +36,7 @@
 - **하이브리드 라우터** — 명백한 질문(개강 시점·버튼)은 결정적으로 즉시, 애매한 자연어는 LLM이 의미로 분기(FAQ 직답·RAG·상담연결 등). 키워드 점수 충돌 없이 정확 라우팅, 회귀 게이트(48케이스)로 검증
 - 실시간 스트리밍 응답 (Server-Sent Events, 진짜 토큰 스트리밍)
 - 대화 이력 기반 맥락 파악 — 연속 질문·짧은 후속("둘 다야")도 자연스럽게 이어서 답변
-- **먼저 답하기** — 결론부터 답하고, 꼭 필요할 때만 1회 되묻기 (과도하게 캐묻지 않음)
+- **결론 먼저·짧게** — 물어본 것에 결론부터, 짧은 말풍선(기본 1~2개)으로. 되묻기 대신 '답할 수 있는 다음 선택지'로 닫음(되묻기 루프 차단)
 - **새 대화 / 기록** — 헤더에서 새 대화 시작(현재 대화는 기록에 자동 저장), 기록에서 과거 대화 복원
 - 여러 질문 동시 처리 — 한 메시지에 여러 질문이 있을 때 통합 답변
 - 관리자 대시보드: 문서 업로드/승인, FAQ 관리, 프롬프트 편집, 상담 기록 조회, 데이터 관리, DB 브라우저(행 편집·삭제 + 안전 테이블 DROP), 권한 관리, 설정
@@ -45,7 +45,8 @@
 - 채널톡 상담 매니저 연결 자동 승격 — 응답 본문에서 "채널톡" 언급을 감지해 파란 버튼 자동 노출
 - 모바일 폼팩터 채팅 UI — 둥근 카드 + 그라데이션 배경, 스크롤 위치 conversation별 복원
 - 말풍선 분할 가이드 — 맥락 전환·호흡·항목 단위 3단 기준, 의미 이모티콘(📅 💰 🎓 💻 등)으로 구조 시각화
-- LangGraph reject 분기 — 검색 점수 미달 시 LLM 호출 없이 유도 응답으로 직행해 비용 차단
+- **핵심 사실 상주 + 추론** — 수업시간·기간·비용 등 핵심 사실을 시스템 프롬프트에 상시 포함해, 검색에 안 잡히는 대화체·추론형 질문도 회피 없이 답변(낮은 검색 점수로 하드 거절하지 않음)
+- **FAQ 답변 재서술** — 저장된 FAQ 카드를 사실·수치 보존한 채 짧은 상담 말투로 LLM이 다시 표현(생성 답변과 톤 통일)
 - Google OAuth 2.0 기반 관리자 인증 (JWT 세션, 등록된 이메일만 접근)
 - 런타임 LLM 모델 변경 (재시작 없이 OpenAI 모델 즉시 교체)
 - 카테고리별 Fernet 암호화 관리 (ON/OFF 토글 + 일괄 암호화↔복호화)
@@ -62,7 +63,7 @@
 | 웹 프레임워크     | FastAPI + Uvicorn                                                           |
 | ORM               | SQLAlchemy                                                                  |
 | 데이터베이스      | AWS Aurora RDS (PostgreSQL 호환)                                            |
-| LLM               | OpenAI GPT (런타임 모델 선택 가능, 기본 `gpt-5.4-nano`)                   |
+| LLM               | OpenAI GPT (런타임 모델 선택 가능, 기본 `gpt-5.4-mini`)                   |
 | 임베딩            | OpenAI `text-embedding-3-large` (3072차원)                                |
 | 벡터 DB           | FAISS (로컬 인덱스, S3 동기화)                                              |
 | LangChain         | `langchain-openai`, `langchain-community`, `langchain-text-splitters` |
@@ -145,7 +146,7 @@
 └─────────────────────────────────────────────────────────────────┘
                       │
                       ▼ OpenAI API
-              gpt-5.4-nano  +  text-embedding-3-large
+              gpt-5.4-mini  +  text-embedding-3-large
 ```
 
 ---
@@ -194,15 +195,9 @@
 ┌───────────────────────────────────────────────────────┐
 │        LangGraph 파이프라인 (graph_service.py)         │
 │                                                       │
-│   retrieve ──▶ (out_of_scope?)                        │
-│                 │ Yes                                 │
-│                 ▼                                     │
-│              reject_node ─────────────────▶ END       │
-│                 (LLM 호출 0, 유도 응답)                │
-│                                                       │
-│                 │ No                                  │
-│                 ▼                                     │
-│              generate_node (gpt-5.4-nano)             │
+│   retrieve ──▶ generate_node (gpt-5.4-mini)           │
+│        (검색 점수 낮아도 하드 거절 안 함:             │
+│         핵심 사실 시트 + 추론으로 답변)               │
 │                 │                                     │
 │                 ▼                                     │
 │              (top_score < VERIFY_THRESHOLD?)          │
@@ -216,7 +211,7 @@
         + 후처리: 채널톡 언급 시 source="handoff" 자동 승격
 ```
 
-- `reject_threshold = 1.0` (`.env`로 조정 가능) — 검색 점수가 이 미만이거나 context가 비면 LLM 호출 없이 유도 응답
+- 검색 점수가 낮아도 **하드 거절하지 않음** — 핵심 사실 시트(`CANONICAL_FACTS`)가 시스템 프롬프트에 상주해 LLM이 사실+추론으로 답하고, 진짜 범위 밖 질문은 라우터의 `out_of_scope`가 rag 이전에 거른다 (`reject_threshold`는 호환 위해 정의만 유지)
 - `verify_threshold = 3.5` (`.env`로 조정 가능) — 점수가 낮은 경우 verify_node가 문서 기반으로 답변을 재검증 (비스트리밍 경로)
 - LangSmith 추적 가능 — `.env`에 `LANGSMITH_TRACING=true` (구 비표준 키 `LANGSMITH_TRACING_V2`도 자동 호환). 공유 OpenAI client를 `wrap_openai`로 래핑해 라우터·의도·생성·스트리밍·verify 전 경로가 기록됨
 
@@ -291,8 +286,8 @@ POST /api/chat/stream
 [3] handler 분기
     greeting     → source="faq"      (인사 고정 응답)
     schedule     → source="faq"      (개강 일정 FAQ)
-    faq(faq_id)  → source="faq"      (라우터가 고른 FAQ 직접 답변)
-    rag(query)   → LangGraph(retrieve → reject/generate) → source="document" | "fallback"
+    faq(faq_id)  → source="faq"      (라우터가 고른 FAQ 답변을 새 상담 말투로 LLM 재서술)
+    rag(query)   → LangGraph(retrieve → generate → verify) → source="document" | "ai"
     cancel       → source="handoff"  (채널톡 버튼 자동 노출)
     handoff      → source="handoff"
     out_of_scope → source="fallback" (교육 무관 / 법 내용)
@@ -809,9 +804,9 @@ document-chatbot_practice/
 │   │   ├── services/
 │   │   │   ├── rag_service.py      ← FAISS 벡터 검색 + 하이브리드 검색
 │   │   │   ├── document_service.py ← 검색 전략 결정 (build_retrieval_plan)
-│   │   │   ├── openai_service.py   ← gpt-5.4-nano 호출 + SSE 스트리밍 (wrap_openai 추적)
+│   │   │   ├── openai_service.py   ← gpt-5.4-mini 호출 + FAQ 재서술 + SSE 스트리밍 (wrap_openai 추적)
 │   │   │   ├── router_service.py    ← 하이브리드 라우터 (결정적 패스 + LLM 의미 라우팅)
-│   │   │   ├── graph_service.py     ← LangGraph 파이프라인 (retrieve→reject/generate→verify)
+│   │   │   ├── graph_service.py     ← LangGraph 파이프라인 (retrieve→generate→verify, 핵심 사실 시트 상주)
 │   │   │   ├── intent_service.py    ← LLM 의도 분류 (라우터 보조)
 │   │   │   ├── model_settings.py    ← 런타임 LLM 모델 영구화 (app_settings 테이블)
 │   │   │   ├── faq_service.py      ← FAQ 유사도 매칭
@@ -880,10 +875,10 @@ document-chatbot_practice/
 ```env
 # OpenAI
 OPENAI_API_KEY=sk-...
-MODEL_NAME=gpt-5.4-nano                 # 생성 모델 (관리자 콘솔에서 런타임 교체 가능)
+MODEL_NAME=gpt-5.4-mini                 # 생성 모델 (관리자 콘솔에서 런타임 교체 가능)
 INTENT_MODEL_NAME=gpt-5.4-nano         # 라우터/의도 분류 모델
 EMBEDDING_MODEL=text-embedding-3-large # 검색 임베딩 (3072차원)
-REJECT_THRESHOLD=1.0                    # 이 미만이면 LLM 호출 없이 유도 응답
+REJECT_THRESHOLD=1.0                    # (재설계 후 미사용 — 하드 거절 폐지, 호환 위해 유지)
 VERIFY_THRESHOLD=3.5                    # 이 미만이면 사실성 재검증
 
 # Database (Aurora RDS 또는 로컬 PostgreSQL)
@@ -1010,6 +1005,7 @@ start_servers.bat
 | 사실성        | 일반론·과정 혼입·취업률 환각 위험                | 과정 격리 + 멀티턴 정정 + 취업률/법률 결정적 가드              | 환각 **사실 날조 0건** (실질 ~14/15)         |
 | 관측성        | trace 미기록                                    | `wrap_openai`로 전 경로 LangSmith 추적                          | 운영 로그 기반 회귀 검증 루프 확립           |
 | 안전 정책     | 욕설·분노 일괄 차단                             | 디에스컬레이션 (서비스 의도 동반 시 상담 연결)                 | 진성 고객 이탈 방지                          |
+| 응답 동작     | 문서 받아쓰기형 (긴 답·되묻기 루프·자꾸 회피)   | 사실 근거 추론형 상담사 (짧게·결론 먼저·선택지로 닫기) + FAQ 재서술 + 생성 모델 mini | 길이 614→201자·되묻기 63→0%·회피 36→2% (100문항) |
 
 ### 1) 라우팅 재설계 — 5겹 휴리스틱 → 1게이트 + 1라우터
 
@@ -1043,6 +1039,18 @@ start_servers.bat
 
 - **무엇을·왜**: trace가 전혀 안 남던 문제를 2단계로 수정. ① `.env`를 `os.environ`에도 반영 + 트레이싱 플래그를 표준 키(`LANGSMITH_TRACING`)로 정규화. ② 라이브 `/stream`이 우회하던 공유 OpenAI client를 `wrap_openai`로 래핑해 라우터·의도·생성·스트리밍·verify **전 경로 자동 기록**.
 - **결과**: 운영 로그 기반 회귀 검증 루프의 토대 마련.
+
+### 7) 응답 동작 재설계 — 수동적 FAQ봇 → 능동적 AI 상담사 (2026-06)
+
+- **무엇을·왜**: 운영 로그(LangSmith)에서 "문서를 받아쓰는 느낌·답변이 길어 안 읽힘·간단한 것도 자꾸 모른다며 회피·되묻기 루프"가 반복 확인됨. 검색·인용만 하는 수동적 파이프라인이라 생긴 문제.
+- **어떻게**:
+  - 생성 프롬프트 재설계(`CHAT_STYLE_GUIDE` 9,145자 → `COUNSELOR_GUIDE` ~2.5천자): 결론 먼저·짧게·추론 허용·되묻기 대신 '맥락 있고 답할 수 있는' 선택지·내부 규칙 노출 금지·따뜻하되 단호한 거절. 안전 가드(취업률·법률·경쟁사 비교·개인정보·외부 컨설팅·브랜딩·구체 통계·민감 특성)를 코드에 고정.
+  - `CANONICAL_FACTS`(핵심 사실 시트)를 시스템 프롬프트에 상주 → 대화체·단답·추론형 질문이 검색 미스로 회피되지 않음.
+  - **거절 게이트 폐지**(`graph_service`/`chat`): 검색 점수가 낮아도 LLM이 사실+추론으로 처리, 진짜 범위 밖은 라우터가 거른다.
+  - **FAQ 카드 LLM 재서술**(`restyle_faq_answer`): 사실·수치·조건을 보존한 채 짧은 상담 말투로 통일, 실패 시 원문 폴백.
+  - 생성 모델 `gpt-5.4-nano` → `gpt-5.4-mini`(짧은 프롬프트의 지시 준수·추론 품질 향상).
+  - 라이브 점검 반영: 혼란 표현("뭔소리야·엥")은 상담사 연결 대신 **직전 대화 맥락을 보고 더 쉽게 재설명**(라우터가 rag로), 답할 수 없는 통계(평균 나이·입사자 수)는 상담사 연결, 나이 제한 여부는 "제한 없음" 단정, FAQ 선택지의 빈 괄호 placeholder 제거.
+- **결과**: 실제 로그 100문항 기준 답변 길이 중앙값 **614→201자**, 되묻기 **63%→0%**, 회피 **36%→2%**, 적대적 안전 배터리 **13/13** 통과. (운영 반영 시 DB `active_model`을 `gpt-5.4-mini`로 설정 필요)
 
 > ⚠️ [12. RAG 품질 평가](#12-rag-품질-평가-결과-ragas)의 RAGAS 수치는 **라우터 재설계·"먼저 답하기" 도입 이전** 측정값이다(RAGAS는 라우팅을 거치지 않고 RAG 코어만 측정). 생성 스타일 변화는 재측정 시 Faithfulness에 반영될 수 있다(상향 기대).
 

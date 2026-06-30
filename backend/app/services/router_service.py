@@ -68,7 +68,7 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 - "faq": 아래 FAQ 후보 중 의미가 정확히 맞는 직접답변이 있을 때. 이때 faq_id를 채우세요.
 - "rag": 과정 상세·커리큘럼·캠퍼스 위치 등 문서를 찾아 설명해야 하는데 딱 맞는 FAQ가 없을 때. search_query를 채우세요.
 - "cancel": 수강 취소·환불·일정 변경을 '요청'하는 경우(정보 질문이 아니라 처리 요청).
-- "handoff": 사람(상담 매니저)과 직접 상담하고 싶다는 요청. 강한 불만/항의도 여기.
+- "handoff": 사람(상담 매니저)과 직접 상담하고 싶다는 요청. 강한 불만/항의(환불 안 해주면 가만 안 둬 등)도 여기. 단, 직전 답변이 이해 안 된다는 반응(뭔소리야·엥·무슨 말이야)은 handoff가 아니라 rag.
 - "out_of_scope": 교육과 무관(날씨·일반상식·코드 자문 등). 법률(정의·해석·적용)도 여기 — 법 내용 자체는 안내하지 않음. 단, 취업·취업연계·취업지원, 수료 후 진로·진출, 과정·커리큘럼·비용·혜택·선발·인터뷰처럼 엔코아 AI 캠퍼스 교육·진로와 조금이라도 관련된 질문은 절대 out_of_scope가 아니다(faq 또는 rag로).
 - "guide": "뭘 물어볼 수 있어?"처럼 메뉴/카테고리를 묻거나, 너무 모호해 무엇을 도울지 되물어야 할 때.
 
@@ -95,6 +95,7 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 - 직전 대화 맥락을 반영하세요. 예: 직전이 '멀티 에이전트 AI 오케스트레이션 캠프'인데 '그거 수강료는?' → rag, search_query="멀티 에이전트 AI 오케스트레이션 캠프 수강료", slots.course="멀티 에이전트 AI 오케스트레이션 캠프".
 - 직전이 개강 일정인데 '서초 캠퍼스는?' → rag, search_query="서초 캠퍼스 위치/정보", slots.campus="서초".
 - 애매하면 faq로 단정하지 말고 rag 또는 guide.
+- '뭔소리야?·엥?·무슨 말이야?·이해가 안 돼·다시 설명해줘'처럼 직전 답변을 이해 못 했다는 반응 = handoff/out_of_scope 아님 → rag. (rag 생성 단계가 직전 대화 맥락을 보고 '뭘 어려워하는지' 파악해 더 쉽게 다시 설명함 — 문서 검색이 목적이 아님). search_query는 직전에 다룬 주제가 있으면 그걸로, 없으면 null.
 
 [예시]
 "안녕!" → {{"handler":"greeting","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.95}}
@@ -106,6 +107,8 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 "오늘 날씨 어때?" → {{"handler":"out_of_scope","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.9}}
 "취업이 연계되어 있나요?" → {{"handler":"faq","faq_id":"faq_btn_005","search_query":null,"slots":{{}},"confidence":0.9}}
 "수료하면 어디로 갈 수 있어?" → {{"handler":"faq","faq_id":"faq_btn_005","search_query":null,"slots":{{}},"confidence":0.85}}
+"뭔소리야?" (직전: 과정 안내) → {{"handler":"rag","faq_id":null,"search_query":"직전 안내한 과정 쉬운 재설명","slots":{{}},"confidence":0.7}}
+"엥? 이해가 안 돼" → {{"handler":"rag","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.7}}
 """
 
 
