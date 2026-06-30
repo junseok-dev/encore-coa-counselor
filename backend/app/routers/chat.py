@@ -303,7 +303,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             answer = OUT_OF_SCOPE_ANSWER
             source = "fallback"
         elif h == "guide":
-            answer = GUIDE_ANSWER
+            answer = await restyle_faq_answer(GUIDE_ANSWER, request.message)
             source = "faq"
         else:  # "rag" 및 그 외
             await _run_rag(search_query=decision.search_query or None)
@@ -469,7 +469,8 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     yield chunk
             elif h == "guide":
                 source = "faq"
-                async for chunk in _stream_static(GUIDE_ANSWER, max_bubbles=10):
+                _g = await restyle_faq_answer(GUIDE_ANSWER, request.message)
+                async for chunk in _stream_static(_g, max_bubbles=10):
                     yield chunk
             else:  # "rag" 및 그 외
                 async for chunk in _stream_rag(search_query=decision.search_query or None):
