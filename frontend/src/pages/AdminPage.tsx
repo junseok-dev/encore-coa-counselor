@@ -898,7 +898,6 @@ export default function AdminPage() {
                     }
                   }}
                   onError={() => setLoginError('Google 로그인에 실패했습니다.')}
-                  useOneTap
                 />
               )}
             </div>
