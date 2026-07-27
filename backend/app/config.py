@@ -56,6 +56,10 @@ class Settings(BaseSettings):
 
     channel_talk_url: str = ""
     homepage_url: str = "https://encorecampus.ai/"
+    # 공식 홈페이지 과정 정보는 하루 한 번 검증된 스냅샷으로 갱신한다.
+    website_sync_enabled: bool = True
+    website_sync_interval_hours: int = 24
+    website_fetch_timeout_seconds: int = 30
     # 챗봇 유입 트래킹: 답변 내 encorecampus.ai 링크에 자동 부착할 '공통' 쿼리 파라미터(utm_source·utm_medium 등).
     # utm_campaign은 링크의 마지막 경로 세그먼트(course/orchestration/ml/mlops…)로 자동 결정되므로 여기엔 넣지 않는다.
     # 비어있으면 트래킹 미적용(원문 유지).

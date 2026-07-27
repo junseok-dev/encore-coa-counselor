@@ -20,6 +20,7 @@ from app.services.openai_service import restyle_faq_answer, stream_ai_response
 from app.services.router_service import route
 from app.services.prompt_service import get_prompt_value
 from app.services.response_formatter import apply_link_tracking, course_link_for, format_chat_response, _strip_meta_disclaimer
+from app.services.website_course_service import is_live_course_fact_query
 from app.utils.crypto import maybe_encrypt
 
 router = APIRouter()
@@ -286,11 +287,13 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             answer = GREETING_ANSWER
             source = "faq"
         elif h == "schedule":
-            _sched = get_schedule_faq_answer()
+            _sched = get_schedule_faq_answer(request.message)
             answer = await restyle_faq_answer(_sched, request.message) if _sched else GUIDE_ANSWER
             source = "faq"
         elif h == "faq":
-            if ans := get_faq_answer_by_id(decision.faq_id):
+            if is_live_course_fact_query(request.message):
+                await _run_rag(search_query=decision.search_query or None)
+            elif ans := get_faq_answer_by_id(decision.faq_id):
                 answer = await restyle_faq_answer(ans, request.message)
                 source = "faq"
             else:  # 유효 답변 없으면 RAG로 안전 강등
@@ -439,12 +442,15 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     yield chunk
             elif h == "schedule":
                 source = "faq"
-                _sched = get_schedule_faq_answer()
+                _sched = get_schedule_faq_answer(request.message)
                 _text = await restyle_faq_answer(_sched, request.message) if _sched else GUIDE_ANSWER
                 async for chunk in _stream_static(_text, max_bubbles=10):
                     yield chunk
             elif h == "faq":
-                if ans := get_faq_answer_by_id(decision.faq_id):
+                if is_live_course_fact_query(request.message):
+                    async for chunk in _stream_rag(search_query=decision.search_query or None):
+                        yield chunk
+                elif ans := get_faq_answer_by_id(decision.faq_id):
                     source = "faq"
                     _restyled = await restyle_faq_answer(ans, request.message)
                     async for chunk in _stream_static(_restyled, max_bubbles=10):

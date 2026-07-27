@@ -1,5 +1,7 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -16,6 +18,7 @@ from app.services.faq_service import seed_faqs
 from app.services.prompt_service import seed_prompt_configs
 from app.services.rag_service import get_rag_service
 from app.services.storage_service import ensure_storage_dirs
+from app.services.website_course_service import website_sync_loop
 
 models.Base.metadata.create_all(bind=engine)
 migrate_database(engine)
@@ -49,7 +52,16 @@ async def lifespan(app: FastAPI):
         get_rag_service().index_all(db)
     finally:
         db.close()
-    yield
+    website_sync_task = asyncio.create_task(
+        website_sync_loop(),
+        name="website-course-sync",
+    )
+    try:
+        yield
+    finally:
+        website_sync_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await website_sync_task
 
 
 app = FastAPI(

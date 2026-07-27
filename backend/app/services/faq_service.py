@@ -293,6 +293,8 @@ def is_schedule_query(query: str) -> bool:
         return False
     if "개강일" in c:
         return True
+    if any(x in c for x in ("몇기", "몇번째기수", "현재기수", "모집기수", "무슨기수")):
+        return True
     if any(x in c for x in ("언제개강", "개강언제", "모집일정", "모집언제")):
         return True
     if "다음기수" in c and any(w in c for w in ("언제", "개강", "시작")):
@@ -304,8 +306,13 @@ def is_schedule_query(query: str) -> bool:
     return False
 
 
-def get_schedule_faq_answer() -> str | None:
-    """모집 일정 FAQ의 직접 답변(현재 개강 일정 포함)을 반환한다."""
+def get_schedule_faq_answer(query: str = "") -> str | None:
+    """공식 홈페이지 최신 일정 우선, 아직 스냅샷이 없으면 기존 FAQ로 폴백한다."""
+    from app.services.website_course_service import get_live_schedule_answer
+
+    live_answer = get_live_schedule_answer(query)
+    if live_answer:
+        return live_answer
     for faq in _get_faq_data().get("faqs", []):
         if faq.get("category") == "모집 일정" and faq.get("direct_answer") and faq.get("answer"):
             return faq.get("answer")

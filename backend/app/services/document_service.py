@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from app.services.faq_service import is_guide_query, match_faq
 from app.services.rag_service import get_rag_service
+from app.services.website_course_service import get_website_course_context
 
 
 @dataclass
@@ -125,8 +126,20 @@ def search_documents(query: str, top_k: int = 4) -> SearchResult:
         files=plan.files,
     )
     chunks = [doc.page_content for doc in docs]
+    website_context = get_website_course_context(query)
+    context_parts: list[str] = []
+    if chunks:
+        context_parts.append(
+            "[승인 문서 — 과정 상세의 기본 근거]\n"
+            + "\n\n---\n\n".join(chunks)
+        )
+    if website_context:
+        context_parts.append(website_context)
+        chunks.append(website_context)
     return SearchResult(
-        context="\n\n---\n\n".join(chunks),
+        context="\n\n===\n\n".join(context_parts),
         chunks=chunks,
-        top_score=top_score,
+        # 홈페이지 스냅샷은 필드 검증을 통과한 공식 정보이므로 단독 컨텍스트여도
+        # 저신뢰 검색으로 재분류하지 않는다.
+        top_score=max(top_score, 4.0) if website_context else top_score,
     )
