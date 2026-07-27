@@ -132,8 +132,9 @@ def _clean_text(text: str) -> str:
     cleaned = _BOLD_CLOSE_FIX.sub(lambda m: f"{m.group(1)}** ", cleaned)
     # **강조** 헤더로 시작하는 줄 앞에 빈 줄을 강제 → 각 강조 헤더 단위로 paragraph(말풍선) 분리
     cleaned = re.sub(r"(?<!\n)\n(?=\*\*[^\n]+\*\*)", "\n\n", cleaned)
-    # **강조** 헤더 줄 뒤에도 빈 줄 강제 → 다음에 오는 목록(- 또는 1.)이 별도 paragraph로 인식되어 ul/ol 변환됨
-    cleaned = re.sub(r"(\*\*[^\n]+\*\*[ \t]*)\n(?!\n)", r"\1\n\n", cleaned)
+    # 줄 전체가 **강조**인 헤더 뒤에만 빈 줄을 강제한다.
+    # `- **목록 항목**`까지 헤더로 오인하면 항목마다 별도 말풍선으로 쪼개지므로 줄 시작을 고정한다.
+    cleaned = re.sub(r"(?m)^(\*\*[^\n]+\*\*[ \t]*)\n(?!\n)", r"\1\n\n", cleaned)
     cleaned = re.sub(
         r"^\s*(좋아요|네|알겠습니다|확인했습니다|좋은 질문이에요)\s*[-–—:]\s*",
         r"\1. ",

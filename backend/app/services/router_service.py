@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app.config import get_settings
+from app.services.consultation_service import consultation_mode_for
 from app.services.faq_service import (
     _compact,
     _get_faq_data,
@@ -90,6 +91,7 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 - '대기업에 못 가면 누구 책임이야?/취업이 안 되면 교육기관 책임인가요?'처럼 취업 결과의 책임 범위를 묻는 질문은 정보성 질문이다. 사람 연결 요청이나 처리 요청이 아니므로 handoff가 아니라 rag로 보냅니다.
 - '교육 프로그램/과정 소개해줘, 어떤 과정 있어' = faq_btn_002(프로그램 소개). 취업률(002b)과 헷갈리지 마세요.
 - '세 과정 차이/비교/뭐가 달라' = rag(문서 비교). guide가 아님.
+- '나한테 맞는 과정/어떤 과정을 선택해야 해/비전공자에게 어떤 과정이 좋아' = rag(과정 추천). 메뉴를 보여주는 guide나 단순 프로그램 소개 FAQ로 보내지 마세요.
 - '멀티 에이전트 AI 오케스트레이션 캠프(오케스트레이션)/데이터 분석 & AI 머신러닝 캠프(머신러닝)/AI Ready 데이터 엔지니어링 캠프(MLOps·데이터 엔지니어링) 알려줘/소개/커리큘럼/어떤 사람한테 맞아' = 직접 FAQ가 아니므로 rag(과정 상세는 문서에서). 단 '과정 일정/개강'은 schedule.
 - '환불 규정/중도포기하면?/돈 돌려받아?' = 정보 질문 → faq(faq_031). '환불해줘/취소할래' = 처리 요청 → cancel.
 - guide는 사용자가 "무엇을 물어볼 수 있는지(메뉴/카테고리)"를 물을 때만. 구체적 주제(과정·선발·취업·환불 등)가 조금이라도 있으면 guide로 보내지 말고 해당 faq/rag로.
@@ -102,6 +104,7 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 "안녕!" → {{"handler":"greeting","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.95}}
 "취업은 어떻게 지원해줘?" → {{"handler":"faq","faq_id":"faq_btn_005","search_query":null,"slots":{{}},"confidence":0.9}}
 "멀티 에이전트 AI 오케스트레이션 캠프 알려줘" → {{"handler":"rag","faq_id":null,"search_query":"멀티 에이전트 AI 오케스트레이션 캠프 소개 커리큘럼","slots":{{"course":"멀티 에이전트 AI 오케스트레이션 캠프"}},"confidence":0.85}}
+"비전공자인데 어떤 과정이 가장 잘 맞아?" → {{"handler":"rag","faq_id":null,"search_query":"비전공자 과정 추천 세 과정 적합성 비교","slots":{{}},"confidence":0.9}}
 "환불 규정 알려줘" → {{"handler":"faq","faq_id":"faq_031","search_query":null,"slots":{{}},"confidence":0.85}}
 "환불해줘" → {{"handler":"cancel","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.9}}
 "상담사랑 통화할래" → {{"handler":"handoff","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.95}}
@@ -257,6 +260,13 @@ async def route(
     # 1) 결정적 패스
     if is_schedule_query(message):
         return RouteDecision("schedule", via="deterministic", confidence=1.0)
+    if consultation_mode_for(message) == "recommendation":
+        return RouteDecision(
+            "rag",
+            search_query=f"{message} 세 과정 적합성 비교 추천",
+            via="deterministic",
+            confidence=1.0,
+        )
     exact = _exact_button_faq(message, faqs)
     if exact:
         return RouteDecision("faq", faq_id=exact, via="deterministic", confidence=1.0)

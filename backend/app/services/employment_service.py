@@ -125,16 +125,25 @@ def should_handoff_after_employment_responsibility(
     if not history:
         return False
 
-    previous_assistant = ""
-    for item in reversed(history):
-        if (item.get("role") or "") == "assistant":
-            previous_assistant = item.get("content") or ""
-            break
-    if not any(marker in previous_assistant for marker in _RESPONSIBILITY_ANSWER_MARKERS):
+    # 이미 한두 차례 생성 답변이 끼어든 기존 대화도 즉시 멈출 수 있도록 최근 이력 안에서
+    # 최초 책임 안내를 찾는다. 이 마커가 없는 다른 주제의 불만에는 적용하지 않는다.
+    recent_assistant_answers = [
+        item.get("content") or ""
+        for item in history[-10:]
+        if (item.get("role") or "") == "assistant"
+    ]
+    if not any(
+        marker in answer
+        for answer in recent_assistant_answers
+        for marker in _RESPONSIBILITY_ANSWER_MARKERS
+    ):
         return False
 
     compact = re.sub(r"\s+", "", (message or "").lower())
-    return any(signal in compact for signal in _FOLLOWUP_COMPLAINT_SIGNALS)
+    # 책임을 다시 따지는 순간부터는 민감한 책임 공방으로 보고 더 생성하지 않는다.
+    return "책임" in compact or any(
+        signal in compact for signal in _FOLLOWUP_COMPLAINT_SIGNALS
+    )
 
 
 def is_specific_employer_outcome_query(message: str) -> bool:

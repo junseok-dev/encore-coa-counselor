@@ -54,7 +54,36 @@ class EmploymentServiceTest(unittest.TestCase):
 
         self.assertTrue(
             should_handoff_after_employment_responsibility(
+                "책임이 없어? 너네는?",
+                history,
+            )
+        )
+        self.assertTrue(
+            should_handoff_after_employment_responsibility(
                 "그게 말이 돼? 결국 아무도 책임 안 진다는 거잖아.",
+                history,
+            )
+        )
+        self.assertTrue(
+            should_handoff_after_employment_responsibility(
+                "나는 너네한테 취업 책임까지 물을 거야.",
+                history,
+            )
+        )
+
+    def test_handoffs_even_after_an_intermediate_generated_reply(self):
+        history = [
+            {"role": "assistant", "content": EMPLOYMENT_RESPONSIBILITY_ANSWER},
+            {"role": "user", "content": "책임이 없어? 너네는?"},
+            {
+                "role": "assistant",
+                "content": "아니요, 저희도 책임이 없어지지는 않아요. 교육은 제대로 제공해야 합니다.",
+            },
+        ]
+
+        self.assertTrue(
+            should_handoff_after_employment_responsibility(
+                "난 아니라고 본다. 무조건 모든 게 너네 책임이야.",
                 history,
             )
         )
