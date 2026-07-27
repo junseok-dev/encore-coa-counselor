@@ -223,6 +223,26 @@ def _extract_required(pattern: str, text: str, field: str, flags: int = re.IGNOR
     return re.sub(r"\s+", " ", match.group(1)).strip()
 
 
+def _split_location_and_method(location: str) -> tuple[str, str]:
+    """홈페이지의 교육장소 문구에 함께 적힌 수업 방식을 별도 항목으로 분리한다."""
+    raw = re.sub(r"\s+", " ", location or "").strip()
+    method_match = re.search(r"(100\s*%\s*)?(?:온\s*[·/]\s*오프라인|오프라인|온라인)", raw)
+    if not method_match:
+        return raw, ""
+
+    compact_method = re.sub(r"\s+", "", method_match.group(0))
+    if compact_method == "100%오프라인":
+        method = "100% 오프라인"
+    elif compact_method == "100%온라인":
+        method = "100% 온라인"
+    else:
+        method = compact_method.replace("온/오프라인", "온·오프라인")
+    place = f"{raw[:method_match.start()]} {raw[method_match.end():]}"
+    place = re.sub(r"\s*[,/|·]\s*$", "", place).strip()
+    place = re.sub(r"\s{2,}", " ", place)
+    return place, method
+
+
 def _extract_training_support(detail_text: str, intro_text: str) -> str:
     combined = f"{detail_text} {intro_text}"
     monthly = re.search(r"월\s*최대\s*([0-9,]+)\s*만\s*원", combined)
@@ -284,11 +304,12 @@ def _extract_course(
         detail_text,
         f"{spec.name} 교육시간",
     )
-    location = _extract_required(
+    location_text = _extract_required(
         r"교육장소\s*(.+?)\s*교육비",
         detail_text,
         f"{spec.name} 교육장소",
     )
+    location, education_method = _split_location_and_method(location_text)
     tuition = _extract_required(
         r"교육비\s*([0-9,]+\s*원\s*(?:→|->)\s*0\s*원|0\s*원)",
         detail_text,
@@ -320,6 +341,7 @@ def _extract_course(
         "schedule_end": end_date,
         "education_time": education_time,
         "location": location,
+        "education_method": education_method,
         "registration_location": registration_location,
         "tuition": tuition,
         "training_support": _extract_training_support(detail_text, intro_text),
@@ -608,6 +630,8 @@ def build_website_context_from_snapshot(
     for course in snapshot.get("courses", []):
         if requested_keys and course.get("key") not in requested_keys:
             continue
+        location, inferred_method = _split_location_and_method(course.get("location", ""))
+        education_method = course.get("education_method") or inferred_method
         sections.append(
             "\n".join(
                 [
@@ -618,7 +642,8 @@ def build_website_context_from_snapshot(
                         f"~ {course.get('schedule_end', '')}"
                     ),
                     f"교육시간: {course.get('education_time', '')}",
-                    f"교육장소: {course.get('location', '')}",
+                    f"교육장소: {location}",
+                    f"교육방법: {education_method}",
                     f"교육비: {course.get('tuition', '')}",
                     f"훈련지원금: {course.get('training_support', '')}",
                     f"과정 상세 URL: {course.get('detail_url', '')}",
@@ -653,22 +678,27 @@ def build_schedule_answer_from_snapshot(snapshot: dict[str, Any], query: str = "
     ]
     if not selected:
         return ""
-    parts = ["현재 홈페이지에서 모집 중인 과정 일정을 안내해 드릴게요."]
+    parts = ["현재 모집 중인 과정은 다음과 같아요 😊"]
     for course in selected:
+        location, inferred_method = _split_location_and_method(course.get("location", ""))
+        education_method = course.get("education_method") or inferred_method or "100% 오프라인"
         parts.append(
             "\n".join(
                 [
                     f"**{course.get('name', '')} {course.get('cohort', '')}**",
                     (
-                        f"- 교육일정: {course.get('schedule_start', '')} "
+                        f"- **교육 일정**: {course.get('schedule_start', '')} "
                         f"~ {course.get('schedule_end', '')}"
                     ),
-                    f"- 교육시간: {course.get('education_time', '')}",
-                    f"- 교육장소: {course.get('location', '')}",
-                    f"- 교육비: {course.get('tuition', '')}",
-                    f"- 훈련지원금: {course.get('training_support', '')}",
-                    f"- [과정 자세히 보기]({course.get('detail_url', '')})",
-                    f"- [지원서 확인하기]({course.get('registration_url', '')})",
+                    f"- **교육 시간**: {course.get('education_time', '')}",
+                    f"- **교육 장소**: {location}",
+                    f"- **교육 방법**: {education_method}",
+                    f"- **교육비**: {course.get('tuition', '')}",
+                    f"- **훈련 지원금**: {course.get('training_support', '')}",
+                    (
+                        f"- **바로가기**: [과정 자세히 보기]({course.get('detail_url', '')}) · "
+                        f"[지원서 확인하기]({course.get('registration_url', '')})"
+                    ),
                 ]
             )
         )

@@ -69,6 +69,8 @@ class WebsiteCourseServiceTest(unittest.TestCase):
         self.assertEqual(3, len(snapshot["courses"]))
         self.assertEqual("2기", snapshot["courses"][0]["cohort"])
         self.assertEqual("2026.07.30", snapshot["courses"][0]["schedule_start"])
+        self.assertNotIn("오프라인", snapshot["courses"][0]["location"])
+        self.assertEqual("100% 오프라인", snapshot["courses"][0]["education_method"])
         self.assertIn("총 240만 원", snapshot["courses"][0]["training_support"])
         self.assertNotIn("총 180만 원", snapshot["courses"][0]["training_support"])
 
@@ -100,7 +102,21 @@ class WebsiteCourseServiceTest(unittest.TestCase):
         )
         self.assertIn("데이터 분석 & AI 머신러닝 캠프 2기", answer)
         self.assertIn("2026.08.13", answer)
+        self.assertIn("**교육 장소**: 동작캠퍼스(서울) *역 도보 5분", answer)
+        self.assertIn("**교육 방법**: 100% 오프라인", answer)
         self.assertNotIn("오케스트레이션 캠프", answer)
+
+    def test_schedule_answer_splits_method_from_legacy_location(self):
+        snapshot = build_snapshot_from_html(self._pages())
+        course = snapshot["courses"][0]
+        course.pop("education_method")
+        course["location"] = "동작캠퍼스, 100% 오프라인"
+
+        answer = build_schedule_answer_from_snapshot(snapshot, "오케스트레이션 모집 일정")
+
+        self.assertIn("**교육 장소**: 동작캠퍼스", answer)
+        self.assertIn("**교육 방법**: 100% 오프라인", answer)
+        self.assertNotIn("**교육 장소**: 동작캠퍼스, 100% 오프라인", answer)
 
 
 if __name__ == "__main__":
