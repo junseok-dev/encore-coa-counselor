@@ -1,5 +1,7 @@
 import re
 
+from app.services.consultation_service import consultation_mode_for
+
 
 SPECIFIC_EMPLOYER_OUTCOME_ANSWER = (
     "특정 기업 취업은 이 과정 수강만으로 가능 여부나 취업 규모를 판단할 수 없어요.\n\n"
@@ -151,6 +153,11 @@ def is_specific_employer_outcome_query(message: str) -> bool:
     text = (message or "").lower()
     compact = re.sub(r"\s+", "", text)
     if not any(signal in compact for signal in _EMPLOYMENT_SIGNALS):
+        return False
+
+    # 취업을 목표로 자신에게 맞는 교육 과정을 묻는 질문은 기업 합격 가능성 문의가 아니다.
+    # 특정 기업명이 함께 있더라도 과정 추천 RAG에서 직무·커리큘럼 적합성을 설명하게 한다.
+    if consultation_mode_for(message) == "recommendation":
         return False
 
     # 엔코아 단독 채용 전형은 별도의 검증된 FAQ가 있으므로 일반 취업지원 경로에서 답한다.

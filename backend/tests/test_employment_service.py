@@ -20,6 +20,18 @@ class EmploymentServiceTest(unittest.TestCase):
         self.assertFalse(is_specific_employer_outcome_query("수료 후 어디로 취업하나요?"))
         self.assertFalse(is_specific_employer_outcome_query("엔코아 단독 채용 전형이 있나요?"))
 
+    def test_does_not_capture_course_recommendation_for_ai_employment(self):
+        self.assertFalse(
+            is_specific_employer_outcome_query(
+                "비전공자인데 AI 쪽으로 취업하고 싶어. 어떤 과정이 가장 잘 맞아?"
+            )
+        )
+        self.assertFalse(
+            is_specific_employer_outcome_query(
+                "하이닉스 취업을 준비하려면 어떤 과정을 선택해야 하나요?"
+            )
+        )
+
     def test_answer_does_not_imply_specific_employer_success(self):
         self.assertNotIn("노려볼 수", SPECIFIC_EMPLOYER_OUTCOME_ANSWER)
         self.assertNotIn("취업 가능", SPECIFIC_EMPLOYER_OUTCOME_ANSWER)

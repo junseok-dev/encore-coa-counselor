@@ -11,6 +11,12 @@ class ConsultationServiceTest(unittest.TestCase):
         self.assertEqual("recommendation", consultation_mode_for("비전공자인데 어떤 과정이 좋아요?"))
         self.assertEqual("recommendation", consultation_mode_for("저한테 맞는 과정 추천해 주세요"))
         self.assertEqual("recommendation", consultation_mode_for("RAG에 관심 있으면 어느 과정을 선택해야 해요?"))
+        self.assertEqual(
+            "recommendation",
+            consultation_mode_for(
+                "비전공자인데 AI 쪽으로 취업하고 싶어. 어떤 과정이 가장 잘 맞아?"
+            ),
+        )
 
     def test_classifies_situation_questions(self):
         self.assertEqual("situation", consultation_mode_for("주말 알바와 수업을 병행할 수 있나요?"))
