@@ -1,4 +1,4 @@
-# 엔코어캠퍼스 AI 상담 챗봇.
+# 엔코아 AI 캠퍼스 상담 챗봇
 
 > 교육 과정 안내 및 상담을 위한 문서 기반 RAG 챗봇 시스템
 
@@ -26,7 +26,7 @@
 
 ## 1. 프로젝트 개요
 
-엔코어캠퍼스의 교육 과정(AI 오케스트레이션, ML 엔지니어, MLOps 등) 관련 문서와 FAQ를 기반으로 사용자 질문에 자동 답변하는 상담 챗봇입니다.
+엔코아 AI 캠퍼스의 교육 과정(AI 오케스트레이션, ML 엔지니어, MLOps 등) 관련 문서·FAQ와 공식 홈페이지 최신 정보를 기반으로 사용자 질문에 자동 답변하는 상담 챗봇입니다.
 
 > 📈 최초 릴리스 이후 운영 로그를 분석하며 라우팅·검색·모델·답변 스타일을 단계적으로 개선해 왔습니다. 무엇이 왜 어떻게 바뀌었고 결과가 어땠는지는 **[15. 프로젝트 진화 (Before → After)](#15-프로젝트-진화-before--after)** 에 정리되어 있습니다.
 
@@ -42,6 +42,8 @@
 - 관리자 대시보드: 문서 업로드/승인, FAQ 관리, 프롬프트 편집, 상담 기록 조회, 데이터 관리, DB 브라우저(행 편집·삭제 + 안전 테이블 DROP), 권한 관리, 설정
 - DB 브라우저 호버 툴팁 + 편집 불가 사유 안내 — 잘못 만지면 안 되는 테이블에 이유까지 표시
 - 공식 홈페이지 자동 안내 — 자료가 부족하면 답변 끝에 `https://encorecampus.ai/` 마크다운 링크 자동 부착
+- **공식 홈페이지 일일 동기화** — 과정 상세 3개·신청서 3개·소개 페이지를 24시간마다 확인하고, 검증된 과정명·기수·교육일정·시간·장소·교육비·훈련지원금을 최신 스냅샷으로 반영
+- **문서 우선 + 홈페이지 최신성 우선** — 과정 상세는 승인 문서를 기본으로 사용하되, 문서에 없거나 같은 항목이 홈페이지와 충돌하면 공식 홈페이지 최신 정보를 우선 적용
 - 채널톡 상담 매니저 연결 자동 승격 — 응답 본문에서 "채널톡" 언급을 감지해 파란 버튼 자동 노출
 - 모바일 폼팩터 채팅 UI — 둥근 카드 + 그라데이션 배경, 스크롤 위치 conversation별 복원
 - 말풍선 분할 가이드 — 맥락 전환·호흡·항목 단위 3단 기준, 의미 이모티콘(📅 💰 🎓 💻 등)으로 구조 시각화
@@ -72,6 +74,7 @@
 | 암호화            | `cryptography` (Fernet 대칭 암호화)                                       |
 | 인증              | `google-auth[requests]` + `PyJWT` (Google OAuth 2.0 + JWT)              |
 | 엑셀 내보내기     | `openpyxl`                                                                |
+| 홈페이지 동기화   | Python 표준 라이브러리 (`urllib`, `HTMLParser`) + RDS 스냅샷              |
 
 ### 프론트엔드
 
@@ -122,6 +125,8 @@
 │                         │  ├ guardrail_service.py(안전 필터)  │ │
 │                         │  ├ prompt_service.py   (프롬프트)   │ │
 │                         │  ├ admin_service.py    (문서 관리)  │ │
+│                         │  ├ website_course_service.py         │ │
+│                         │  │                    (홈페이지 동기화)│ │
 │                         │  └ storage_service.py  (S3 연동)    │ │
 │                         └──────────────────────────────────────┘ │
 │                                    │                             │
@@ -138,6 +143,7 @@
 │  │ chunks            │         ↕ (동기화)                        │
 │  │ faqs              │      S3 ↔ EC2                            │
 │  │ prompt_configs    │                                           │
+│  │ app_settings      │  ← 모델 설정 + 홈페이지 최신 스냅샷       │
 │  │ admin_audit_logs  │                                           │
 │  │ custom_tables     │  ← 데이터 관리: 테이블 메타데이터           │
 │  │ custom_columns    │  ← 데이터 관리: 컬럼 정의                   │
@@ -148,6 +154,8 @@
                       ▼ OpenAI API
               gpt-5.4-mini  +  text-embedding-3-large
 ```
+
+공식 홈페이지 동기화는 FastAPI 기동 직후 백그라운드 태스크로 시작됩니다. 매시간 만료 여부만 확인하고, 마지막 정상 수집으로부터 24시간이 지났을 때만 외부 페이지를 다시 요청합니다.
 
 ---
 
@@ -259,6 +267,51 @@ REGULATION_FILES = ["national_training_card_eligibility",
 LAW_FILES        = ["privacy_law", "fair_labeling_law"]
 ```
 
+### 4.5 공식 홈페이지 최신 정보 동기화
+
+`website_course_service.py`가 다음 7개 페이지를 하나의 검증 단위로 수집합니다.
+
+| 구분 | URL |
+| --- | --- |
+| 멀티 에이전트 AI 오케스트레이션 | `https://encorecampus.ai/orchestration` |
+| 데이터 분석 & AI 머신러닝 | `https://encorecampus.ai/ml` |
+| AI Ready 데이터 엔지니어링 | `https://encorecampus.ai/mlops` |
+| 홈페이지 소개 | `https://encorecampus.ai/introduce` |
+| 과정별 신청서 | `/registration_orchestration`, `/registration_ml`, `/registration_mlops` |
+
+```text
+앱 기동 또는 매시간 만료 확인
+        │
+        ├─ 마지막 정상 수집 < 24시간 → 기존 스냅샷 사용
+        │
+        └─ 24시간 경과
+              │
+              ▼
+       홈페이지 7개 병렬 수집
+              │
+              ▼
+       필드 추출 + 교차 검증
+       - 상세 페이지: 일정·시간·장소·교육비·훈련지원금
+       - 신청서: 현재 모집 기수
+       - 상세 개강일과 신청서 개강일 일치 여부
+              │
+       ┌──────┴──────┐
+       │ 정상         │ 실패/불일치
+       ▼              ▼
+ app_settings에       마지막 정상본 유지
+ 스냅샷 원자 교체      + 실패 상태 기록
+```
+
+정보 우선순위:
+
+1. **과정 상세 내용**은 관리자 승인 문서를 기본 근거로 사용
+2. 문서에 없는 내용은 공식 홈페이지 스냅샷으로 보완
+3. 문서와 홈페이지의 같은 항목이 다르면 공식 홈페이지 최신 정보 우선
+4. 일정·기수·교육시간·장소·교육비·훈련지원금은 구조화된 홈페이지 필드를 우선
+5. 신청서에 기수가 명시되지 않거나 상세 페이지와 날짜가 다르면 추정하지 않고 새 스냅샷을 거부
+
+페이지 원본 HTML과 임베딩을 매일 누적하지 않습니다. 정제된 최신 스냅샷만 `app_settings`에 저장하므로 EC2 디스크와 OpenAI 임베딩 비용이 증가하지 않습니다.
+
 ---
 
 ## 5. 응답 처리 흐름
@@ -285,7 +338,7 @@ POST /api/chat/stream
         ▼
 [3] handler 분기
     greeting     → source="faq"      (인사 고정 응답)
-    schedule     → source="faq"      (개강 일정 FAQ)
+    schedule     → source="faq"      (공식 홈페이지 최신 일정, 미수집 시 기존 FAQ 폴백)
     faq(faq_id)  → source="faq"      (라우터가 고른 FAQ 답변을 새 상담 말투로 LLM 재서술)
     rag(query)   → LangGraph(retrieve → generate → verify) → source="document" | "ai"
     cancel       → source="handoff"  (채널톡 버튼 자동 노출)
@@ -325,7 +378,7 @@ alias에 없는 패러프레이즈("일자리 연결해줘?"→취업지원)도 
 | `chunks`           | 문서 청크                                           | `content`                                            |
 | `faqs`             | FAQ 항목                                            | 암호화 설정에 따라 선택적 적용                         |
 | `prompt_configs`   | 시스템 프롬프트 관리                                | 암호화 설정에 따라 선택적 적용                         |
-| `app_settings`     | 런타임 앱 설정 (활성 LLM 모델 등 — 재시작·.env 없이 영구화) | —                                              |
+| `app_settings`     | 런타임 앱 설정 (활성 LLM 모델, 홈페이지 최신 스냅샷·동기화 상태) | —                                           |
 | `admin_users`      | 관리자 권한 이메일 목록                             | —                                                     |
 | `admin_audit_logs` | 관리자 작업 감시 로그                               | —                                                     |
 | `cancel_requests`  | 취소/환불 요청 기록                                 | —                                                     |
@@ -488,6 +541,7 @@ GitHub Actions (self-hosted runner — EC2 위에서 직접 실행)
                 ▼
         EC2 인스턴스
         ├─ 백엔드: uvicorn (포트 8888)
+        │   └─ 홈페이지 과정정보 백그라운드 동기화 (24시간 주기)
         ├─ 프론트엔드: Vite 빌드 정적 파일
         └─ FAISS 인덱스: EC2 로컬 (/data/faiss_index/)
 ```
@@ -809,6 +863,7 @@ document-chatbot_practice/
 │   │   │   ├── graph_service.py     ← LangGraph 파이프라인 (retrieve→generate→verify, 핵심 사실 시트 상주)
 │   │   │   ├── intent_service.py    ← LLM 의도 분류 (라우터 보조)
 │   │   │   ├── model_settings.py    ← 런타임 LLM 모델 영구화 (app_settings 테이블)
+│   │   │   ├── website_course_service.py ← 홈페이지·신청서 일일 동기화 + 최신정보 컨텍스트
 │   │   │   ├── faq_service.py      ← FAQ 유사도 매칭
 │   │   │   ├── guardrail_service.py← 입력 안전 필터
 │   │   │   ├── admin_service.py    ← 문서 업로드/처리/승인 워크플로우
@@ -823,7 +878,10 @@ document-chatbot_practice/
 │   │       ├── crypto.py           ← Fernet 암호화/복호화
 │   │       └── pdf_converter.py    ← PDF → Markdown 변환
 │   ├── scripts/
-│   │   └── migrate_sqlite_to_rds.py ← SQLite → Aurora RDS 데이터 이전
+│   │   ├── migrate_sqlite_to_rds.py ← SQLite → Aurora RDS 데이터 이전
+│   │   └── sync_website_courses.py  ← 홈페이지 과정정보 즉시 수동 갱신
+│   ├── tests/
+│   │   └── test_website_course_service.py ← 파서·기수/날짜 검증·과정 격리 테스트
 │   └── requirements.txt
 │
 ├── frontend/
@@ -902,6 +960,9 @@ GOOGLE_CLIENT_ID=<Google OAuth 클라이언트 ID>
 # 채널톡·홈페이지
 CHANNEL_TALK_URL=https://...
 HOMEPAGE_URL=https://encorecampus.ai/
+WEBSITE_SYNC_ENABLED=true              # 홈페이지 과정정보 자동 갱신
+WEBSITE_SYNC_INTERVAL_HOURS=24         # 정상 스냅샷 유지 시간
+WEBSITE_FETCH_TIMEOUT_SECONDS=30       # 페이지별 HTTP 제한시간
 
 # LangSmith (선택)
 LANGSMITH_API_KEY=...
@@ -976,6 +1037,8 @@ start_servers.bat
 | 프론트 린트 | `npm run lint` |
 | DB 스키마 자동 적용 | 백엔드 시작 시 `migrate_database()` 자동 실행 |
 | FAISS 인덱스 재구성 | 관리자 페이지 → 문서 검토 → "🗑 FAISS 인덱스 재구성" |
+| 홈페이지 과정정보 즉시 갱신 | `cd backend && python scripts/sync_website_courses.py` |
+| 홈페이지 파서 테스트 | `cd backend && python -m unittest discover -s tests -p "test_*.py" -v` |
 | SQLite → RDS 마이그레이션 | `cd backend && python scripts/migrate_sqlite_to_rds.py` |
 
 ### 트러블슈팅
@@ -985,6 +1048,8 @@ start_servers.bat
 - **OpenAI 401**: API 키 만료 또는 사용량 초과
 - **FAISS 인덱스 없음**: 서버 첫 시작 시 S3에서 다운로드. S3 권한 또는 버킷명 확인
 - **관리자 로그인 실패**: `ADMIN_EMAIL`이 `.env`에 설정돼 있는지 + Google OAuth Client ID가 같은 도메인(localhost)에 등록돼 있는지
+- **홈페이지 정보가 갱신되지 않음**: `app_settings`의 `website_course_sync_status`를 확인하고 `python scripts/sync_website_courses.py`로 수동 갱신. 실패 시 기존 정상 스냅샷은 유지됨
+- **기수가 반영되지 않음**: 과정 신청서에 `N기 (M월 D일 / 캠퍼스)` 형식이 있는지 확인. 상세 페이지 개강일과 다르면 안전상 새 스냅샷을 반영하지 않음
 
 ---
 
@@ -1006,6 +1071,7 @@ start_servers.bat
 | 관측성        | trace 미기록                                    | `wrap_openai`로 전 경로 LangSmith 추적                          | 운영 로그 기반 회귀 검증 루프 확립           |
 | 안전 정책     | 욕설·분노 일괄 차단                             | 디에스컬레이션 (서비스 의도 동반 시 상담 연결)                 | 진성 고객 이탈 방지                          |
 | 응답 동작     | 문서 받아쓰기형 (긴 답·되묻기 루프·자꾸 회피)   | 사실 근거 추론형 상담사 (짧게·결론 먼저·선택지로 닫기) + FAQ 재서술 + 생성 모델 mini | 길이 614→201자·되묻기 63→0%·회피 36→2% (100문항) |
+| 정보 최신성   | FAQ에 개강일·기수를 고정 저장                    | 홈페이지·신청서 일일 스냅샷 + 문서/홈페이지 우선순위 분리                         | 과거 일정 답변 방지·수집 실패 시 정상본 유지 |
 
 ### 1) 라우팅 재설계 — 5겹 휴리스틱 → 1게이트 + 1라우터
 
@@ -1065,6 +1131,15 @@ FAQ 응답도 개선했다. 저장된 FAQ 카드를 그대로 반환하지 않�
 실제 로그 100문항 기준으로 답변 길이 중앙값이 **614자 → 201자**로 줄었다. 되묻기 비율은 **63% → 0%**, 회피 응답은 **36% → 2%**로 개선됐고, 적대적 안전 배터리도 **13/13** 통과했다. 결과적으로 챗봇은 문서를 길게 읽어 주는 FAQ봇에서, 사용자의 질문 의도를 파악해 짧고 명확하게 답하는 상담사형 챗봇에 가까워졌다.
 
 > ⚠️ [12. RAG 품질 평가](#12-rag-품질-평가-결과-ragas)의 RAGAS 수치는 **라우터 재설계·"먼저 답하기" 도입 이전** 측정값이다(RAGAS는 라우팅을 거치지 않고 RAG 코어만 측정). 생성 스타일 변화는 재측정 시 Faithfulness에 반영될 수 있다(상향 기대).
+
+### 8) 과정정보 최신화 — 고정 일정 FAQ → 공식 홈페이지 일일 스냅샷 (2026-07)
+
+- **문제**: 일정 질문이 `faq_btn_009`의 고정 답변으로 즉시 분기되어, 홈페이지에서 새 기수를 모집해도 지난 개강일을 계속 안내할 수 있었다.
+- **수집 범위**: 과정 상세 3개, 과정별 신청서 3개, 소개 페이지 1개를 하루 한 번 확인한다.
+- **검증**: 상세 페이지에서 일정·시간·장소·교육비·훈련지원금을 추출하고, 신청서에서 기수를 추출한다. 신청서의 월·일이 상세 페이지 개강일과 같을 때만 새 스냅샷을 승인한다.
+- **답변 우선순위**: 커리큘럼 등 과정 상세는 승인 문서가 기본이며, 문서에 없거나 홈페이지와 충돌하는 항목만 공식 홈페이지 최신 정보를 우선한다. 일정성 정보는 구조화된 최신 필드를 바로 사용한다.
+- **장애 대응**: HTTP 실패·필드 누락·날짜 불일치가 발생하면 부분 반영하지 않고 마지막 정상 스냅샷을 유지한다.
+- **운영 비용**: 매 질문마다 홈페이지를 요청하거나 전체 RAG를 재임베딩하지 않는다. 정제된 스냅샷만 RDS에 저장해 EC2 디스크와 임베딩 비용 증가를 막는다.
 
 ---
 
