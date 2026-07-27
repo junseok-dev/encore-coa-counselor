@@ -12,6 +12,10 @@ from app.db.database import get_db
 from app.db.models import CancelRequest, ChatLog
 from app.models.chat import ChatRequest, ChatResponse, SuggestedQuestionsResponse
 from app.services.document_service import search_documents
+from app.services.employment_service import (
+    SPECIFIC_EMPLOYER_OUTCOME_ANSWER,
+    is_specific_employer_outcome_query,
+)
 from app.services.faq_service import get_faq_answer_by_id, get_schedule_faq_answer, get_suggested_questions, is_guide_query, is_schedule_query, match_button_faq, match_faq_general, search_faq
 from app.services.graph_service import OUT_OF_SCOPE_ANSWER, run_rag_graph
 from app.services.guardrail_service import check as guardrail_check
@@ -279,6 +283,10 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         # 취업률은 표시·광고법 민감 영역 → LLM/RAG 우회, 확정 수치 없는 안전 답변(결정적 가드).
         answer = EMPLOYMENT_RATE_ANSWER
         source = "faq"
+    elif is_specific_employer_outcome_query(request.message):
+        # 특정 기업 취업 가능성을 취업지원 프로그램만으로 확대 해석하지 않도록 결정적으로 차단한다.
+        answer = SPECIFIC_EMPLOYER_OUTCOME_ANSWER
+        source = "faq"
     else:
         # 하이브리드 라우터: 결정적(일정·버튼) + LLM(의미) 단일 결정 → handler 분기
         decision = await route(request.message, history)
@@ -288,7 +296,9 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             source = "faq"
         elif h == "schedule":
             _sched = get_schedule_faq_answer(request.message)
-            answer = await restyle_faq_answer(_sched, request.message) if _sched else GUIDE_ANSWER
+            # 최신 일정 답변은 필드 라벨까지 결정적으로 구성되어 있다.
+            # LLM 재서술을 거치면 날짜·장소·지원금이 `/`로 압축되어 의미가 모호해지므로 원문을 유지한다.
+            answer = _sched if _sched else GUIDE_ANSWER
             source = "faq"
         elif h == "faq":
             if is_live_course_fact_query(request.message):
@@ -432,6 +442,11 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
             source = "faq"
             async for chunk in _stream_static(EMPLOYMENT_RATE_ANSWER, max_bubbles=10):
                 yield chunk
+        elif is_specific_employer_outcome_query(request.message):
+            # 비스트리밍 경로와 동일하게 특정 기업 합격 가능성의 생성형 추론을 차단한다.
+            source = "faq"
+            async for chunk in _stream_static(SPECIFIC_EMPLOYER_OUTCOME_ANSWER, max_bubbles=10):
+                yield chunk
         else:
             # 하이브리드 라우터: 결정적(일정·버튼) + LLM(의미) 단일 결정 → handler 분기
             decision = await route(request.message, history)
@@ -443,7 +458,8 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
             elif h == "schedule":
                 source = "faq"
                 _sched = get_schedule_faq_answer(request.message)
-                _text = await restyle_faq_answer(_sched, request.message) if _sched else GUIDE_ANSWER
+                # 비스트리밍 경로와 동일하게 구조화된 일정 답변을 그대로 보낸다.
+                _text = _sched if _sched else GUIDE_ANSWER
                 async for chunk in _stream_static(_text, max_bubbles=10):
                     yield chunk
             elif h == "faq":
