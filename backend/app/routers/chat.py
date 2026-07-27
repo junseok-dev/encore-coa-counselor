@@ -13,8 +13,11 @@ from app.db.models import CancelRequest, ChatLog
 from app.models.chat import ChatRequest, ChatResponse, SuggestedQuestionsResponse
 from app.services.document_service import search_documents
 from app.services.employment_service import (
+    EMPLOYMENT_RESPONSIBILITY_ANSWER,
     SPECIFIC_EMPLOYER_OUTCOME_ANSWER,
+    is_employment_responsibility_query,
     is_specific_employer_outcome_query,
+    should_handoff_after_employment_responsibility,
 )
 from app.services.faq_service import get_faq_answer_by_id, get_schedule_faq_answer, get_suggested_questions, is_guide_query, is_schedule_query, match_button_faq, match_faq_general, search_faq
 from app.services.graph_service import OUT_OF_SCOPE_ANSWER, run_rag_graph
@@ -275,13 +278,24 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         source = "handoff"
         processing_status = "handoff"
 
-    blocked = guardrail_check(request.message)
-    if blocked:
+    responsibility_complaint = should_handoff_after_employment_responsibility(
+        request.message,
+        history,
+    )
+    blocked = None if responsibility_complaint else guardrail_check(request.message)
+    if responsibility_complaint:
+        # 책임 범위 안내 뒤에도 불만·항의가 이어지면 생성 답변을 반복하지 않고 사람 상담으로 전환한다.
+        _set_handoff()
+    elif blocked:
         answer = blocked
         source = "guardrail"
     elif is_employment_rate_query(request.message):
         # 취업률은 표시·광고법 민감 영역 → LLM/RAG 우회, 확정 수치 없는 안전 답변(결정적 가드).
         answer = EMPLOYMENT_RATE_ANSWER
+        source = "faq"
+    elif is_employment_responsibility_query(request.message):
+        # 취업 결과의 책임 소재를 묻는 정보성 질문은 불만·항의나 사람 연결 요청으로 취급하지 않는다.
+        answer = EMPLOYMENT_RESPONSIBILITY_ANSWER
         source = "faq"
     elif is_specific_employer_outcome_query(request.message):
         # 특정 기업 취업 가능성을 취업지원 프로그램만으로 확대 해석하지 않도록 결정적으로 차단한다.
@@ -432,8 +446,18 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
             db.add(CancelRequest(session_id=request.session_id, message=request.message, status="requested"))
             db.commit()
 
-        blocked = guardrail_check(request.message)
-        if blocked:
+        responsibility_complaint = should_handoff_after_employment_responsibility(
+            request.message,
+            history,
+        )
+        blocked = None if responsibility_complaint else guardrail_check(request.message)
+        if responsibility_complaint:
+            # 욕설/분노 가드보다 먼저 처리해 책임 안내 후 불만은 실제 상담 연결 버튼으로 이어지게 한다.
+            source = "handoff"
+            processing_status = "handoff"
+            async for chunk in _stream_static(get_prompt_value("handoff_prompt")):
+                yield chunk
+        elif blocked:
             source = "guardrail"
             async for chunk in _stream_static(blocked):
                 yield chunk
@@ -441,6 +465,11 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
             # 취업률은 표시·광고법 민감 영역 → LLM/RAG 우회, 확정 수치 없는 안전 답변(결정적 가드).
             source = "faq"
             async for chunk in _stream_static(EMPLOYMENT_RATE_ANSWER, max_bubbles=10):
+                yield chunk
+        elif is_employment_responsibility_query(request.message):
+            # 비스트리밍 경로와 동일하게 챗봇이 책임 범위를 직접 설명한다.
+            source = "faq"
+            async for chunk in _stream_static(EMPLOYMENT_RESPONSIBILITY_ANSWER, max_bubbles=10):
                 yield chunk
         elif is_specific_employer_outcome_query(request.message):
             # 비스트리밍 경로와 동일하게 특정 기업 합격 가능성의 생성형 추론을 차단한다.

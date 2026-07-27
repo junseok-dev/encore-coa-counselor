@@ -87,6 +87,7 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 [중요 규칙]
 - '취업 지원/취업 도와줘/일자리 연결/취업 연계/취업이 연계되어 있나/수료 후 취업·진로·진출/수료하면 어디로' = faq_btn_005(취업지원) — 이건 절대 out_of_scope가 아니다. '선발 과정/어떻게 뽑아/들어가려면 뭐부터' = faq_btn_004(선발). 둘을 섞지 마세요.
 - '취업률 몇 %/취업 퍼센트' 처럼 수치만 묻는 것 = faq_btn_002b(취업률). 그 외 '취업 지원'은 faq_btn_005.
+- '대기업에 못 가면 누구 책임이야?/취업이 안 되면 교육기관 책임인가요?'처럼 취업 결과의 책임 범위를 묻는 질문은 정보성 질문이다. 사람 연결 요청이나 처리 요청이 아니므로 handoff가 아니라 rag로 보냅니다.
 - '교육 프로그램/과정 소개해줘, 어떤 과정 있어' = faq_btn_002(프로그램 소개). 취업률(002b)과 헷갈리지 마세요.
 - '세 과정 차이/비교/뭐가 달라' = rag(문서 비교). guide가 아님.
 - '멀티 에이전트 AI 오케스트레이션 캠프(오케스트레이션)/데이터 분석 & AI 머신러닝 캠프(머신러닝)/AI Ready 데이터 엔지니어링 캠프(MLOps·데이터 엔지니어링) 알려줘/소개/커리큘럼/어떤 사람한테 맞아' = 직접 FAQ가 아니므로 rag(과정 상세는 문서에서). 단 '과정 일정/개강'은 schedule.
@@ -107,6 +108,7 @@ ROUTER_PROMPT_TEMPLATE = """당신은 엔코아 AI 캠퍼스 챗봇의 라우터
 "오늘 날씨 어때?" → {{"handler":"out_of_scope","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.9}}
 "취업이 연계되어 있나요?" → {{"handler":"faq","faq_id":"faq_btn_005","search_query":null,"slots":{{}},"confidence":0.9}}
 "수료하면 어디로 갈 수 있어?" → {{"handler":"faq","faq_id":"faq_btn_005","search_query":null,"slots":{{}},"confidence":0.85}}
+"대기업에 못 가면 누구 책임이야?" → {{"handler":"rag","faq_id":null,"search_query":"취업 결과와 취업지원의 책임 범위","slots":{{}},"confidence":0.9}}
 "뭔소리야?" (직전: 과정 안내) → {{"handler":"rag","faq_id":null,"search_query":"직전 안내한 과정 쉬운 재설명","slots":{{}},"confidence":0.7}}
 "엥? 이해가 안 돼" → {{"handler":"rag","faq_id":null,"search_query":null,"slots":{{}},"confidence":0.7}}
 """

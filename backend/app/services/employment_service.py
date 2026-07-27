@@ -15,7 +15,65 @@ SPECIFIC_EMPLOYER_OUTCOME_ANSWER = (
     "해당 시점의 채용 공고와 기업 심사 결과에 따라 달라집니다."
 )
 
+EMPLOYMENT_RESPONSIBILITY_ANSWER = (
+    "대기업에 취업하지 못했다고 해서 수강생이나 교육기관 어느 한쪽의 책임이라고 "
+    "단정할 수는 없어요.\n\n"
+    "엔코아 AI 캠퍼스는 안내한 교육과 취업지원 프로그램을 제공할 책임이 있고, "
+    "실제 채용 여부는 지원자의 준비 상황, 당시 채용 공고와 기업의 심사 결과에 따라 결정됩니다.\n\n"
+    "즉, 취업 준비는 지원하지만 특정 기업 취업을 보장하거나 채용 결과를 책임지는 구조는 아니에요."
+)
+
 _EMPLOYMENT_SIGNALS = ("취업", "입사", "채용", "합격")
+_EMPLOYMENT_CONTEXT_SIGNALS = _EMPLOYMENT_SIGNALS + (
+    "대기업",
+    "중견기업",
+    "중소기업",
+    "회사",
+    "직장",
+)
+_RESPONSIBILITY_SIGNALS = (
+    "누구책임",
+    "누가책임",
+    "책임져",
+    "책임이야",
+    "책임인가",
+    "책임입니까",
+    "책임인가요",
+)
+_RESPONSIBILITY_ANSWER_MARKERS = (
+    "교육과 취업지원 프로그램을 제공할 책임",
+    "채용 결과를 책임지는 구조는 아니에요",
+)
+_FOLLOWUP_COMPLAINT_SIGNALS = (
+    "불만",
+    "납득안",
+    "납득이안",
+    "말이돼",
+    "말이되",
+    "장난",
+    "이상하",
+    "황당",
+    "어이없",
+    "책임회피",
+    "책임안",
+    "책임을안",
+    "결국책임",
+    "말바꾸",
+    "못믿",
+    "신뢰가안",
+    "속인",
+    "사기",
+    "과장",
+    "기만",
+    "피해",
+    "항의",
+    "따질",
+    "고소",
+    "신고",
+    "최악",
+    "화나",
+    "짜증",
+)
 _KNOWN_EXTERNAL_EMPLOYERS = (
     "하이닉스",
     "sk하이닉스",
@@ -48,6 +106,35 @@ _GENERIC_TARGETS = {
     "스타트업",
     "수료후어디",
 }
+
+
+def is_employment_responsibility_query(message: str) -> bool:
+    """취업 결과의 책임 소재를 묻는 정보성 질문을 사람 연결 요청과 구분한다."""
+    compact = re.sub(r"\s+", "", (message or "").lower())
+    return (
+        any(signal in compact for signal in _EMPLOYMENT_CONTEXT_SIGNALS)
+        and any(signal in compact for signal in _RESPONSIBILITY_SIGNALS)
+    )
+
+
+def should_handoff_after_employment_responsibility(
+    message: str,
+    history: list[dict] | None,
+) -> bool:
+    """책임 안내 직후 이어진 불만·항의는 추가 생성 대신 상담 매니저에게 연결한다."""
+    if not history:
+        return False
+
+    previous_assistant = ""
+    for item in reversed(history):
+        if (item.get("role") or "") == "assistant":
+            previous_assistant = item.get("content") or ""
+            break
+    if not any(marker in previous_assistant for marker in _RESPONSIBILITY_ANSWER_MARKERS):
+        return False
+
+    compact = re.sub(r"\s+", "", (message or "").lower())
+    return any(signal in compact for signal in _FOLLOWUP_COMPLAINT_SIGNALS)
 
 
 def is_specific_employer_outcome_query(message: str) -> bool:
