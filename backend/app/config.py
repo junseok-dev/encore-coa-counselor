@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_s3_bucket: str = ""
     aws_s3_prefix: str = "document-chatbot"
+    aws_ec2_instance_id: str = ""
 
     channel_talk_url: str = ""
     homepage_url: str = "https://encorecampus.ai/"

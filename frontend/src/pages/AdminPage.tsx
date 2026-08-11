@@ -1,8 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
+import {
+  Bot,
+  BarChart3,
+  HelpCircle,
+  Database,
+  FileCheck2,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  RefreshCw,
+  ScrollText,
+  Settings,
+  ShieldCheck,
+  Sparkles,
+  Table2,
+  WalletCards,
+} from 'lucide-react';
 import { adminApi, clearAdminToken, getAdminToken, saveAdminToken } from '../services/api';
 import InfoTooltip from '../components/admin/InfoTooltip';
+import OperationsDashboard from '../components/admin/OperationsDashboard';
+import OperationsAnalytics from '../components/admin/OperationsAnalytics';
+import CostManagement from '../components/admin/CostManagement';
 import {
   AdminDocument,
   AdminDocumentDetail,
@@ -16,13 +36,59 @@ import {
   DbTableMeta,
   EncryptionSettings,
   ModelSettings,
+  OperationsDashboardData,
+  OperationsAnalyticsData,
   PermissionsData,
   ProcessingLog,
   PromptConfig,
   PromptPayload,
+  SystemHealthData,
 } from '../types';
 
-type TabKey = 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'settings' | 'permissions';
+type TabKey = 'dashboard' | 'analytics' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'settings' | 'permissions';
+
+const NAV_GROUPS: { label: string; items: { key: TabKey; label: string; icon: typeof LayoutDashboard }[] }[] = [
+  {
+    label: '운영',
+    items: [
+      { key: 'dashboard' as const, label: '대시보드', icon: LayoutDashboard },
+      { key: 'analytics' as const, label: '데이터 분석', icon: BarChart3 },
+      { key: 'costs' as const, label: '비용 관리', icon: WalletCards },
+    ],
+  },
+  {
+    label: '콘텐츠',
+    items: [
+      { key: 'documents' as const, label: '문서 검토', icon: FileCheck2 },
+      { key: 'faqs' as const, label: 'FAQ 관리', icon: HelpCircle },
+      { key: 'prompts' as const, label: '프롬프트', icon: Bot },
+    ],
+  },
+  {
+    label: '관리 도구',
+    items: [
+      { key: 'chats' as const, label: '로그·내보내기', icon: ScrollText },
+      { key: 'data' as const, label: '데이터 관리', icon: Table2 },
+      { key: 'db' as const, label: 'DB 브라우저', icon: Database },
+      { key: 'settings' as const, label: '설정', icon: Settings },
+      { key: 'permissions' as const, label: '권한 관리', icon: ShieldCheck },
+    ],
+  },
+];
+
+const PAGE_META: Record<TabKey, { title: string; description: string }> = {
+  dashboard: { title: '운영 대시보드', description: '방문과 대화 흐름, 상담 전환, 취소·안전 신호를 한눈에 확인합니다.' },
+  analytics: { title: '데이터 분석', description: '월별·시간대별 이용 패턴과 질문·답변 유형을 분석합니다.' },
+  costs: { title: '비용 관리', description: '실제 원화 청구액을 계정·서비스·일자별로 관리하고 분석합니다.' },
+  documents: { title: '문서 검토', description: '업로드 문서를 검토하고 승인된 지식만 운영 검색에 반영합니다.' },
+  faqs: { title: 'FAQ 관리', description: '자주 묻는 질문과 답변, 검색 키워드를 관리합니다.' },
+  prompts: { title: '프롬프트', description: '상담 응답과 시스템 동작을 결정하는 프롬프트를 관리합니다.' },
+  chats: { title: '로그·내보내기', description: '채팅·처리·감사 로그를 조회하고 필요한 데이터를 내보냅니다.' },
+  data: { title: '데이터 관리', description: '관리자 정의 데이터 테이블과 행·열 데이터를 관리합니다.' },
+  db: { title: 'DB 브라우저', description: '서비스 데이터베이스 구조와 레코드를 직접 확인합니다.' },
+  settings: { title: '설정', description: 'AI 모델과 데이터 암호화 정책을 설정합니다.' },
+  permissions: { title: '권한 관리', description: '관리자 계정과 최상위 관리자 권한을 관리합니다.' },
+};
 
 interface ModelMeta {
   desc: string;
@@ -149,7 +215,7 @@ export default function AdminPage() {
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<TabKey>('documents');
+  const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState('');
@@ -161,6 +227,12 @@ export default function AdminPage() {
   const [processingLogs, setProcessingLogs] = useState<ProcessingLog[]>([]);
   const [chatLogs, setChatLogs] = useState<ChatLog[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [operationsData, setOperationsData] = useState<OperationsDashboardData | null>(null);
+  const [operationsLoading, setOperationsLoading] = useState(false);
+  const [analyticsData, setAnalyticsData] = useState<OperationsAnalyticsData | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
 
   const [selectedDocument, setSelectedDocument] = useState<AdminDocumentDetail | null>(null);
   const [documentLoading, setDocumentLoading] = useState(false);
@@ -257,12 +329,13 @@ export default function AdminPage() {
     setLoading(true);
     setLoadError('');
     try {
-      const [sessionData, documentData, faqData, promptData, logData] = await Promise.all([
+      const [sessionData, documentData, faqData, promptData, logData, operations] = await Promise.all([
         adminApi.getSessions(),
         adminApi.getDocuments(),
         adminApi.getFaqs(),
         adminApi.getPrompts(),
         adminApi.getLogs(),
+        adminApi.getOperationsDashboard(),
       ]);
       setSessions(sessionData);
       setDocuments(documentData.documents);
@@ -271,10 +344,64 @@ export default function AdminPage() {
       setProcessingLogs(logData.processing_logs);
       setChatLogs(logData.chat_logs);
       setAuditLogs(logData.audit_logs);
+      setOperationsData(operations);
     } catch {
       setLoadError('관리자 데이터를 불러오지 못했습니다.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadOperations = async () => {
+    setOperationsLoading(true);
+    try {
+      setOperationsData(await adminApi.getOperationsDashboard());
+    } catch {
+      setLoadError('운영 현황을 불러오지 못했습니다.');
+    } finally {
+      setOperationsLoading(false);
+    }
+  };
+
+  const loadSystemHealth = async () => {
+    setHealthLoading(true);
+    try {
+      setSystemHealth(await adminApi.getSystemHealth());
+    } catch {
+      const checkedAt = new Date().toISOString();
+      setSystemHealth({
+        overall_status: 'critical',
+        generated_at: checkedAt,
+        checks: [
+          { key: 'application', label: '백엔드 API', status: 'critical', message: '백엔드 서버가 응답하지 않습니다.', latency_ms: null, checked_at: checkedAt, details: {} },
+          { key: 'database_read', label: 'DB 조회', status: 'unknown', message: '백엔드 장애로 조회 상태를 확인할 수 없습니다.', latency_ms: null, checked_at: checkedAt, details: {} },
+          { key: 'database_write', label: 'DB 저장', status: 'unknown', message: '백엔드 장애로 저장 상태를 확인할 수 없습니다.', latency_ms: null, checked_at: checkedAt, details: {} },
+          { key: 'ec2', label: 'EC2', status: 'unknown', message: '백엔드 장애로 EC2 상태를 확인할 수 없습니다.', latency_ms: null, checked_at: checkedAt, details: {} },
+        ],
+      });
+    } finally {
+      setHealthLoading(false);
+    }
+  };
+
+  const loadAnalytics = async () => {
+    setAnalyticsLoading(true);
+    try {
+      setAnalyticsData(await adminApi.getOperationsAnalytics());
+    } catch {
+      setLoadError('운영 분석 데이터를 불러오지 못했습니다.');
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
+
+  const handleUpdateOperationsAlert = async (alertId: number, status: 'open' | 'checking' | 'resolved') => {
+    try {
+      await adminApi.updateOperationsAlert(alertId, status);
+      await loadOperations();
+      setNotice(status === 'checking' ? '긴급 항목을 확인 중으로 변경했습니다.' : status === 'resolved' ? '긴급 항목을 처리 완료했습니다.' : '긴급 항목을 다시 열었습니다.');
+    } catch {
+      setNotice('긴급 항목 상태를 변경하지 못했습니다.');
     }
   };
 
@@ -291,6 +418,7 @@ export default function AdminPage() {
   useEffect(() => {
     if (authenticated) {
       void loadDashboard();
+      void loadSystemHealth();
       void loadDataTables();
       void loadDbTables();
     }
@@ -320,6 +448,21 @@ export default function AdminPage() {
       void loadPermissions();
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'analytics' && authenticated) {
+      void loadAnalytics();
+    }
+  }, [activeTab, authenticated]);
+
+  useEffect(() => {
+    if (!authenticated || activeTab !== 'dashboard') return;
+    const timer = window.setInterval(() => {
+      void loadOperations();
+      void loadSystemHealth();
+    }, 20_000);
+    return () => window.clearInterval(timer);
+  }, [activeTab, authenticated]);
 
   const loadEncryptionSettings = async () => {
     setEncryptionLoading(true);
@@ -908,54 +1051,121 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-        <div className="rounded-3xl bg-[linear-gradient(135deg,_#0f172a,_#164e63)] p-6 text-white shadow-xl">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.28em] text-cyan-200">Operator Console</p>
-              <h1 className="mt-2 text-3xl font-semibold">승인형 운영 흐름으로 문서, FAQ, 프롬프트, 대화 데이터를 관리합니다.</h1>
-              <p className="mt-2 max-w-3xl text-sm text-cyan-50/85">검토 대기 문서 {reviewCount}건. 승인 전까지는 운영 검색/RAG에 반영되지 않습니다.</p>
+    <div className="min-h-screen bg-[#f5f7fb] text-slate-900">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-72 flex-col border-r border-slate-800 bg-[#08111f] text-white lg:flex">
+        <div className="flex h-20 items-center gap-3 border-b border-white/10 px-6">
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/20">
+            <Sparkles className="h-5 w-5" />
+          </span>
+          <div>
+            <p className="text-sm font-bold tracking-wide">COA CONTROL</p>
+            <p className="text-[11px] text-slate-400">상담 운영 콘솔</p>
+          </div>
+        </div>
+
+        <nav className="flex-1 space-y-7 overflow-y-auto px-4 py-6">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label}>
+              <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">{group.label}</p>
+              <div className="space-y-1">
+                {group.items.map(({ key, label, icon: Icon }) => (
+                  <button
+                    key={key}
+                    onClick={() => setActiveTab(key)}
+                    className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${activeTab === key ? 'bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-950/30' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}
+                  >
+                    <Icon className="h-[18px] w-[18px]" />
+                    <span>{label}</span>
+                    {key === 'documents' && reviewCount > 0 && (
+                      <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold ${activeTab === key ? 'bg-slate-950/15 text-slate-950' : 'bg-amber-400/15 text-amber-300'}`}>{reviewCount}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+          ))}
+        </nav>
+
+        <div className="border-t border-white/10 p-4">
+          <div className="mb-3 flex items-center gap-3 rounded-xl bg-white/5 px-3 py-3">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-400/15 text-emerald-300"><ShieldCheck className="h-4 w-4" /></span>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-white">관리자 접속 중</p>
+              <p className="truncate text-[10px] text-slate-400">보호된 운영 세션</p>
+            </div>
+          </div>
+          <button onClick={() => { clearAdminToken(); setAuthenticated(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white">
+            <LogOut className="h-4 w-4" /> 로그아웃
+          </button>
+        </div>
+      </aside>
+
+      <div className="lg:pl-72">
+        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-[1680px] items-center justify-between gap-4 px-4 py-4 sm:px-6 xl:px-8">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Menu className="h-5 w-5 text-slate-400 lg:hidden" />
+                <h1 className="truncate text-xl font-bold tracking-tight text-slate-950">{PAGE_META[activeTab].title}</h1>
+              </div>
+              <p className="mt-1 hidden text-xs text-slate-500 sm:block">{PAGE_META[activeTab].description}</p>
+            </div>
+            <div className="flex items-center gap-2">
               <button
                 onClick={async () => {
                   setLoading(true);
                   await loadDashboard();
                   if (selectedDocument) await openDocument(selectedDocument.document.id);
                 }}
-                disabled={loading}
-                className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20 disabled:opacity-60"
+                disabled={loading || operationsLoading}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
               >
-                {loading ? '새로고침 중...' : '새로고침'}
+                <RefreshCw className={`h-4 w-4 ${loading || operationsLoading ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">새로고침</span>
               </button>
-              <button onClick={() => { clearAdminToken(); setAuthenticated(false); }} className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-900">
-                로그아웃
-              </button>
+              <button onClick={() => { clearAdminToken(); setAuthenticated(false); }} className="rounded-xl bg-slate-950 px-3 py-2 text-sm font-semibold text-white lg:hidden">로그아웃</button>
             </div>
           </div>
-        </div>
+        </header>
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          {([
-            ['documents', '문서 검토'],
-            ['faqs', 'FAQ 관리'],
-            ['prompts', '프롬프트'],
-            ['chats', '로그/내보내기'],
-            ['data', '데이터 관리'],
-            ['db', 'DB 브라우저'],
-            ['settings', '설정'],
-            ['permissions', '권한 관리'],
-          ] as [TabKey, string][]).map(([key, label]) => (
-            <button key={key} onClick={() => setActiveTab(key)} className={`rounded-full px-4 py-2 text-sm font-medium ${activeTab === key ? 'bg-slate-900 text-white' : 'bg-white text-slate-600'}`}>
-              {label}
-            </button>
-          ))}
-        </div>
+        <div className="mx-auto max-w-[1680px] px-4 pb-10 pt-4 sm:px-6 xl:px-8">
+          <div className="mb-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">
+            {NAV_GROUPS.flatMap((group) => group.items).map(({ key, label, icon: Icon }) => (
+              <button key={key} onClick={() => setActiveTab(key)} className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold ${activeTab === key ? 'bg-slate-950 text-white' : 'border border-slate-200 bg-white text-slate-600'}`}>
+                <Icon className="h-4 w-4" /> {label}
+              </button>
+            ))}
+          </div>
 
         {(notice || loadError) && (
           <div className={`mt-4 rounded-2xl px-4 py-3 text-sm ${loadError ? 'bg-rose-50 text-rose-700' : 'bg-cyan-50 text-cyan-800'}`}>
             {loadError || notice}
+          </div>
+        )}
+
+        {activeTab === 'dashboard' && (
+          <div className="mt-5">
+            <OperationsDashboard
+              data={operationsData}
+              loading={loading || operationsLoading}
+              systemHealth={systemHealth}
+              healthLoading={healthLoading}
+              onRefreshHealth={loadSystemHealth}
+              onOpenSession={(sessionId) => navigate(`/admin/sessions/${sessionId}`)}
+              onUpdateAlert={handleUpdateOperationsAlert}
+            />
+          </div>
+        )}
+
+        {activeTab === 'analytics' && (
+          <div className="mt-5">
+            <OperationsAnalytics data={analyticsData} loading={analyticsLoading} onRefresh={loadAnalytics} />
+          </div>
+        )}
+
+        {activeTab === 'costs' && (
+          <div className="mt-5">
+            <CostManagement />
           </div>
         )}
 
@@ -2125,6 +2335,7 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -166,6 +166,188 @@ export interface ChatLog {
   created_at: string;
 }
 
+export type OperationsSignalType = 'handoff' | 'cancel' | 'safety' | 'error';
+
+export interface OperationsMetricSummary {
+  visitors: number;
+  chats: number;
+  handoffs: number;
+  cancels: number;
+  safety: number;
+  failed: number;
+}
+
+export interface OperationsDailyMetric {
+  date: string;
+  visitors: number;
+  chats: number;
+  handoffs: number;
+  cancels: number;
+  safety: number;
+}
+
+export interface HandoffCategoryMetric {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface QuestionCategoryMetric {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface AnswerSourceSummary {
+  faq: number;
+  llm: number;
+  other: number;
+  total: number;
+}
+
+export interface BillingCostRecord {
+  id: number;
+  billing_month: string;
+  amount_krw: number;
+  source: 'nxavis_manual' | string;
+  note: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OperationsMonthlyMetric {
+  month: string;
+  visitors: number;
+  chats: number;
+  handoffs: number;
+  cancels: number;
+}
+
+export interface OperationsHourlyMetric {
+  hour: number;
+  label: string;
+  visitors: number;
+  chats: number;
+}
+
+export interface AnalyticsPeak {
+  label: string;
+  count: number;
+}
+
+export interface OperationsAnalyticsData {
+  period_months: number;
+  hourly_days: number;
+  generated_at: string;
+  monthly: OperationsMonthlyMetric[];
+  hourly: OperationsHourlyMetric[];
+  highlights: {
+    busiest_visitor_month: AnalyticsPeak | null;
+    busiest_chat_month: AnalyticsPeak | null;
+    busiest_visitor_hour: AnalyticsPeak | null;
+    busiest_chat_hour: AnalyticsPeak | null;
+  };
+  question_categories_top5: QuestionCategoryMetric[];
+  answer_source_summary: AnswerSourceSummary;
+  handoff_categories: HandoffCategoryMetric[];
+}
+
+export interface CostAccountSummary {
+  account_id: string;
+  account_name: string;
+  total_krw: number;
+}
+
+export interface CostServiceTotal {
+  service_name: string;
+  amount_krw: number;
+}
+
+export interface CostDailyTotal {
+  date: string;
+  day: number;
+  total_krw: number;
+  services: Record<string, number>;
+}
+
+export interface CostServiceDailyRow {
+  service_name: string;
+  total_krw: number;
+  daily: Record<string, number>;
+}
+
+export interface CostManagementData {
+  billing_month: string;
+  selected_account_id: string;
+  accounts: CostAccountSummary[];
+  actual_invoice_krw: number | null;
+  usage_total_krw: number;
+  difference_krw: number | null;
+  service_totals: CostServiceTotal[];
+  daily_totals: CostDailyTotal[];
+  service_daily_rows: CostServiceDailyRow[];
+  monthly_history: BillingCostRecord[];
+}
+
+export type SystemHealthStatus = 'healthy' | 'degraded' | 'critical' | 'unknown' | 'not_configured';
+
+export interface SystemHealthCheck {
+  key: 'application' | 'database_read' | 'database_write' | 'ec2';
+  label: string;
+  status: SystemHealthStatus;
+  message: string;
+  latency_ms: number | null;
+  checked_at: string;
+  details: Record<string, string | number | null>;
+}
+
+export interface SystemHealthData {
+  overall_status: 'healthy' | 'degraded' | 'critical';
+  generated_at: string;
+  checks: SystemHealthCheck[];
+}
+
+export interface OperationsAttentionItem {
+  id: number;
+  alert_id: number;
+  session_id: string;
+  type: OperationsSignalType;
+  severity: 'low' | 'medium' | 'high';
+  reason: string;
+  status: 'open' | 'checking' | 'resolved';
+  assigned_to: string | null;
+  note: string | null;
+  question: string;
+  answer: string;
+  processing_status: string;
+  created_at: string;
+}
+
+export interface OperationsDashboardData {
+  period_days: number;
+  generated_at: string;
+  summary: OperationsMetricSummary;
+  previous_summary: OperationsMetricSummary;
+  changes: Record<keyof OperationsMetricSummary, number | null>;
+  daily: OperationsDailyMetric[];
+  handoff_categories: HandoffCategoryMetric[];
+  question_categories_top5: QuestionCategoryMetric[];
+  answer_source_summary: AnswerSourceSummary;
+  billing_costs: BillingCostRecord[];
+  attention: OperationsAttentionItem[];
+  recent_sessions: AdminSession[];
+}
+
+export interface OperationsAlertUpdateResult {
+  id: number;
+  status: 'open' | 'checking' | 'resolved';
+  assigned_to: string | null;
+  note: string | null;
+  resolved_at: string | null;
+  updated_at: string | null;
+}
+
 export interface PromptPayload {
   prompt_key: string;
   label: string;

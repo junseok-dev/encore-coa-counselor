@@ -6,8 +6,10 @@ import {
   AdminSession,
   AuditLog,
   AdminSessionDetail,
+  BillingCostRecord,
   ChatLog,
   ChatResponse,
+  CostManagementData,
   CustomColumnDef,
   CustomRowData,
   CustomTableDetail,
@@ -16,6 +18,10 @@ import {
   DbTableMeta,
   EncryptionSettings,
   ModelSettings,
+  OperationsDashboardData,
+  OperationsAnalyticsData,
+  OperationsAlertUpdateResult,
+  SystemHealthData,
   PermissionsData,
   ProcessingLog,
   PromptConfig,
@@ -120,6 +126,67 @@ export const chatApi = {
 };
 
 export const adminApi = {
+  getCostManagement: async (billingMonth: string, accountId = 'all'): Promise<CostManagementData> => {
+    const response = await adminApiClient.get<CostManagementData>('/admin/operations/cost-management', {
+      params: { billing_month: billingMonth, account_id: accountId },
+    });
+    return response.data;
+  },
+
+  importBillingCosts: async (file: File, billingMonth: string, accountId: string, accountName: string): Promise<{ message: string; imported_rows: number }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('billing_month', billingMonth);
+    formData.append('account_id', accountId);
+    formData.append('account_name', accountName);
+    const response = await adminApiClient.post('/admin/operations/costs/import', formData);
+    return response.data;
+  },
+
+  downloadCostTemplate: async (): Promise<Blob> => {
+    const response = await adminApiClient.get('/admin/operations/costs/template', { responseType: 'blob' });
+    return response.data;
+  },
+
+  getOperationsAnalytics: async (months = 12, hourlyDays = 90): Promise<OperationsAnalyticsData> => {
+    const response = await adminApiClient.get<OperationsAnalyticsData>('/admin/operations/analytics', {
+      params: { months, hourly_days: hourlyDays },
+    });
+    return response.data;
+  },
+
+  getSystemHealth: async (): Promise<SystemHealthData> => {
+    const response = await adminApiClient.get<SystemHealthData>('/admin/operations/health');
+    return response.data;
+  },
+
+  getOperationsDashboard: async (days = 7): Promise<OperationsDashboardData> => {
+    const response = await adminApiClient.get<OperationsDashboardData>('/admin/operations/dashboard', {
+      params: { days, attention_limit: 100 },
+    });
+    return response.data;
+  },
+
+  updateOperationsAlert: async (
+    alertId: number,
+    status: 'open' | 'checking' | 'resolved',
+    note?: string,
+  ): Promise<OperationsAlertUpdateResult> => {
+    const response = await adminApiClient.patch<OperationsAlertUpdateResult>(`/admin/operations/alerts/${alertId}`, {
+      status,
+      note,
+    });
+    return response.data;
+  },
+
+  saveBillingCost: async (billingMonth: string, amountKrw: number, note?: string): Promise<BillingCostRecord> => {
+    const response = await adminApiClient.put<BillingCostRecord>(`/admin/operations/costs/${billingMonth}`, {
+      amount_krw: amountKrw,
+      note,
+    });
+    return response.data;
+  },
+
   getSessions: async (): Promise<AdminSession[]> => {
     const response = await adminApiClient.get<AdminSession[]>('/admin/sessions');
     return response.data;

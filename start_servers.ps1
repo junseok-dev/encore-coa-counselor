@@ -14,9 +14,9 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", `
 Start-Sleep -Seconds 2
 
 # ── 프론트엔드 ───────────────────────────────────────────
-Write-Host "[2/2] 프론트엔드(Vite :5173) 시작..." -ForegroundColor Yellow
+Write-Host "[2/2] 프론트엔드(Vite :5174) 시작..." -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoExit", "-Command", `
     "Set-Location '$root\frontend'; & 'C:\Program Files\nodejs\npm.cmd' run dev" `
     -WindowStyle Normal
 
-Write-Host "`n브라우저에서 http://localhost:5173 접속하세요." -ForegroundColor Green
+Write-Host "`n브라우저에서 http://localhost:5174 접속하세요." -ForegroundColor Green

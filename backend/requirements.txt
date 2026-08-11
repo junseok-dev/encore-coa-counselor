@@ -11,6 +11,8 @@ cryptography
 python-multipart
 aiofiles
 opendataloader-pdf
+pypdfium2
+pytesseract
 faiss-cpu
 chromadb
 langsmith

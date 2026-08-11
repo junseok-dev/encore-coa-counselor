@@ -1,20 +1,30 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Calendar, Headphones, MessageCircle, ShieldAlert, UserRound } from 'lucide-react';
 import { adminApi, getAdminToken } from '../services/api';
-import { AdminSessionDetail } from '../types';
+import { AdminSessionDetail, OperationsAttentionItem } from '../types';
 
 const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
-  faq: { label: 'FAQ', className: 'bg-green-100 text-green-700' },
-  document: { label: '문서', className: 'bg-blue-100 text-blue-700' },
-  ai: { label: 'AI', className: 'bg-purple-100 text-purple-700' },
-  fallback: { label: '오류', className: 'bg-red-100 text-red-700' },
-  user: { label: '사용자', className: 'bg-gray-100 text-gray-600' },
+  faq: { label: 'FAQ', className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  document: { label: '문서', className: 'bg-blue-50 text-blue-700 ring-blue-200' },
+  ai: { label: 'AI', className: 'bg-violet-50 text-violet-700 ring-violet-200' },
+  fallback: { label: '대체 응답', className: 'bg-slate-100 text-slate-700 ring-slate-200' },
+  guardrail: { label: '안전 응답', className: 'bg-amber-50 text-amber-800 ring-amber-200' },
+  handoff: { label: '상담 연결', className: 'bg-rose-50 text-rose-700 ring-rose-200' },
+};
+
+const SIGNAL_LABEL: Record<OperationsAttentionItem['type'], string> = {
+  handoff: '상담 연결',
+  cancel: '취소 요청',
+  safety: '안전 확인',
+  error: '처리 오류',
 };
 
 export default function AdminSessionPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const [detail, setDetail] = useState<AdminSessionDetail | null>(null);
+  const [signals, setSignals] = useState<OperationsAttentionItem[]>([]);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -23,82 +33,93 @@ export default function AdminSessionPage() {
       return;
     }
     if (!sessionId) return;
-    adminApi
-      .getSessionDetail(sessionId)
-      .then(setDetail)
-      .catch(() => setError('세션 정보를 불러오지 못했습니다.'));
+    adminApi.getSessionDetail(sessionId).then(setDetail).catch(() => setError('세션 정보를 불러오지 못했습니다.'));
+    adminApi.getOperationsDashboard(30).then((data) => setSignals(data.attention.filter((item) => item.session_id === sessionId))).catch(() => undefined);
   }, [sessionId, navigate]);
 
   if (error) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <p className="text-red-500">{error}</p>
-      </div>
-    );
+    return <div className="flex min-h-screen items-center justify-center bg-slate-100"><p className="rounded-2xl bg-rose-50 px-5 py-4 text-rose-700">{error}</p></div>;
   }
 
   if (!detail) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <p className="text-gray-400">불러오는 중...</p>
-      </div>
-    );
+    return <div className="flex min-h-screen items-center justify-center bg-slate-100"><p className="animate-pulse text-sm text-slate-400">대화 내용을 불러오는 중...</p></div>;
   }
 
   const { session, messages } = detail;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="mx-auto max-w-3xl">
-        <button
-          onClick={() => navigate('/admin')}
-          className="mb-4 flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-800"
-        >
-          목록으로
-        </button>
+    <div className="min-h-screen bg-[#f5f7fb]">
+      <header className="border-b border-slate-800 bg-[#08111f] text-white">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
+          <button onClick={() => navigate('/admin')} className="inline-flex items-center gap-2 text-sm font-semibold text-slate-300 hover:text-white">
+            <ArrowLeft className="h-4 w-4" /> 운영 콘솔
+          </button>
+          <span className="font-mono text-xs text-slate-500">{session.id}</span>
+        </div>
+      </header>
 
-        <div className="mb-6 rounded-xl bg-white p-5 shadow">
-          <h2 className="mb-2 text-lg font-bold text-gray-800">세션 상세</h2>
-          <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
-            <span>사용자</span>
-            <span className="font-medium text-gray-800">{session.user_name ?? '익명'}</span>
-            <span>시작</span>
-            <span>{new Date(session.created_at).toLocaleString('ko-KR')}</span>
-            <span>메시지 수</span>
-            <span>{session.message_count}개</span>
+      <main className="mx-auto max-w-5xl px-4 py-7 sm:px-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-700">Conversation detail</p>
+            <h1 className="mt-2 text-2xl font-bold text-slate-950">채팅 세션 상세</h1>
+          </div>
+          <p className="text-xs text-slate-500">메시지 {messages.length}개</p>
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><UserRound className="h-5 w-5" /></span>
+            <div><p className="text-xs text-slate-400">방문자</p><p className="mt-0.5 font-semibold text-slate-900">{session.user_name ?? '익명 방문자'}</p></div>
+          </div>
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-700"><Calendar className="h-5 w-5" /></span>
+            <div><p className="text-xs text-slate-400">시작 시각</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{new Date(session.created_at).toLocaleString('ko-KR')}</p></div>
+          </div>
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700"><MessageCircle className="h-5 w-5" /></span>
+            <div><p className="text-xs text-slate-400">누적 메시지</p><p className="mt-0.5 font-semibold text-slate-900">{session.message_count}개</p></div>
           </div>
         </div>
 
-        <div className="space-y-3">
-          {messages.map((msg) => {
-            const isUser = msg.role === 'user';
-            const badge = msg.source ? SOURCE_BADGE[msg.source] : null;
-            return (
-              <div key={msg.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-                <div className={`flex max-w-[80%] flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
-                  {badge && !isUser && (
-                    <span className={`w-fit rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>
-                      {badge.label}
-                    </span>
-                  )}
-                  <div
-                    className={`whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm ${
-                      isUser
-                        ? 'rounded-br-sm bg-brand-600 text-white'
-                        : 'rounded-bl-sm border border-gray-200 bg-white text-gray-800 shadow-sm'
-                    }`}
-                  >
-                    {msg.content}
+        {signals.length > 0 && (
+          <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+            <div className="flex items-center gap-2 text-sm font-bold text-amber-900"><ShieldAlert className="h-4 w-4" /> 이 세션의 운영 신호</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {signals.map((signal) => (
+                <span key={`${signal.id}-${signal.type}`} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-amber-200">
+                  {signal.type === 'handoff' && <Headphones className="h-3.5 w-3.5 text-violet-600" />}
+                  {SIGNAL_LABEL[signal.type]} · {signal.reason}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section className="mt-5 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-5 py-4">
+            <h2 className="font-bold text-slate-950">전체 대화</h2>
+            <p className="mt-1 text-xs text-slate-500">응답 출처와 상담·안전 전환 여부를 함께 표시합니다.</p>
+          </div>
+          <div className="space-y-5 bg-slate-50/60 p-5 sm:p-7">
+            {messages.map((msg) => {
+              const isUser = msg.role === 'user';
+              const badge = msg.source ? SOURCE_BADGE[msg.source] : null;
+              return (
+                <div key={msg.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`flex max-w-[88%] flex-col gap-1.5 sm:max-w-[76%] ${isUser ? 'items-end' : 'items-start'}`}>
+                    {badge && !isUser && <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${badge.className}`}>{badge.label}</span>}
+                    <div className={`whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${isUser ? 'rounded-br-md bg-slate-950 text-white' : 'rounded-bl-md border border-slate-200 bg-white text-slate-800 shadow-sm'}`}>
+                      {msg.content}
+                    </div>
+                    <span className="text-[11px] text-slate-400">{new Date(msg.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
-                  <span className="text-xs text-gray-400">
-                    {new Date(msg.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
-                  </span>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+              );
+            })}
+          </div>
+        </section>
+      </main>
     </div>
   );
 }

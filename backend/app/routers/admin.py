@@ -1,22 +1,27 @@
 import csv
+import calendar
 import io
 import json
-from datetime import date, datetime, time
+import re
+from time import perf_counter
+from uuid import uuid4
+from zoneinfo import ZoneInfo
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import jwt
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from openai import AsyncOpenAI
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel
 from sqlalchemy import inspect as sa_inspect, text
 from sqlalchemy.orm import Session
 
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_all_sessions, get_session_messages
-from app.db.database import get_db
-from app.db.models import AdminAuditLog, AdminUser, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, ProcessingLog, PromptConfig
+from app.db.database import SessionLocal, get_db
+from app.db.models import AdminAuditLog, AdminUser, BillingCostRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
 from app.models.session import MessageDetail, SessionDetail, SessionSummary
 from app.services.admin_service import (
     approve_document,
@@ -48,6 +53,10 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "documents": "문서 관리 — 업로드·파싱·임베딩·승인 상태 추적",
     "chunks": "문서 청크 — RAG 검색에 사용되는 텍스트 조각",
     "cancel_requests": "취소 요청 내역",
+    "operations_alerts": "긴급 운영 알림 — 확인 시작·처리 완료 상태 관리",
+    "system_health_probes": "시스템 상태 점검 — 데이터베이스 저장 가능 여부 확인",
+    "billing_cost_records": "월별 실제 원화 청구액 — n·Xavis 청구 내역 기준",
+    "billing_daily_cost_records": "계정·서비스·일자별 실제 원화 사용 금액",
     "processing_logs": "문서 처리 로그 — 파싱, 임베딩 등 단계별 처리 결과",
     "prompt_configs": "LLM 프롬프트 설정 — 시스템 프롬프트, 스타일 가이드 등",
     "faqs": "FAQ 데이터 — 질문, 답변, 키워드, 카테고리",
@@ -99,6 +108,16 @@ class PromptPayload(BaseModel):
     prompt_key: str
     label: str
     content: str
+
+
+class OperationsAlertUpdate(BaseModel):
+    status: str
+    note: str | None = None
+
+
+class BillingCostPayload(BaseModel):
+    amount_krw: int
+    note: str | None = None
 
 
 def _serialize_document(record: DocumentRecord) -> dict:
@@ -167,6 +186,198 @@ def _serialize_audit_log(row: AdminAuditLog) -> dict:
         "detail": decrypt_if_needed(row.detail),
         "created_at": row.created_at,
     }
+
+
+def _serialize_billing_cost(row: BillingCostRecord) -> dict:
+    return {
+        "id": row.id,
+        "billing_month": row.billing_month,
+        "amount_krw": row.amount_krw,
+        "source": row.source,
+        "note": decrypt_if_needed(row.note),
+        "updated_by": row.updated_by,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _normalize_cost_header(value: object) -> str:
+    return re.sub(r"[\s_()\-]", "", str(value or "").strip().lower())
+
+
+def _parse_cost_date(value: object) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    normalized = str(value or "").strip().replace(".", "-").replace("/", "-")
+    return datetime.strptime(normalized, "%Y-%m-%d").date()
+
+
+def _parse_krw_amount(value: object) -> int:
+    if isinstance(value, (int, float)):
+        return round(value)
+    normalized = re.sub(r"[^0-9.\-]", "", str(value or ""))
+    return round(float(normalized or "0"))
+
+
+def _percent_change(current: int, previous: int) -> float | None:
+    if previous == 0:
+        return 100.0 if current > 0 else 0.0
+    return round(((current - previous) / previous) * 100, 1)
+
+
+def _handoff_reason(question: str, status: str, is_cancel: bool) -> tuple[str, str]:
+    normalized = "".join((question or "").lower().split())
+    if is_cancel:
+        return "cancel", "취소 요청"
+    if status == "handoff_offer":
+        return "bot_offer", "봇 상담 권유"
+    if any(token in normalized for token in ("취업", "합격", "채용", "책임", "보장")):
+        return "employment", "취업·책임 상담"
+    if any(token in normalized for token in ("환불", "결제", "수강료", "비용", "입금")):
+        return "payment", "환불·결제 문의"
+    if any(token in normalized for token in ("상담", "상담원", "매니저", "사람", "전화", "연락")):
+        return "direct", "상담원 직접 요청"
+    return "other", "기타 상담"
+
+
+def _operations_summary(
+    sessions: list[ChatSession],
+    logs: list[ChatLog],
+    cancels: list[CancelRequest],
+) -> dict:
+    handoffs = [
+        row for row in logs
+        if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff"
+    ]
+    safety = [row for row in logs if row.source == "guardrail"]
+    failed = [row for row in logs if row.processing_status == "failed" or bool(row.error)]
+    return {
+        "visitors": len(sessions),
+        "chats": len(logs),
+        "handoffs": len(handoffs),
+        "cancels": len(cancels),
+        "safety": len(safety),
+        "failed": len(failed),
+    }
+
+
+def _question_category(question: str) -> tuple[str, str]:
+    normalized = "".join((question or "").lower().split())
+    category_rules = (
+        ("cancel", "취소·환불", ("취소", "환불", "중도포기", "일정변경")),
+        ("schedule", "개강·일정", ("개강", "일정", "기수", "모집기간", "교육기간", "시간표", "언제")),
+        ("cost", "비용·지원금", ("수강료", "교육비", "비용", "지원금", "장려금", "훈련비", "내일배움")),
+        ("employment", "취업·진로", ("취업", "채용", "진로", "포트폴리오", "기업연계", "수료후")),
+        ("counseling", "상담 연결", ("상담원", "상담", "매니저", "전화", "연락", "사람")),
+        ("admission", "지원·선발", ("지원", "신청", "자격", "비전공", "면접", "인터뷰", "코딩테스트", "선발")),
+        ("curriculum", "과정·커리큘럼", ("과정", "커리큘럼", "수업", "프로젝트", "학습", "기술", "머신러닝", "mlops", "데이터")),
+        ("attendance", "출결·수료", ("출석", "출결", "결석", "지각", "수료")),
+        ("campus", "캠퍼스·시설", ("캠퍼스", "위치", "동작", "서초", "가산", "g밸리", "노트북", "시설")),
+    )
+    for key, label, keywords in category_rules:
+        if any(keyword in normalized for keyword in keywords):
+            return key, label
+    return "other", "기타"
+
+
+def _shift_month(month_start: date, offset: int) -> date:
+    month_index = month_start.year * 12 + (month_start.month - 1) + offset
+    return date(month_index // 12, month_index % 12 + 1, 1)
+
+
+def _analysis_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(ZoneInfo("Asia/Seoul"))
+
+
+def _peak_item(items: list[dict], key: str, label_key: str) -> dict | None:
+    if not items or max(item[key] for item in items) == 0:
+        return None
+    peak = max(items, key=lambda item: item[key])
+    return {"label": peak[label_key], "count": peak[key]}
+
+
+def _ec2_health_check() -> dict:
+    settings = get_settings()
+    checked_at = datetime.now()
+    if not settings.aws_ec2_instance_id:
+        return {
+            "key": "ec2",
+            "label": "EC2",
+            "status": "not_configured",
+            "message": "인스턴스 ID를 설정하면 AWS 상태 검사를 표시합니다.",
+            "latency_ms": None,
+            "checked_at": checked_at,
+            "details": {"instance_id": None},
+        }
+
+    started = perf_counter()
+    try:
+        import boto3
+        from botocore.config import Config
+
+        session_kwargs = {"region_name": settings.aws_region}
+        if settings.aws_access_key_id and settings.aws_secret_access_key:
+            session_kwargs.update({
+                "aws_access_key_id": settings.aws_access_key_id,
+                "aws_secret_access_key": settings.aws_secret_access_key,
+            })
+        client = boto3.session.Session(**session_kwargs).client(
+            "ec2",
+            config=Config(connect_timeout=2, read_timeout=3, retries={"max_attempts": 1}),
+        )
+        response = client.describe_instance_status(
+            InstanceIds=[settings.aws_ec2_instance_id],
+            IncludeAllInstances=True,
+        )
+        statuses = response.get("InstanceStatuses", [])
+        if not statuses:
+            raise RuntimeError("instance status not found")
+        instance = statuses[0]
+        state = instance.get("InstanceState", {}).get("Name", "unknown")
+        system_status = instance.get("SystemStatus", {}).get("Status", "insufficient-data")
+        instance_status = instance.get("InstanceStatus", {}).get("Status", "insufficient-data")
+        attached_ebs_status = instance.get("AttachedEbsStatus", {}).get("Status", "not-applicable")
+        events = instance.get("Events", [])
+        is_healthy = (
+            state == "running"
+            and system_status == "ok"
+            and instance_status == "ok"
+            and attached_ebs_status in {"ok", "not-applicable"}
+            and not events
+        )
+        return {
+            "key": "ec2",
+            "label": "EC2",
+            "status": "healthy" if is_healthy else "critical",
+            "message": "인스턴스와 AWS 기반 시설 상태가 정상입니다." if is_healthy else "EC2 상태 검사 또는 예약 작업을 확인하세요.",
+            "latency_ms": round((perf_counter() - started) * 1000),
+            "checked_at": checked_at,
+            "details": {
+                "instance_id": settings.aws_ec2_instance_id,
+                "state": state,
+                "system_status": system_status,
+                "instance_status": instance_status,
+                "attached_ebs_status": attached_ebs_status,
+                "scheduled_events": len(events),
+            },
+        }
+    except Exception as exc:
+        return {
+            "key": "ec2",
+            "label": "EC2",
+            "status": "unknown",
+            "message": "AWS 상태를 조회하지 못했습니다. IAM 권한과 인스턴스 설정을 확인하세요.",
+            "latency_ms": round((perf_counter() - started) * 1000),
+            "checked_at": checked_at,
+            "details": {
+                "instance_id": settings.aws_ec2_instance_id,
+                "error_type": type(exc).__name__,
+            },
+        }
 
 
 def _crypt_value(value: str | None, should_encrypt: bool) -> str | None:
@@ -513,6 +724,705 @@ def export_chat_logs(start_date: date | None = None, end_date: date | None = Non
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/operations/analytics")
+def get_operations_analytics(
+    months: int = Query(12, ge=3, le=24),
+    hourly_days: int = Query(90, ge=7, le=365),
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
+    today = datetime.now().date()
+    current_month = today.replace(day=1)
+    month_starts = [_shift_month(current_month, offset) for offset in range(-(months - 1), 1)]
+    analysis_start = datetime.combine(month_starts[0], time.min)
+    hourly_start = datetime.combine(today - timedelta(days=hourly_days - 1), time.min)
+    query_start = min(analysis_start, hourly_start)
+
+    sessions = db.query(ChatSession).filter(ChatSession.created_at >= query_start).all()
+    logs = db.query(ChatLog).filter(ChatLog.created_at >= query_start).all()
+    cancels = db.query(CancelRequest).filter(CancelRequest.created_at >= query_start).all()
+    analysis_logs = [
+        row for row in logs
+        if row.created_at and _analysis_datetime(row.created_at).replace(tzinfo=None) >= analysis_start
+    ]
+    analysis_cancels = [
+        row for row in cancels
+        if row.created_at and _analysis_datetime(row.created_at).replace(tzinfo=None) >= analysis_start
+    ]
+
+    monthly_map = {
+        month_start.strftime("%Y-%m"): {
+            "month": month_start.strftime("%Y-%m"),
+            "visitors": 0,
+            "chats": 0,
+            "handoffs": 0,
+            "cancels": 0,
+        }
+        for month_start in month_starts
+    }
+    hourly_map = {
+        hour: {"hour": hour, "label": f"{hour:02d}시", "visitors": 0, "chats": 0}
+        for hour in range(24)
+    }
+
+    for row in sessions:
+        if not row.created_at:
+            continue
+        local_created_at = _analysis_datetime(row.created_at)
+        month_key = local_created_at.strftime("%Y-%m")
+        if month_key in monthly_map:
+            monthly_map[month_key]["visitors"] += 1
+        if local_created_at.replace(tzinfo=None) >= hourly_start:
+            hourly_map[local_created_at.hour]["visitors"] += 1
+
+    for row in logs:
+        if not row.created_at:
+            continue
+        local_created_at = _analysis_datetime(row.created_at)
+        month_key = local_created_at.strftime("%Y-%m")
+        if month_key in monthly_map:
+            monthly_map[month_key]["chats"] += 1
+            if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff":
+                monthly_map[month_key]["handoffs"] += 1
+        if local_created_at.replace(tzinfo=None) >= hourly_start:
+            hourly_map[local_created_at.hour]["chats"] += 1
+
+    for row in cancels:
+        if not row.created_at:
+            continue
+        month_key = _analysis_datetime(row.created_at).strftime("%Y-%m")
+        if month_key in monthly_map:
+            monthly_map[month_key]["cancels"] += 1
+
+    question_category_map: dict[str, dict] = {}
+    answer_source_summary = {"faq": 0, "llm": 0, "other": 0}
+    handoff_category_labels = {
+        "direct": "상담원 직접 요청",
+        "cancel": "취소 요청",
+        "employment": "취업·채용 상담",
+        "payment": "환불·결제 문의",
+        "bot_offer": "봇 상담 권유",
+        "other": "기타 상담",
+    }
+    handoff_category_counts = {key: 0 for key in handoff_category_labels}
+    cancel_keys = {
+        (row.session_id, (decrypt_if_needed(row.message) or "").strip())
+        for row in analysis_cancels
+    }
+
+    for row in analysis_logs:
+        question = decrypt_if_needed(row.question) or ""
+        category_key, category_label = _question_category(question)
+        category = question_category_map.setdefault(
+            category_key,
+            {"key": category_key, "label": category_label, "count": 0},
+        )
+        category["count"] += 1
+
+        if row.source == "faq":
+            answer_source_summary["faq"] += 1
+        elif row.source in {"ai", "document"}:
+            answer_source_summary["llm"] += 1
+        else:
+            answer_source_summary["other"] += 1
+
+        is_handoff = row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff"
+        if is_handoff:
+            is_cancel = (row.session_id, question.strip()) in cancel_keys
+            handoff_key, _ = _handoff_reason(question, row.processing_status, is_cancel)
+            handoff_category_counts[handoff_key] += 1
+
+    monthly = list(monthly_map.values())
+    hourly = list(hourly_map.values())
+    question_categories_top5 = sorted(
+        question_category_map.values(),
+        key=lambda item: (-item["count"], item["label"]),
+    )[:5]
+    handoff_categories = [
+        {"key": key, "label": label, "count": handoff_category_counts[key]}
+        for key, label in handoff_category_labels.items()
+    ]
+    handoff_categories.sort(key=lambda item: item["count"], reverse=True)
+
+    return {
+        "period_months": months,
+        "hourly_days": hourly_days,
+        "generated_at": datetime.now(),
+        "monthly": monthly,
+        "hourly": hourly,
+        "highlights": {
+            "busiest_visitor_month": _peak_item(monthly, "visitors", "month"),
+            "busiest_chat_month": _peak_item(monthly, "chats", "month"),
+            "busiest_visitor_hour": _peak_item(hourly, "visitors", "label"),
+            "busiest_chat_hour": _peak_item(hourly, "chats", "label"),
+        },
+        "question_categories_top5": question_categories_top5,
+        "answer_source_summary": {
+            **answer_source_summary,
+            "total": sum(answer_source_summary.values()),
+        },
+        "handoff_categories": handoff_categories,
+    }
+
+
+@router.get("/operations/health")
+def get_operations_health(_: None = Depends(verify_admin)):
+    """Check API availability, a real application-table read, a committed write, and EC2 status."""
+    checked_at = datetime.now()
+    checks = [{
+        "key": "application",
+        "label": "백엔드 API",
+        "status": "healthy",
+        "message": "관리자 API가 정상 응답 중입니다.",
+        "latency_ms": 0,
+        "checked_at": checked_at,
+        "details": {},
+    }]
+
+    read_started = perf_counter()
+    read_db = SessionLocal()
+    try:
+        read_db.query(ChatLog.id).order_by(ChatLog.id.desc()).limit(1).first()
+        checks.append({
+            "key": "database_read",
+            "label": "DB 조회",
+            "status": "healthy",
+            "message": "채팅 데이터 조회가 정상입니다.",
+            "latency_ms": round((perf_counter() - read_started) * 1000),
+            "checked_at": checked_at,
+            "details": {},
+        })
+    except Exception as exc:
+        checks.append({
+            "key": "database_read",
+            "label": "DB 조회",
+            "status": "critical",
+            "message": "데이터를 조회하지 못했습니다.",
+            "latency_ms": round((perf_counter() - read_started) * 1000),
+            "checked_at": checked_at,
+            "details": {"error_type": type(exc).__name__},
+        })
+    finally:
+        read_db.close()
+
+    write_started = perf_counter()
+    write_db = SessionLocal()
+    probe_nonce = uuid4().hex
+    try:
+        probe = write_db.get(SystemHealthProbe, "database_write")
+        if probe is None:
+            probe = SystemHealthProbe(key="database_write", nonce=probe_nonce, checked_at=checked_at)
+            write_db.add(probe)
+        else:
+            probe.nonce = probe_nonce
+            probe.checked_at = checked_at
+        write_db.commit()
+        write_db.close()
+
+        verify_db = SessionLocal()
+        persisted_probe = verify_db.get(SystemHealthProbe, "database_write")
+        if persisted_probe is None or persisted_probe.nonce != probe_nonce:
+            raise RuntimeError("database write verification failed")
+        verify_db.close()
+        checks.append({
+            "key": "database_write",
+            "label": "DB 저장",
+            "status": "healthy",
+            "message": "테스트 데이터 저장과 재조회가 정상입니다.",
+            "latency_ms": round((perf_counter() - write_started) * 1000),
+            "checked_at": checked_at,
+            "details": {"last_success_at": checked_at},
+        })
+    except Exception as exc:
+        write_db.rollback()
+        write_db.close()
+        checks.append({
+            "key": "database_write",
+            "label": "DB 저장",
+            "status": "critical",
+            "message": "데이터 저장 또는 저장 결과 확인에 실패했습니다.",
+            "latency_ms": round((perf_counter() - write_started) * 1000),
+            "checked_at": checked_at,
+            "details": {"error_type": type(exc).__name__},
+        })
+
+    checks.append(_ec2_health_check())
+    statuses = {check["status"] for check in checks}
+    overall_status = "critical" if "critical" in statuses else "degraded" if "unknown" in statuses else "healthy"
+    return {
+        "overall_status": overall_status,
+        "generated_at": checked_at,
+        "checks": checks,
+    }
+
+
+@router.get("/operations/dashboard")
+def get_operations_dashboard(
+    days: int = Query(7, ge=1, le=30),
+    attention_limit: int = Query(50, ge=10, le=200),
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
+    """운영 대시보드용 지표, 상담 사유, 주의 대화를 한 번에 반환한다."""
+    today = datetime.now().date()
+    start_date = today - timedelta(days=days - 1)
+    previous_start_date = start_date - timedelta(days=days)
+    previous_start = datetime.combine(previous_start_date, time.min)
+
+    sessions = db.query(ChatSession).filter(ChatSession.created_at >= previous_start).all()
+    logs = db.query(ChatLog).filter(ChatLog.created_at >= previous_start).order_by(ChatLog.created_at.desc()).all()
+    cancels = db.query(CancelRequest).filter(CancelRequest.created_at >= previous_start).order_by(CancelRequest.created_at.desc()).all()
+
+    current_sessions = [row for row in sessions if row.created_at and row.created_at.date() >= start_date]
+    previous_sessions = [row for row in sessions if row.created_at and previous_start_date <= row.created_at.date() < start_date]
+    current_logs = [row for row in logs if row.created_at and row.created_at.date() >= start_date]
+    previous_logs = [row for row in logs if row.created_at and previous_start_date <= row.created_at.date() < start_date]
+    current_cancels = [row for row in cancels if row.created_at and row.created_at.date() >= start_date]
+    previous_cancels = [row for row in cancels if row.created_at and previous_start_date <= row.created_at.date() < start_date]
+
+    summary = _operations_summary(current_sessions, current_logs, current_cancels)
+    previous_summary = _operations_summary(previous_sessions, previous_logs, previous_cancels)
+    changes = {key: _percent_change(summary[key], previous_summary[key]) for key in summary}
+
+    daily_map = {
+        (start_date + timedelta(days=offset)).isoformat(): {
+            "date": (start_date + timedelta(days=offset)).isoformat(),
+            "visitors": 0,
+            "chats": 0,
+            "handoffs": 0,
+            "cancels": 0,
+            "safety": 0,
+        }
+        for offset in range(days)
+    }
+    for row in current_sessions:
+        daily_map[row.created_at.date().isoformat()]["visitors"] += 1
+    for row in current_logs:
+        bucket = daily_map[row.created_at.date().isoformat()]
+        bucket["chats"] += 1
+        if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff":
+            bucket["handoffs"] += 1
+        if row.source == "guardrail":
+            bucket["safety"] += 1
+    for row in current_cancels:
+        daily_map[row.created_at.date().isoformat()]["cancels"] += 1
+
+    cancel_keys = {
+        (row.session_id, (decrypt_if_needed(row.message) or "").strip())
+        for row in current_cancels
+    }
+    category_labels = {
+        "direct": "상담원 직접 요청",
+        "cancel": "취소 요청",
+        "employment": "취업·책임 상담",
+        "payment": "환불·결제 문의",
+        "bot_offer": "봇 상담 권유",
+        "other": "기타 상담",
+    }
+    category_counts = {key: 0 for key in category_labels}
+    attention = []
+    log_ids = [row.id for row in current_logs]
+    alert_by_log_id = {
+        alert.chat_log_id: alert
+        for alert in db.query(OperationsAlert).filter(OperationsAlert.chat_log_id.in_(log_ids)).all()
+    } if log_ids else {}
+    alerts_changed = False
+
+    for row in current_logs:
+        question = decrypt_if_needed(row.question) or ""
+        answer = decrypt_if_needed(row.answer) or ""
+        error = decrypt_if_needed(row.error)
+        is_cancel = (row.session_id, question.strip()) in cancel_keys
+        is_handoff = row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff"
+        reason = ""
+        if is_handoff:
+            category_key, reason = _handoff_reason(question, row.processing_status, is_cancel)
+            category_counts[category_key] += 1
+
+        signal_type = None
+        severity = "medium"
+        if is_cancel:
+            signal_type, severity, reason = "cancel", "high", "취소 요청 접수"
+        elif row.source == "guardrail":
+            signal_type, severity, reason = "safety", "high", "안전 가드레일 감지"
+        elif row.processing_status == "failed" or error:
+            signal_type, severity, reason = "error", "high", "응답 처리 오류"
+        elif is_handoff:
+            signal_type = "handoff"
+            severity = "low" if row.processing_status == "handoff_offer" else "medium"
+
+        if signal_type:
+            alert = alert_by_log_id.get(row.id)
+            if alert is None:
+                alert = OperationsAlert(
+                    chat_log_id=row.id,
+                    session_id=row.session_id,
+                    signal_type=signal_type,
+                    severity=severity,
+                    reason=reason,
+                    status="open",
+                )
+                db.add(alert)
+                db.flush()
+                alert_by_log_id[row.id] = alert
+                alerts_changed = True
+            elif alert.signal_type != signal_type or alert.severity != severity or alert.reason != reason:
+                alert.signal_type = signal_type
+                alert.severity = severity
+                alert.reason = reason
+                alerts_changed = True
+
+        if signal_type and len(attention) < attention_limit:
+            attention.append({
+                "id": row.id,
+                "alert_id": alert.id,
+                "session_id": row.session_id,
+                "type": signal_type,
+                "severity": severity,
+                "reason": reason,
+                "status": alert.status,
+                "assigned_to": alert.assigned_to,
+                "note": decrypt_if_needed(alert.note),
+                "question": question,
+                "answer": answer,
+                "processing_status": row.processing_status,
+                "created_at": row.created_at,
+            })
+
+    if alerts_changed:
+        db.commit()
+
+    handoff_categories = [
+        {"key": key, "label": label, "count": category_counts[key]}
+        for key, label in category_labels.items()
+    ]
+    handoff_categories.sort(key=lambda item: item["count"], reverse=True)
+
+    question_category_map: dict[str, dict] = {}
+    answer_source_summary = {"faq": 0, "llm": 0, "other": 0}
+    for row in current_logs:
+        category_key, category_label = _question_category(decrypt_if_needed(row.question) or "")
+        category = question_category_map.setdefault(
+            category_key,
+            {"key": category_key, "label": category_label, "count": 0},
+        )
+        category["count"] += 1
+
+        if row.source == "faq":
+            answer_source_summary["faq"] += 1
+        elif row.source in {"ai", "document"}:
+            answer_source_summary["llm"] += 1
+        else:
+            answer_source_summary["other"] += 1
+
+    question_categories_top5 = sorted(
+        question_category_map.values(),
+        key=lambda item: (-item["count"], item["label"]),
+    )[:5]
+    recent_sessions = sorted(
+        current_sessions,
+        key=lambda row: row.updated_at or row.created_at or datetime.min,
+        reverse=True,
+    )[:10]
+    billing_costs = db.query(BillingCostRecord).order_by(BillingCostRecord.billing_month.desc()).limit(12).all()
+
+    return {
+        "period_days": days,
+        "generated_at": datetime.now(),
+        "summary": summary,
+        "previous_summary": previous_summary,
+        "changes": changes,
+        "daily": list(daily_map.values()),
+        "handoff_categories": handoff_categories,
+        "question_categories_top5": question_categories_top5,
+        "answer_source_summary": {
+            **answer_source_summary,
+            "total": sum(answer_source_summary.values()),
+        },
+        "billing_costs": [_serialize_billing_cost(row) for row in billing_costs],
+        "attention": attention,
+        "recent_sessions": [
+            {
+                "id": row.id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "message_count": row.message_count,
+                "user_name": decrypt_if_needed(row.encrypted_user_name) if row.encrypted_user_name else None,
+            }
+            for row in recent_sessions
+        ],
+    }
+
+
+@router.put("/operations/costs/{billing_month}")
+def save_billing_cost(
+    billing_month: str,
+    body: BillingCostPayload,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    try:
+        parsed_month = datetime.strptime(billing_month, "%Y-%m")
+        if parsed_month.strftime("%Y-%m") != billing_month:
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.")
+    if body.amount_krw < 0:
+        raise HTTPException(status_code=400, detail="원화 청구액은 0원 이상이어야 합니다.")
+
+    row = db.query(BillingCostRecord).filter(BillingCostRecord.billing_month == billing_month).first()
+    if row is None:
+        row = BillingCostRecord(billing_month=billing_month, amount_krw=body.amount_krw)
+        db.add(row)
+    row.amount_krw = body.amount_krw
+    row.source = "nxavis_manual"
+    row.note = maybe_encrypt(body.note.strip()) if body.note and body.note.strip() else None
+    row.updated_by = current_user
+    db.commit()
+    db.refresh(row)
+    create_audit_log(
+        db,
+        "billing_cost_saved",
+        "billing_cost",
+        billing_month,
+        f"amount_krw={body.amount_krw}",
+        actor=current_user,
+    )
+    return _serialize_billing_cost(row)
+
+
+@router.get("/operations/cost-management")
+def get_cost_management(
+    billing_month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    account_id: str = Query("all"),
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
+    try:
+        month_start = datetime.strptime(billing_month, "%Y-%m").date().replace(day=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.")
+    month_end = _shift_month(month_start, 1)
+    all_rows = db.query(BillingDailyCostRecord).filter(
+        BillingDailyCostRecord.usage_date >= month_start,
+        BillingDailyCostRecord.usage_date < month_end,
+    ).all()
+
+    account_map: dict[str, dict] = {}
+    for row in all_rows:
+        account = account_map.setdefault(
+            row.account_id,
+            {"account_id": row.account_id, "account_name": row.account_name, "total_krw": 0},
+        )
+        account["total_krw"] += row.amount_krw
+    accounts = sorted(account_map.values(), key=lambda item: item["account_name"])
+    selected_rows = all_rows if account_id == "all" else [row for row in all_rows if row.account_id == account_id]
+
+    _, last_day = calendar.monthrange(month_start.year, month_start.month)
+    day_keys = [f"{day:02d}" for day in range(1, last_day + 1)]
+    service_map: dict[str, dict] = {}
+    daily_map = {
+        day: {"date": f"{billing_month}-{day}", "day": int(day), "total_krw": 0, "services": {}}
+        for day in day_keys
+    }
+    for row in selected_rows:
+        day_key = f"{row.usage_date.day:02d}"
+        service = service_map.setdefault(
+            row.service_name,
+            {"service_name": row.service_name, "total_krw": 0, "daily": {day: 0 for day in day_keys}},
+        )
+        service["total_krw"] += row.amount_krw
+        service["daily"][day_key] += row.amount_krw
+        daily_map[day_key]["total_krw"] += row.amount_krw
+        daily_map[day_key]["services"][row.service_name] = (
+            daily_map[day_key]["services"].get(row.service_name, 0) + row.amount_krw
+        )
+
+    services = sorted(service_map.values(), key=lambda item: item["total_krw"], reverse=True)
+    invoice = db.query(BillingCostRecord).filter(BillingCostRecord.billing_month == billing_month).first()
+    monthly_history = db.query(BillingCostRecord).order_by(BillingCostRecord.billing_month.desc()).limit(12).all()
+    usage_total = sum(row.amount_krw for row in selected_rows)
+    return {
+        "billing_month": billing_month,
+        "selected_account_id": account_id,
+        "accounts": accounts,
+        "actual_invoice_krw": invoice.amount_krw if invoice else None,
+        "usage_total_krw": usage_total,
+        "difference_krw": (invoice.amount_krw - usage_total) if invoice and account_id == "all" else None,
+        "service_totals": [
+            {"service_name": item["service_name"], "amount_krw": item["total_krw"]}
+            for item in services
+        ],
+        "daily_totals": list(daily_map.values()),
+        "service_daily_rows": services,
+        "monthly_history": [_serialize_billing_cost(row) for row in monthly_history],
+    }
+
+
+@router.get("/operations/costs/template")
+def download_cost_template(_: None = Depends(verify_admin)):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "일별 서비스 비용"
+    sheet.append(["사용일자", "계정ID", "계정명", "서비스", "원화금액"])
+    sheet.append([datetime.now().strftime("%Y-%m-01"), "123456789012", "운영 계정", "AmazonRDS", 0])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="cost_import_template.xlsx"'},
+    )
+
+
+@router.post("/operations/costs/import")
+async def import_cost_details(
+    file: UploadFile = File(...),
+    billing_month: str = Form(""),
+    account_id: str = Form(""),
+    account_name: str = Form(""),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    filename = file.filename or ""
+    raw = await file.read()
+    if filename.lower().endswith(".csv"):
+        decoded = raw.decode("utf-8-sig")
+        values = list(csv.reader(io.StringIO(decoded)))
+    elif filename.lower().endswith(".xlsx"):
+        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        values = [list(row) for row in workbook.active.iter_rows(values_only=True)]
+    else:
+        raise HTTPException(status_code=400, detail=".xlsx 또는 .csv 파일만 업로드할 수 있습니다.")
+    if len(values) < 2:
+        raise HTTPException(status_code=400, detail="비용 데이터 행이 없습니다.")
+
+    raw_headers = values[0]
+    headers = [_normalize_cost_header(value) for value in raw_headers]
+    aliases = {
+        "date": {"사용일자", "사용일", "일자", "date", "usagedate"},
+        "account_id": {"계정id", "계정번호", "accountid", "account"},
+        "account_name": {"계정명", "accountname"},
+        "service": {"서비스", "서비스명", "service", "servicename"},
+        "amount": {"원화금액", "사용금액", "금액", "amount", "amountkrw", "krw"},
+    }
+
+    def column_index(key: str) -> int | None:
+        return next((index for index, header in enumerate(headers) if header in aliases[key]), None)
+
+    date_index = column_index("date")
+    service_index = column_index("service")
+    amount_index = column_index("amount")
+    parsed_rows: list[tuple[date, str, str, str, int]] = []
+
+    try:
+        if date_index is not None and service_index is not None and amount_index is not None:
+            account_id_index = column_index("account_id")
+            account_name_index = column_index("account_name")
+            for values_row in values[1:]:
+                if not any(value not in (None, "") for value in values_row):
+                    continue
+                usage_date = _parse_cost_date(values_row[date_index])
+                row_account_id = str(values_row[account_id_index]).strip() if account_id_index is not None else account_id.strip()
+                row_account_name = str(values_row[account_name_index]).strip() if account_name_index is not None else account_name.strip()
+                service_name = str(values_row[service_index] or "").strip()
+                amount_krw = _parse_krw_amount(values_row[amount_index])
+                if not row_account_id or not row_account_name or not service_name:
+                    raise ValueError("계정 또는 서비스 값 누락")
+                parsed_rows.append((usage_date, row_account_id, row_account_name, service_name, amount_krw))
+        else:
+            if not re.fullmatch(r"\d{4}-\d{2}", billing_month) or not account_id.strip() or not account_name.strip():
+                raise ValueError("행렬 형식은 청구 월과 계정 정보가 필요합니다")
+            service_index = service_index if service_index is not None else 0
+            day_columns = []
+            for index, header in enumerate(headers):
+                match = re.fullmatch(r"(\d{1,2})일?", header)
+                if match and 1 <= int(match.group(1)) <= 31:
+                    day_columns.append((index, int(match.group(1))))
+            if not day_columns:
+                raise ValueError("일자 열을 찾지 못했습니다")
+            for values_row in values[1:]:
+                service_name = str(values_row[service_index] or "").strip()
+                if not service_name or service_name.lower() in {"total", "합계"}:
+                    continue
+                for index, day in day_columns:
+                    amount_krw = _parse_krw_amount(values_row[index] if index < len(values_row) else 0)
+                    if amount_krw == 0:
+                        continue
+                    usage_date = datetime.strptime(f"{billing_month}-{day:02d}", "%Y-%m-%d").date()
+                    parsed_rows.append((usage_date, account_id.strip(), account_name.strip(), service_name, amount_krw))
+    except (ValueError, TypeError, IndexError) as exc:
+        raise HTTPException(status_code=400, detail=f"비용 파일 형식을 확인하세요: {exc}")
+
+    for usage_date, row_account_id, row_account_name, service_name, amount_krw in parsed_rows:
+        row = db.query(BillingDailyCostRecord).filter(
+            BillingDailyCostRecord.usage_date == usage_date,
+            BillingDailyCostRecord.account_id == row_account_id,
+            BillingDailyCostRecord.service_name == service_name,
+        ).first()
+        if row is None:
+            row = BillingDailyCostRecord(
+                usage_date=usage_date,
+                account_id=row_account_id,
+                service_name=service_name,
+                amount_krw=amount_krw,
+                account_name=row_account_name,
+            )
+            db.add(row)
+        else:
+            row.account_name = row_account_name
+            row.amount_krw = amount_krw
+        row.source = "nxavis_excel"
+    db.commit()
+    create_audit_log(
+        db,
+        "billing_cost_imported",
+        "billing_daily_cost",
+        filename,
+        f"rows={len(parsed_rows)}",
+        actor=current_user,
+    )
+    return {"message": "실제 원화 비용 자료를 반영했습니다.", "imported_rows": len(parsed_rows)}
+
+
+@router.patch("/operations/alerts/{alert_id}")
+def update_operations_alert(
+    alert_id: int,
+    body: OperationsAlertUpdate,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    if body.status not in {"open", "checking", "resolved"}:
+        raise HTTPException(status_code=400, detail="지원하지 않는 알림 상태입니다.")
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
+
+    alert.status = body.status
+    alert.assigned_to = current_user if body.status in {"checking", "resolved"} else None
+    alert.resolved_at = datetime.now() if body.status == "resolved" else None
+    if body.note is not None:
+        alert.note = maybe_encrypt(body.note.strip()) if body.note.strip() else None
+    db.commit()
+    db.refresh(alert)
+    create_audit_log(
+        db,
+        "operations_alert_updated",
+        "operations_alert",
+        str(alert.id),
+        f"status={body.status}",
+        actor=current_user,
+    )
+    return {
+        "id": alert.id,
+        "status": alert.status,
+        "assigned_to": alert.assigned_to,
+        "note": decrypt_if_needed(alert.note),
+        "resolved_at": alert.resolved_at,
+        "updated_at": alert.updated_at,
+    }
 
 
 # ── 커스텀 데이터 관리 ──────────────────────────────────────────

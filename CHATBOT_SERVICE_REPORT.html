@@ -1,0 +1,1213 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="엔코아 AI 캠퍼스 상담 챗봇의 서비스 구조, 이용 현황, 운영 방법과 비용을 정리한 보고서입니다.">
+  <title>엔코아 AI 캠퍼스 상담 챗봇 — 서비스 구조 및 운영 현황</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #647089;
+      --line: #dce3ee;
+      --surface: #ffffff;
+      --surface-soft: #f5f7fb;
+      --navy: #173f74;
+      --blue: #2864c7;
+      --cyan: #147d8b;
+      --green: #1d7a55;
+      --amber: #a96608;
+      --red: #b33c4a;
+      --shadow: 0 16px 42px rgba(28, 48, 79, .09);
+      --radius: 20px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #eef2f7;
+      font-family: Pretendard, "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+      line-height: 1.68;
+      word-break: keep-all;
+    }
+    a { color: var(--blue); }
+    code {
+      padding: .12rem .34rem;
+      border-radius: .35rem;
+      background: #edf1f7;
+      font-family: Consolas, monospace;
+      font-size: .92em;
+    }
+    .skip-link {
+      position: fixed;
+      top: -4rem;
+      left: 1rem;
+      z-index: 100;
+      padding: .75rem 1rem;
+      color: #fff;
+      background: var(--navy);
+      border-radius: .5rem;
+    }
+    .skip-link:focus { top: 1rem; }
+    .report {
+      width: min(1180px, calc(100% - 32px));
+      margin: 24px auto 64px;
+      background: var(--surface);
+      border: 1px solid #e3e8f1;
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .hero {
+      padding: 64px clamp(24px, 6vw, 76px) 52px;
+      color: #fff;
+      background:
+        radial-gradient(circle at 85% 18%, rgba(86, 196, 207, .28), transparent 32%),
+        linear-gradient(135deg, #102844 0%, #174d82 58%, #176879 100%);
+    }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: #acdce2;
+      font-size: .78rem;
+      font-weight: 800;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .hero h1 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      line-height: 1.18;
+      letter-spacing: -.045em;
+    }
+    .hero .lead {
+      max-width: 760px;
+      margin: 22px 0 0;
+      color: #dbe8f6;
+      font-size: clamp(1rem, 2vw, 1.2rem);
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 22px;
+      margin-top: 30px;
+      padding-top: 22px;
+      border-top: 1px solid rgba(255,255,255,.18);
+      color: #cbdced;
+      font-size: .9rem;
+    }
+    .toc {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 12px clamp(18px, 4vw, 52px);
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.96);
+      backdrop-filter: blur(12px);
+      scrollbar-width: thin;
+    }
+    .toc a {
+      flex: 0 0 auto;
+      padding: 7px 11px;
+      color: #3c4b63;
+      text-decoration: none;
+      font-size: .84rem;
+      font-weight: 700;
+      border-radius: 999px;
+    }
+    .toc a:hover, .toc a:focus-visible { color: var(--blue); background: #edf3ff; }
+    .content { padding: 12px clamp(20px, 5vw, 68px) 68px; }
+    section {
+      padding: 54px 0;
+      border-bottom: 1px solid var(--line);
+      scroll-margin-top: 70px;
+    }
+    section:last-child { border-bottom: 0; }
+    .section-head {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 28px;
+    }
+    .section-no {
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      color: #fff;
+      background: var(--navy);
+      border-radius: 14px;
+      font-size: .86rem;
+      font-weight: 900;
+    }
+    h2 {
+      margin: 0;
+      font-size: clamp(1.55rem, 3vw, 2.2rem);
+      line-height: 1.25;
+      letter-spacing: -.035em;
+    }
+    h3 {
+      margin: 34px 0 12px;
+      color: #243755;
+      font-size: 1.2rem;
+      letter-spacing: -.02em;
+    }
+    h4 { margin: 0 0 8px; font-size: 1rem; }
+    p { margin: 0 0 14px; }
+    .section-summary {
+      max-width: 820px;
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+    .grid-4, .grid-3, .grid-2 {
+      display: grid;
+      gap: 14px;
+    }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card, .metric, .layer, .action {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .card { padding: 21px; }
+    .card p:last-child, .action p:last-child { margin-bottom: 0; }
+    .metric {
+      min-height: 148px;
+      padding: 22px;
+      background: linear-gradient(145deg, #fff, #f5f8fc);
+    }
+    .metric strong {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--navy);
+      font-size: clamp(1.75rem, 4vw, 2.45rem);
+      line-height: 1.1;
+      letter-spacing: -.04em;
+    }
+    .metric span { display: block; font-weight: 800; }
+    .metric small { display: block; margin-top: 8px; color: var(--muted); line-height: 1.45; }
+    .callout {
+      margin: 22px 0;
+      padding: 18px 20px;
+      border: 1px solid #cbdaf2;
+      border-left: 5px solid var(--blue);
+      border-radius: 12px;
+      background: #f3f7ff;
+    }
+    .callout.warning { border-color: #edd5a8; border-left-color: var(--amber); background: #fff8e9; }
+    .callout.danger { border-color: #edc9ce; border-left-color: var(--red); background: #fff4f5; }
+    .callout p:last-child { margin-bottom: 0; }
+    .table-wrap {
+      overflow-x: auto;
+      margin: 16px 0 24px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: .91rem; }
+    caption {
+      padding: 14px 16px;
+      color: #31435f;
+      background: #f0f4f9;
+      font-weight: 800;
+      text-align: left;
+    }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: #33435c; background: #f8fafc; font-size: .82rem; }
+    tr:last-child td { border-bottom: 0; }
+    .bar-list { display: grid; gap: 14px; margin: 20px 0; }
+    .bar-row { display: grid; grid-template-columns: 150px minmax(120px, 1fr) 90px; gap: 12px; align-items: center; }
+    .bar-label { font-weight: 750; }
+    .bar-track { height: 12px; overflow: hidden; background: #e9eef5; border-radius: 999px; }
+    .bar-fill { height: 100%; background: linear-gradient(90deg, var(--blue), var(--cyan)); border-radius: inherit; }
+    .bar-value { color: #43526a; font-variant-numeric: tabular-nums; text-align: right; }
+    .architecture {
+      display: grid;
+      gap: 10px;
+      margin: 20px 0;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--surface-soft);
+    }
+    .layer {
+      display: grid;
+      grid-template-columns: 145px minmax(0, 1fr);
+      overflow: hidden;
+      background: #fff;
+    }
+    .layer-title {
+      display: flex;
+      align-items: center;
+      padding: 16px;
+      color: #fff;
+      background: var(--navy);
+      font-weight: 850;
+    }
+    .layer-items { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px; align-items: center; }
+    .pill {
+      padding: 7px 10px;
+      color: #34445d;
+      background: #eef3f8;
+      border-radius: 9px;
+      font-size: .88rem;
+      font-weight: 700;
+    }
+    .connector { color: #8694a8; text-align: center; font-size: 1.25rem; line-height: 1; }
+    .tree {
+      overflow-x: auto;
+      margin: 16px 0 24px;
+      padding: 20px;
+      color: #dbe9f7;
+      background: #17273a;
+      border-radius: 16px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: .84rem;
+      line-height: 1.65;
+      white-space: pre;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 8px;
+      margin: 20px 0;
+    }
+    .flow-step {
+      position: relative;
+      min-height: 122px;
+      padding: 16px 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      text-align: center;
+    }
+    .flow-step:not(:last-child)::after {
+      position: absolute;
+      top: 48%;
+      right: -10px;
+      z-index: 2;
+      content: "→";
+      color: #8391a5;
+      font-weight: 900;
+    }
+    .flow-step b { display: block; margin-bottom: 6px; color: var(--blue); font-size: .76rem; }
+    .flow-step span { font-size: .88rem; font-weight: 750; line-height: 1.45; }
+    .action { padding: 20px; }
+    .action .tag {
+      display: inline-block;
+      margin-bottom: 10px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      color: #16543c;
+      background: #e3f4eb;
+      font-size: .75rem;
+      font-weight: 850;
+    }
+    .action .tag.high { color: #833240; background: #fde8eb; }
+    .action .tag.medium { color: #765007; background: #fff0cf; }
+    .checklist { display: grid; gap: 9px; margin: 18px 0 0; padding: 0; list-style: none; }
+    .checklist li { position: relative; padding-left: 28px; }
+    .checklist li::before {
+      position: absolute;
+      left: 0;
+      top: .18rem;
+      content: "✓";
+      color: var(--green);
+      font-weight: 900;
+    }
+    .footer {
+      padding: 26px clamp(20px, 5vw, 68px);
+      color: #69758a;
+      background: #f4f6f9;
+      border-top: 1px solid var(--line);
+      font-size: .86rem;
+    }
+    .footer p { margin: 0; }
+    @media (max-width: 960px) {
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-3 { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .flow-step:not(:last-child)::after { display: none; }
+    }
+    @media (max-width: 680px) {
+      .report { width: 100%; margin: 0; border: 0; border-radius: 0; }
+      .hero { padding-top: 44px; }
+      .grid-4, .grid-2 { grid-template-columns: 1fr; }
+      .section-head { grid-template-columns: 40px minmax(0, 1fr); gap: 12px; }
+      .section-no { width: 40px; height: 40px; border-radius: 12px; }
+      .bar-row { grid-template-columns: 1fr 64px; }
+      .bar-track { grid-column: 1 / -1; grid-row: 2; }
+      .layer { grid-template-columns: 1fr; }
+      .layer-title { padding: 10px 14px; }
+      .flow { grid-template-columns: 1fr; }
+      .flow-step { min-height: auto; text-align: left; }
+    }
+    @media print {
+      body { background: #fff; }
+      .report { width: 100%; margin: 0; border: 0; box-shadow: none; }
+      .toc { display: none; }
+      .hero { padding: 36px; print-color-adjust: exact; }
+      .content { padding: 0 30px 30px; }
+      section { padding: 34px 0; break-inside: avoid; }
+      .card, .metric, .table-wrap, .architecture { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">본문으로 이동</a>
+  <article class="report">
+    <header class="hero">
+      <p class="eyebrow">Service Architecture &amp; Operations</p>
+      <h1>엔코아 AI 캠퍼스<br>상담 챗봇</h1>
+      <p class="lead">서비스가 무엇을 제공하고, 어떻게 답변하며, 얼마나 사용됐고, 어떤 비용과 운영 절차가 필요한지를 한 문서에서 설명합니다.</p>
+      <div class="meta">
+        <span>보고서 기준일 2026. 08. 09.</span>
+        <span>이용 데이터 2026. 05. 14. ~ 08. 07.</span>
+        <span>공개용 요약본</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="보고서 목차">
+      <a href="#overview">1. 한눈에 보기</a>
+      <a href="#usage">2. 이용·상담 현황</a>
+      <a href="#architecture">3. AWS·데이터 흐름</a>
+      <a href="#knowledge">4. 지식·관리자 운영</a>
+      <a href="#operations">5. 운영·비용</a>
+      <a href="#priorities">6. 개선 우선순위</a>
+      <a href="#ownership">7. 소유권·담당자 변경</a>
+    </nav>
+
+    <main class="content" id="main-content">
+      <section id="overview">
+        <div class="section-head">
+          <div class="section-no">01</div>
+          <div>
+            <h2>한눈에 보기</h2>
+            <p class="section-summary">교육 과정 문의를 자동 응대하고, 개별 판단이 필요한 질문은 사람 상담으로 연결하는 문서·FAQ 기반 서비스입니다.</p>
+          </div>
+        </div>
+
+        <div class="grid-4">
+          <article class="metric">
+            <strong>362</strong>
+            <span>대화 참여 세션</span>
+            <small>메시지를 한 번 이상 보낸 고유 세션 기준</small>
+          </article>
+          <article class="metric">
+            <strong>1,440</strong>
+            <span>질문·답변 처리</span>
+            <small>세션당 평균 4.0건</small>
+          </article>
+          <article class="metric">
+            <strong>86.6%</strong>
+            <span>정보 제공 자동 처리</span>
+            <small>FAQ 48.0% + 문서·LLM 38.6%</small>
+          </article>
+          <article class="metric">
+            <strong>149</strong>
+            <span>상담 연결 표시</span>
+            <small>버튼 클릭이나 실제 상담 시작 수는 아님</small>
+          </article>
+        </div>
+
+        <h3>서비스가 맡는 역할</h3>
+        <div class="grid-3">
+          <article class="card">
+            <h4>교육 상담 자동화</h4>
+            <p>과정 소개, 커리큘럼, 지원 대상, 일정·비용·장소, 입과 절차와 운영 규정을 한국어 상담 말투로 안내합니다.</p>
+          </article>
+          <article class="card">
+            <h4>승인 정보 기반 답변</h4>
+            <p>관리자가 승인한 문서와 FAQ, 공식 홈페이지의 최신 일정에서 근거를 찾은 뒤 답변합니다.</p>
+          </article>
+          <article class="card">
+            <h4>사람 상담 연결</h4>
+            <p>취소·환불·일정 변경, 사용자의 명시적 요청 등 개별 확인이 필요한 질문에는 상담 연결 버튼을 제공합니다.</p>
+          </article>
+        </div>
+
+        <div class="callout">
+          <p><strong>운영 관점의 핵심:</strong> 문서·FAQ·답변 규칙·관리자 권한은 관리자 화면에서 관리할 수 있습니다. 화면 구조, 판단 로직, 배포 방식 변경만 개발 작업이 필요합니다.</p>
+        </div>
+      </section>
+
+      <section id="usage">
+        <div class="section-head">
+          <div class="section-no">02</div>
+          <div>
+            <h2>이용 현황과 상담 연결</h2>
+            <p class="section-summary">관리자 대화 로그 전체 내보내기 기준입니다. 페이지 방문이 아니라 실제로 메시지를 보낸 대화 세션을 집계했습니다.</p>
+          </div>
+        </div>
+
+        <div class="bar-list" aria-label="최종 답변 방식별 비율">
+          <div class="bar-row">
+            <span class="bar-label">FAQ 답변</span>
+            <div class="bar-track"><div class="bar-fill" style="width:48%"></div></div>
+            <span class="bar-value">691 · 48.0%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">문서·LLM</span>
+            <div class="bar-track"><div class="bar-fill" style="width:38.6%"></div></div>
+            <span class="bar-value">556 · 38.6%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">상담 연결</span>
+            <div class="bar-track"><div class="bar-fill" style="width:10.3%"></div></div>
+            <span class="bar-value">149 · 10.3%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">대체 안내</span>
+            <div class="bar-track"><div class="bar-fill" style="width:2.7%"></div></div>
+            <span class="bar-value">39 · 2.7%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">안전 차단</span>
+            <div class="bar-track"><div class="bar-fill" style="width:.3%"></div></div>
+            <span class="bar-value">5 · 0.3%</span>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <caption>월별 이용 추이</caption>
+            <thead>
+              <tr><th>기간</th><th>대화 세션</th><th>질문·답변</th><th>FAQ</th><th>문서·LLM</th><th>상담 연결</th><th>비고</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>2026년 5월</td><td>115</td><td>503</td><td>251</td><td>153</td><td>75</td><td>5월 14일부터</td></tr>
+              <tr><td>2026년 6월</td><td>149</td><td>554</td><td>294</td><td>197</td><td>45</td><td>완료 월</td></tr>
+              <tr><td>2026년 7월</td><td>83</td><td>347</td><td>125</td><td>192</td><td>28</td><td>완료 월</td></tr>
+              <tr><td>2026년 8월</td><td>15</td><td>36</td><td>21</td><td>14</td><td>1</td><td>8월 7일까지</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid-2">
+          <article class="card">
+            <h4>상담 연결의 현재 의미</h4>
+            <p>149건은 상담 연결 버튼이 포함된 응답 수입니다. 이 중 취소·환불·일정 변경 안내는 41건, 그 외 상담 연결·제안은 108건입니다.</p>
+          </article>
+          <article class="card">
+            <h4>현재 측정할 수 없는 것</h4>
+            <p>페이지 방문자, 상담 버튼 클릭, 실제 상담 시작과 완료는 아직 로그에 없습니다. 따라서 방문→채팅→상담 전환율은 계산할 수 없습니다.</p>
+          </article>
+        </div>
+
+        <div class="callout warning">
+          <p><strong>해석 주의:</strong> 전체 86일 중 실제 대화가 있었던 날은 64일입니다. 초기 특정 날짜에 기록이 집중됐고 테스트·실사용 구분값이 없으므로, 이 수치를 “방문자 수”나 “실제 사람 수”로 표현하지 않습니다.</p>
+        </div>
+      </section>
+
+      <section id="architecture">
+        <div class="section-head">
+          <div class="section-no">03</div>
+          <div>
+            <h2>AWS 아키텍처와 데이터 흐름</h2>
+            <p class="section-summary">EC2는 서비스를 실행하고, Aurora RDS는 운영 데이터의 기준을 보관하며, S3는 문서와 검색 인덱스를 복구할 수 있는 영구 파일 저장소 역할을 합니다.</p>
+          </div>
+        </div>
+
+        <div class="architecture" role="img" aria-label="챗봇 서비스의 계층별 시스템 구성">
+          <div class="layer">
+            <div class="layer-title">이용 영역</div>
+            <div class="layer-items"><span class="pill">사용자 채팅</span><span class="pill">관리자 화면</span></div>
+          </div>
+          <div class="connector" aria-hidden="true">↓ HTTPS</div>
+          <div class="layer">
+            <div class="layer-title">EC2 애플리케이션</div>
+            <div class="layer-items"><span class="pill">React 웹</span><span class="pill">FastAPI</span><span class="pill">SSE 스트리밍</span><span class="pill">안전 검사·분류·검색·답변</span></div>
+          </div>
+          <div class="connector" aria-hidden="true">↓ 조회·저장·외부 호출</div>
+          <div class="layer">
+            <div class="layer-title">데이터</div>
+            <div class="layer-items"><span class="pill">Aurora RDS · 운영 기준</span><span class="pill">FAISS · 실행 검색</span><span class="pill">S3 · 문서·인덱스 영구 보관</span></div>
+          </div>
+          <div class="connector" aria-hidden="true">↔</div>
+          <div class="layer">
+            <div class="layer-title">외부 서비스</div>
+            <div class="layer-items"><span class="pill">OpenAI</span><span class="pill">공식 홈페이지</span><span class="pill">Google OAuth</span><span class="pill">채널톡</span><span class="pill">LangSmith</span></div>
+          </div>
+        </div>
+
+        <h3>AWS 서비스별 책임</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>저장 위치를 구분하는 기준</caption>
+            <thead><tr><th>영역</th><th>저장·처리 내용</th><th>운영 의미</th></tr></thead>
+            <tbody>
+              <tr><td>EC2</td><td>React 정적 파일, FastAPI, systemd 서비스, 실행 중인 FAISS 검색 인덱스</td><td>서비스 실행 영역입니다. 로컬 FAISS는 빠른 검색용 사본이며 영구 원본으로 보지 않습니다.</td></tr>
+              <tr><td>Aurora RDS</td><td>대화·메시지·처리 로그·취소 요청, 문서 메타데이터와 청크, FAQ, 프롬프트, 설정, 관리자·감사 로그</td><td>운영 데이터의 기준 저장소입니다. 통계와 관리자 화면은 이 데이터를 중심으로 동작합니다.</td></tr>
+              <tr><td>AWS S3</td><td>원본 PDF, 변환 문서, 문서 버전별 산출물, FAQ 백업, FAISS 인덱스</td><td>EC2 교체·재시작 시 문서와 검색 인덱스를 복구하기 위한 영구 파일 저장소입니다.</td></tr>
+              <tr><td>브라우저</td><td>현재 탭의 대화 화면 복원을 위한 임시 세션 정보</td><td>운영 기록의 원본이 아닙니다. 실제 대화 기록은 RDS에 저장됩니다.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>S3 버킷 구조</h3>
+        <pre class="tree" aria-label="S3 버킷의 document-chatbot 하위 구조">s3://&lt;bucket&gt;/document-chatbot/
+├─ faiss/
+│  ├─ index.faiss                 # 벡터 검색 인덱스
+│  └─ index.pkl                   # 문서·메타데이터 매핑
+├─ faq/
+│  └─ faq.json                    # FAQ 내보내기·복구용 사본
+├─ pdf/
+│  └─ &lt;logical_name&gt;_v&lt;N&gt;.pdf     # 관리자가 올린 원본 PDF
+└─ documents/
+   └─ &lt;logical_name&gt;/
+      └─ v&lt;N&gt;/
+         ├─ document.md           # 검색에 사용할 변환 문서
+         ├─ document.json         # 문서 처리 메타데이터
+         ├─ chunks.json           # 검색 단위로 나눈 본문
+         └─ embedding.json        # 모델·전략·청크 수 메타데이터</pre>
+        <p class="section-summary"><code>embedding.json</code>은 임베딩 작업 정보이며 실제 검색 벡터는 <code>faiss/index.faiss</code>에 들어갑니다. 문서 유형에 따라 <code>document.json</code> 대신 <code>faq.json</code>이 저장될 수 있습니다.</p>
+
+        <h3>데이터가 이동하는 두 가지 핵심 흐름</h3>
+        <div class="grid-2">
+          <article class="card">
+            <h4>사용자 질문과 답변</h4>
+            <p>브라우저 → FastAPI로 질문 전송 → RDS에 세션·사용자 메시지 기록 → FAQ·최신 일정 또는 EC2의 FAISS 검색 → 필요 시 OpenAI 답변 생성 → 브라우저에 스트리밍 → 최종 답변·처리 방식·오류·비용을 RDS에 기록합니다.</p>
+          </article>
+          <article class="card">
+            <h4>관리자 문서 반영</h4>
+            <p>PDF·Markdown 업로드 → 원본과 변환 산출물을 S3에 저장 → 문서 상태와 청크를 RDS에 기록 → 관리자 검토·승인 → 활성 문서와 FAQ 전체 재색인 → EC2에 FAISS 생성 → 동일 인덱스를 S3에 백업합니다.</p>
+          </article>
+        </div>
+
+        <div class="callout">
+          <p><strong>복구 흐름:</strong> EC2에서 로컬 <code>index.faiss</code>가 없으면 서비스 시작 시 S3의 <code>faiss/</code>에서 인덱스를 내려받습니다. 따라서 RDS 백업뿐 아니라 S3 문서·FAISS 파일과 암호화 키의 복구 가능성도 함께 확인해야 합니다.</p>
+        </div>
+
+        <h3>질문 한 건이 처리되는 순서</h3>
+        <div class="flow" aria-label="질문 처리 순서">
+          <div class="flow-step"><b>01</b><span>질문·최근 대화 접수</span></div>
+          <div class="flow-step"><b>02</b><span>개인정보·공격 요청 안전 검사</span></div>
+          <div class="flow-step"><b>03</b><span>FAQ·문서 검색·상담 연결 분류</span></div>
+          <div class="flow-step"><b>04</b><span>승인 문서와 최신 일정 조회</span></div>
+          <div class="flow-step"><b>05</b><span>필요 시 OpenAI가 답변 작성</span></div>
+          <div class="flow-step"><b>06</b><span>답변과 상담 버튼 실시간 전송</span></div>
+          <div class="flow-step"><b>07</b><span>처리 방식·오류·비용 기록</span></div>
+        </div>
+
+        <div class="grid-3">
+          <article class="card">
+            <h4>FAQ 경로</h4>
+            <p>반복 질문과 일정 문의는 관리자가 등록한 기준 답변과 홈페이지 최신 스냅샷을 우선 사용합니다.</p>
+          </article>
+          <article class="card">
+            <h4>문서 검색 경로</h4>
+            <p>비교·추천·상세 설명은 질문과 가까운 승인 문서 구간을 찾고, 그 근거를 사용해 답변합니다.</p>
+          </article>
+          <article class="card">
+            <h4>사람 상담 경로</h4>
+            <p>취소·환불 또는 사람 확인이 필요한 질문은 요청을 기록하고 채널톡 연결 버튼을 제공합니다.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="knowledge">
+        <div class="section-head">
+          <div class="section-no">04</div>
+          <div>
+            <h2>지식과 관리자 운영</h2>
+            <p class="section-summary">운영자는 대부분의 콘텐츠와 답변 기준을 코드 배포 없이 관리자 화면에서 변경할 수 있습니다.</p>
+          </div>
+        </div>
+
+        <div class="grid-4">
+          <article class="card"><h4>승인 문서</h4><p>과정 설명, 커리큘럼과 규정의 상세 근거입니다. 검토·승인된 버전만 검색에 사용합니다.</p></article>
+          <article class="card"><h4>공식 홈페이지</h4><p>모집 기수, 개강일, 시간, 장소와 비용을 마지막 성공 후 24시간 주기로 갱신합니다.</p></article>
+          <article class="card"><h4>FAQ</h4><p>반복 질문에 사용하는 기준 답변입니다. 유사 표현과 참고 문서를 함께 설정할 수 있습니다.</p></article>
+          <article class="card"><h4>답변 규칙</h4><p>말투, 답변 범위, 취소·상담 연결과 오류 안내 기준을 관리합니다.</p></article>
+        </div>
+
+        <h3>자주 수행하는 운영 작업</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>업무별 안전한 작업 순서</caption>
+            <thead><tr><th>업무</th><th>작업 위치와 순서</th><th>완료 확인</th></tr></thead>
+            <tbody>
+              <tr><td>과정·규정 갱신</td><td>같은 문서의 새 버전 업로드 → 변환 결과 대조 → 승인. 승인 시 이전 버전 비활성화와 전체 재색인이 자동 실행됩니다.</td><td>상태 <code>ready</code>·활성 여부, 새 문서 대표 질문과 기존 핵심 질문 확인</td></tr>
+              <tr><td>반복 답변 수정</td><td>FAQ 중복 검색 → 질문·답변·유사 표현 수정. 저장·삭제 시 재색인이 자동 실행됩니다.</td><td>원문·줄임말·자연어 변형 질문 확인</td></tr>
+              <tr><td>말투·처리 원칙 변경</td><td>기존 프롬프트 기록 → 수정 → 정상·민감 질문 시험</td><td>품질·속도·상담 연결 변화 확인</td></tr>
+              <tr><td>이용 현황 분석</td><td>기간 지정 → 대화·처리 로그 조회 → Excel 내보내기</td><td>기간·행 수·개인정보 포함 여부 확인</td></tr>
+              <tr><td>관리자 추가</td><td>회사 Google 이메일 등록 → 신규 담당자 로그인</td><td>주요 메뉴 접근 성공 후 기존 권한 정리</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>문서가 바뀌었을 때 서비스에 반영하는 법</h3>
+        <div class="flow" aria-label="문서 변경 반영 흐름">
+          <div class="flow-step"><b>01</b><span>새 PDF·MD 버전 업로드</span></div>
+          <div class="flow-step"><b>02</b><span>Markdown 변환·청크 확인</span></div>
+          <div class="flow-step"><b>03</b><span>검토 후 승인 또는 반려</span></div>
+          <div class="flow-step"><b>04</b><span>승인 문서 자동 재인덱싱</span></div>
+          <div class="flow-step"><b>05</b><span>EC2 FAISS 저장·S3 동기화</span></div>
+          <div class="flow-step"><b>06</b><span>대표·회귀 질문 검증</span></div>
+          <div class="flow-step"><b>07</b><span>처리·감사 로그 확인</span></div>
+        </div>
+
+        <ol>
+          <li><strong>관리자 → 문서 검토</strong>에서 변경된 PDF 또는 Markdown을 새로 올립니다. 기존 파일을 서버에서 직접 덮어쓰지 않습니다.</li>
+          <li>같은 문서의 개정판은 파일의 기본 이름을 일관되게 유지해 새 version으로 쌓이게 합니다. 업로드 뒤 <code>review</code> 상태와 변환된 본문·청크 수를 확인합니다.</li>
+          <li>내용이 맞으면 승인합니다. 승인 시 같은 logical name의 이전 버전이 비활성화되고 새 문서가 <code>ready / is_active=true</code>가 되며 전체 인덱스가 자동 재구성됩니다.</li>
+          <li>잘못 변환됐으면 반려하고 원본을 고쳐 다시 업로드합니다. 복원된 문서는 즉시 활성화되지 않고 다시 검토·승인해야 합니다.</li>
+          <li>새 문서에서만 답할 수 있는 질문과 기존 핵심 질문을 함께 시험합니다. 새 답만 확인하면 기존 문서 검색이 깨진 사실을 놓칠 수 있습니다.</li>
+        </ol>
+
+        <div class="callout warning">
+          <p><strong>수동 “FAISS 인덱스 재구성”이 필요한 때:</strong> 승인했는데 검색에 반영되지 않을 때, EC2·S3의 <code>index.faiss</code>/<code>index.pkl</code>이 유실되거나 불일치할 때, DB·S3를 복구한 뒤, 또는 임베딩 모델을 변경했을 때입니다. 정상적인 문서 승인과 FAQ 저장·삭제는 현재 코드가 자동 재색인하므로 같은 작업을 반복할 필요는 없습니다.</p>
+        </div>
+
+        <h3>인덱싱을 왜 하는가</h3>
+        <div class="grid-3">
+          <article class="card"><h4>청크 분할</h4><p>긴 문서를 약 1,200자 단위와 150자 겹침으로 나눠 질문과 가까운 부분만 찾을 수 있게 합니다.</p></article>
+          <article class="card"><h4>임베딩</h4><p>각 청크의 의미를 숫자 벡터로 바꿉니다. 현재 <code>text-embedding-3-large</code>를 사용하며, 단어가 달라도 의미가 가까운 질문을 찾게 합니다.</p></article>
+          <article class="card"><h4>FAISS 검색</h4><p>질문 벡터와 가까운 문서 벡터를 빠르게 찾아 생성 모델에 근거로 전달합니다. PDF·RDS·S3에 파일만 저장한 상태로는 의미 기반 검색이 되지 않습니다.</p></article>
+        </div>
+
+        <div class="callout">
+          <p><strong>비용과 주의점:</strong> 전체 재인덱싱은 활성 문서와 FAQ를 다시 읽고 OpenAI Embeddings API를 호출하므로 문서량만큼 시간과 비용이 듭니다. 임베딩 모델을 바꾸면 벡터 차원과 의미 공간이 달라질 수 있어 기존 FAISS 파일을 그대로 쓰지 말고 반드시 전체 재구성해야 합니다. OpenAI 공식 문서도 임베딩을 텍스트 간 관련성을 측정하는 수치 표현으로 설명합니다.</p>
+        </div>
+
+        <h3>관리자 페이지의 데이터 관리 구분</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>어떤 데이터는 어느 메뉴에서 관리해야 하는가</caption>
+            <thead><tr><th>목적</th><th>관리 메뉴</th><th>실제 저장 위치</th><th>챗봇 반영 방식</th></tr></thead>
+            <tbody>
+              <tr><td>과정·규정 원문</td><td>문서 검토</td><td>메타·청크는 RDS, 원문·산출물은 S3, 검색 인덱스는 EC2+S3</td><td>업로드 → 검토 → 승인 → 자동 재색인</td></tr>
+              <tr><td>반복 질문·정답</td><td>FAQ 관리</td><td>RDS <code>faqs</code>와 S3 FAQ 파일</td><td>추가·수정·삭제 시 자동 재색인</td></tr>
+              <tr><td>답변 말투·안전 규칙</td><td>프롬프트 관리</td><td>RDS <code>prompt_configs</code></td><td>저장 후 다음 요청부터 사용. 정상·민감 질문 시험 필요</td></tr>
+              <tr><td>운영자가 만든 표·명단</td><td>데이터 관리</td><td>RDS <code>cdata_*</code> 사용자 정의 테이블</td><td><strong>자동으로 RAG 지식에 포함되지 않음.</strong> 챗봇 근거로 쓰려면 문서 또는 FAQ로 등록하거나 별도 코드 연동 필요</td></tr>
+              <tr><td>시스템 원본 확인</td><td>DB 브라우저</td><td>RDS 전체 테이블</td><td>진단용. 문서·청크·대화 테이블을 직접 고치면 무결성이나 FAISS가 어긋날 수 있음</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>“데이터 관리”에서는 표 생성, text·number·date 컬럼 구성, 행 추가·수정·삭제, CSV/Excel 가져오기와 내보내기를 할 수 있습니다. 다만 이는 비개발자용 구조화 데이터 보관 기능이며 현재 RAG 검색기는 <code>cdata_*</code>를 읽지 않습니다. 챗봇 답변 근거를 바꾸려면 문서 검토 또는 FAQ 관리 메뉴를 사용해야 합니다.</p>
+
+        <h3>암호화·복호화는 어떻게 동작하는가</h3>
+        <div class="grid-2">
+          <article class="card">
+            <h4>저장할 때</h4>
+            <p>하나의 <code>ENCRYPTION_KEY</code>로 Fernet 대칭 암호화를 수행하고 저장값 앞에 <code>enc::</code>를 붙입니다. 채팅·문서 청크는 항상 보호하며 FAQ와 프롬프트는 설정의 카테고리별 ON/OFF에 따라 새 쓰기부터 적용됩니다.</p>
+          </article>
+          <article class="card">
+            <h4>읽을 때</h4>
+            <p>API와 DB 브라우저가 <code>enc::</code>를 발견하면 같은 키로 복호화해 관리자에게 원문을 보여줍니다. 암호문과 키가 맞지 않으면 빈 값처럼 보일 수 있으므로 데이터 삭제로 판단하면 안 됩니다.</p>
+          </article>
+        </div>
+
+        <ol>
+          <li>관리자 → 설정 → 암호화에서 FAQ·프롬프트·문서 카테고리의 암호화 건수와 평문 건수를 확인합니다.</li>
+          <li>토글은 <strong>이후 저장 방식</strong>을 바꿉니다. 기존 행까지 바꾸려면 별도의 전체 암호화 또는 전체 복호화 마이그레이션을 실행해야 합니다.</li>
+          <li>마이그레이션 전에 RDS snapshot을 만들고 <code>ENCRYPTION_KEY</code> 원본을 확인합니다. 복호화 실패 시 현재 코드는 원본 암호문을 빈 값으로 덮어쓰지 않도록 보호합니다.</li>
+          <li>운영 분석 때문에 복호화했다면 작업이 끝난 뒤 다시 암호화하고 건수를 대조합니다. 공개 보고서·Excel·로그에는 평문 개인정보를 남기지 않습니다.</li>
+        </ol>
+
+        <div class="callout danger">
+          <p><strong>현재 구현상 주의:</strong> 암호화 토글은 서버의 <code>backend/.env</code>에 기록되지만 배포 워크플로가 이 파일을 다시 만들며 기본값은 모두 ON입니다. 또한 문서 파일명·검토내용의 상태·마이그레이션 메뉴는 존재하지만 현재 업로드 코드는 문서 메타를 항상 <code>maybe_encrypt()</code>로 저장하므로 문서 OFF 토글과 새 쓰기 동작이 완전히 일치하지 않을 수 있습니다. 운영에서는 문서 암호화를 ON으로 간주하고, OFF가 필요하면 코드·배포 설정을 먼저 정비한 뒤 검증해야 합니다.</p>
+        </div>
+
+        <h3>OpenAI 모델 변경 방법</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>세 가지 모델은 변경 방법과 영향이 다릅니다</caption>
+            <thead><tr><th>모델</th><th>현재 역할</th><th>변경 방법</th><th>변경 후 필수 확인</th></tr></thead>
+            <tbody>
+              <tr><td>생성 모델<br><code>MODEL_NAME</code></td><td>최종 답변 생성과 FAQ 말투 재작성</td><td><strong>관리자 → 설정 → LLM 모델 설정</strong>에서 선택 후 “선택한 모델로 적용”. 실제 활성값은 RDS <code>app_settings.active_model_name</code>에 저장되어 재시작·배포 후에도 유지됩니다.</td><td>대표·민감·상담 연결 질문, 응답시간, OpenAI 오류와 비용을 비교합니다. 문제가 생기면 같은 화면에서 직전 모델로 되돌립니다.</td></tr>
+              <tr><td>의도 모델<br><code>INTENT_MODEL_NAME</code></td><td>질문을 FAQ·문서·상담 등으로 분기</td><td>관리자 화면 대상이 아닙니다. 환경설정·배포 구성을 변경하고 서비스를 재배포해야 합니다.</td><td>라우팅 회귀 테스트 전체를 실행합니다.</td></tr>
+              <tr><td>임베딩 모델<br><code>EMBEDDING_MODEL</code></td><td>문서·FAQ와 질문을 검색 벡터로 변환</td><td>관리자 화면 대상이 아닙니다. 환경설정·배포 변경 후 반드시 전체 FAISS 재구성을 실행합니다.</td><td>검색 회귀 질문, 인덱스 생성, S3 동기화, OpenAI 비용을 확인합니다.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warning">
+          <p><strong>모델 선택 원칙:</strong> 관리자 화면의 목록은 OpenAI API에서 조회하지만, 카드의 설명·가격은 코드에 작성된 참고값이라 시간이 지나면 달라질 수 있습니다. 변경 당일 <a href="https://developers.openai.com/api/docs/models/all" target="_blank" rel="noopener">OpenAI 공식 모델 목록</a>과 실제 Project 접근권한을 확인합니다. 채팅 모델을 바꿔도 재인덱싱은 필요 없지만 임베딩 모델을 바꾸면 반드시 필요합니다.</p>
+        </div>
+
+        <div class="callout danger">
+          <p><strong>주의:</strong> DB 브라우저 직접 수정, 백업 없는 삭제, 계획 없는 복호화, 업무 집중 시간의 모델·프롬프트 변경은 피합니다. 일반 콘텐츠는 문서·FAQ·프롬프트 전용 메뉴를 먼저 사용합니다.</p>
+        </div>
+      </section>
+
+      <section id="operations">
+        <div class="section-head">
+          <div class="section-no">05</div>
+          <div>
+            <h2>운영·배포·비용</h2>
+            <p class="section-summary">AWS 비용은 n·Xavis에서 계정번호 <strong>249173798473</strong>의 일자별 사용 현황을 조회하고, 완료 월 데이터를 기준으로 예산을 추정했습니다.</p>
+          </div>
+        </div>
+
+        <div class="grid-4">
+          <article class="metric"><strong>약 15.3만원</strong><span>AWS 월평균</span><small>2026년 6·7월 완료 월 평균</small></article>
+          <article class="metric"><strong>36,938원</strong><span>2026년 8월 화면 금액</span><small>n·Xavis 캡처 시점의 부분 집계</small></article>
+          <article class="metric"><strong>약 $4.80</strong><span>OpenAI 월 추정</span><small>56일간 잔액 감소 기준 참고값</small></article>
+          <article class="metric"><strong>약 18.4만원</strong><span>AWS 월 예산안</span><small>완료 월 평균에 변동 여유 20%</small></article>
+        </div>
+
+        <div class="callout">
+          <p><strong>AWS 비용 조회 위치:</strong> <a href="https://nxavis.com/layout/usageReport/usageDailyReport" target="_blank" rel="noopener">n·Xavis 일자별 사용 현황</a>에서 그룹 <strong>엔코아 동작캠퍼스</strong>, 계정별 보기의 <strong>249173798473 · 엔코아 동작캠퍼스 5반 학생-30</strong>을 선택합니다. 월을 지정한 뒤 서비스 탭에서 Amazon RDS, EC2, VPC, Secrets Manager 등 서비스별 사용액을 확인합니다.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <caption>AWS 비용 관측값 · 계정 249173798473</caption>
+            <thead><tr><th>기간</th><th>표시 금액</th><th>해석</th></tr></thead>
+            <tbody>
+              <tr><td>2026년 6월</td><td>153,130원</td><td>완료 월 30일</td></tr>
+              <tr><td>2026년 7월</td><td>153,244원</td><td>완료 월 31일</td></tr>
+              <tr><td>2026년 8월</td><td>36,938원</td><td>첨부 화면 조회 시점의 부분 집계로 예측 기준에서는 제외</td></tr>
+              <tr><td>완료 월 평균</td><td>153,187원</td><td>6·7월 평균, 연간 단순 환산 약 1,838,244원</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warning">
+          <p><strong>비용 범위:</strong> AWS 금액은 계정 249173798473 전체 비용이라 챗봇 외 자원이 포함될 수 있습니다. 현재 월 금액은 집계 지연과 남은 기간 때문에 완료 월과 직접 비교하지 않습니다. OpenAI 금액은 중간 추가 충전이 없다는 전제의 잔액 감소 추정치이며, 최종 비용은 청구서로 확정해야 합니다.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <caption>정기 운영 점검</caption>
+            <thead><tr><th>주기</th><th>확인 항목</th><th>정상 기준</th></tr></thead>
+            <tbody>
+              <tr><td>상시 자동</td><td>공식 홈페이지 만료 확인과 최신 정보 수집</td><td>실패 시 마지막 정상 스냅샷 유지</td></tr>
+              <tr><td>매일 권장</td><td><code>/health</code>, 대표 질문, 상담 버튼, 관리자 로그인</td><td>정상 응답·답변·버튼·로그인</td></tr>
+              <tr><td>주 1회</td><td>오류·fallback·상담 로그, 홈페이지 동기화, OpenAI 사용량</td><td>반복 오류 없음·최신 정보·예산 범위</td></tr>
+              <tr><td>콘텐츠 변경 시</td><td>문서·FAQ 반영, FAISS 상태, 회귀 질문</td><td>새 정보 반영과 기존 핵심 답변 유지</td></tr>
+              <tr><td>월 1회</td><td>AWS·OpenAI 비용, RDS·S3 백업, 관리자 권한</td><td>이상 비용 없음·복구 가능·최소 권한</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>배포와 장애 확인</h3>
+        <div class="grid-2">
+          <article class="card">
+            <h4>배포 흐름</h4>
+            <p><code>main</code> 반영 → EC2 self-hosted runner가 소스 동기화 → GitHub Secrets로 환경 구성 → 프론트 빌드 → <code>chatbot.service</code> 재시작 → 상태 점검 순서입니다.</p>
+          </article>
+          <article class="card">
+            <h4>장애 확인 순서</h4>
+            <p>사용자 화면 → <code>/health</code> → 관리자 로그인 → 최근 배포·콘텐츠 변경 → systemd 로그 → RDS·S3·OpenAI 연결 순서로 범위를 좁힙니다.</p>
+          </article>
+        </div>
+
+        <h3>호스팅·외부 연결 현황</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>현재 서비스별 역할과 설정 위치</caption>
+            <thead><tr><th>영역</th><th>현재 현황</th><th>설정이 있는 곳</th><th>바뀌면 영향받는 부분</th></tr></thead>
+            <tbody>
+              <tr><td>메인 홈페이지</td><td><a href="https://encorecampus.ai/" target="_blank" rel="noopener"><code>encorecampus.ai</code></a>. 공개 페이지 하단에 호스팅 제공자 <strong>(주)아임웹</strong>으로 표시됩니다.</td><td>아임웹 관리자·디자인 모드·도메인 설정. 이 저장소에는 아임웹 위젯 코드가 없습니다.</td><td>챗봇 진입 링크, 과정 상세·신청 URL, 홈페이지 자동 수집, 답변 내 공식 링크</td></tr>
+              <tr><td>챗봇 웹·API</td><td><code>chatbot.encorecampus.ai</code>. React 빌드 결과와 FastAPI <code>/api</code>를 AWS EC2에서 같은 서비스로 제공합니다.</td><td>개인 GitHub 저장소, EC2 작업 폴더, <code>chatbot.service</code>, port 8888, EC2 앞단의 DNS·HTTPS 설정</td><td>사용자·관리자 화면, API, CORS, Google OAuth origin, 배포 runner</td></tr>
+              <tr><td>아임웹의 챗봇 연결</td><td>메인 사이트에서 외부 챗봇으로 진입하는 구조이지만 링크·버튼·코드 위젯·iframe 중 실제 방식은 저장소에서 확인되지 않습니다.</td><td>아임웹 디자인 모드의 전체 메뉴·버튼 링크·코드 위젯을 검색하고 현재 설정 화면을 캡처해야 합니다.</td><td>챗봇 URL 변경 시 누락된 위젯 하나라도 남으면 사용자가 이전 주소로 이동합니다.</td></tr>
+              <tr><td>상담 연결</td><td>채널톡은 호스팅이 아니라 챗봇의 “상담 매니저 연결하기” 버튼이 여는 외부 URL입니다.</td><td>GitHub Secret <code>CHANNEL_TALK_URL</code> → 배포 시 <code>backend/.env</code> → API의 <code>handoff_url</code></td><td>채널·워크스페이스·상담 URL이 바뀌면 Secret 교체와 재배포 후 버튼 시험 필요</td></tr>
+              <tr><td>영구 데이터</td><td>Aurora RDS는 대화·관리 데이터, S3는 원문·FAQ·FAISS를 저장합니다.</td><td><code>DATABASE_URL</code>, AWS IAM/Role, <code>AWS_S3_BUCKET</code>, prefix <code>document-chatbot</code></td><td>AWS 계정·region·DB·bucket 변경 시 데이터 복사, 권한, 연결 문자열과 재색인</td></tr>
+              <tr><td>배포</td><td>GitHub <code>main</code> push를 EC2 self-hosted runner가 받아 빌드·재시작합니다.</td><td>GitHub Actions, Repository Secrets, EC2 runner 서비스</td><td>저장소 소유자·EC2·AWS 계정 변경 시 runner online 여부와 작업경로·remote 재확인</td></tr>
+              <tr><td>외부 API</td><td>OpenAI는 답변·임베딩, Google은 관리자 로그인, LangSmith는 trace를 담당합니다.</td><td>각 서비스 관리자 화면과 GitHub Secrets</td><td>도메인·Project·담당자 변경 시 origin·권한·키·결제와 사용량 조회권한 재설정</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warning">
+          <p><strong>아직 외부에서 확인해야 하는 항목:</strong> 챗봇 subdomain의 DNS 제공자·record 대상, HTTPS 인증서 발급·갱신 방식, EC2 앞단의 Nginx/ALB/CloudFront 여부, 고정 IP 여부와 아임웹 내부 챗봇 삽입 위치는 저장소에 설정 파일이 없습니다. 이 값은 이관 전에 AWS·DNS·아임웹 관리자 화면에서 캡처하고 자산대장에 실제 값과 소유자를 기록해야 합니다.</p>
+        </div>
+
+        <h3>URL이 바뀔 때 변경해야 하는 곳</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>변경 종류별 설정 영향도</caption>
+            <thead><tr><th>변경</th><th>반드시 수정</th><th>검증</th></tr></thead>
+            <tbody>
+              <tr><td>챗봇 주소 변경<br><code>chatbot.encorecampus.ai</code> → 새 주소</td><td>새 DNS·HTTPS 인증서, 아임웹의 모든 챗봇 링크/위젯, Google OAuth Authorized JavaScript origins, 백엔드 <code>allow_origins</code>. 별도 frontend hosting으로 분리하면 <code>API_BASE_URL</code>과 API CORS도 수정합니다.</td><td>새 주소의 사용자 화면·<code>/api</code>·Google 관리자 로그인·상담 버튼·모바일, 이전 주소의 redirect 또는 종료 안내</td></tr>
+              <tr><td>메인 홈페이지 주소 변경<br><code>encorecampus.ai</code> → 새 주소</td><td><code>HOMEPAGE_URL</code>뿐 아니라 현재 코드에 고정된 과정·신청·소개 URL도 변경합니다. 대상은 <code>website_course_service.py</code>, <code>response_formatter.py</code>, <code>ChatPage.tsx</code>, 프론트 FAQ와 테스트입니다.</td><td>홈페이지 일일 수집, 과정별 링크, UTM 파라미터, 신청 페이지, 답변의 공식 홈페이지 링크를 전수 검사</td></tr>
+              <tr><td>채널톡 URL 변경</td><td>GitHub Actions Secret <code>CHANNEL_TALK_URL</code>을 새 URL로 갱신하고 재배포합니다.</td><td>취소·환불·상담 요청 질문에서 버튼이 표시되고 새 채널이 별도 탭으로 열리는지 확인</td></tr>
+              <tr><td>Google OAuth Project·client 변경</td><td>Google Cloud Web client에 새 origin을 등록하고 <code>VITE_GOOGLE_CLIENT_ID</code>를 교체합니다. 프론트와 백엔드가 같은 client ID를 사용해야 합니다.</td><td>신규 관리자와 기존 관리자의 로그인, 잘못된 origin 차단, 배포 후 브라우저 console 오류 확인</td></tr>
+              <tr><td>DNS·HTTPS 관리주체 변경</td><td>도메인 등록자·DNS zone·record·TTL·인증서 갱신주체·만료 알림 수신자를 새 담당자로 넘깁니다.</td><td>HTTP→HTTPS, 인증서 체인·만료일, apex와 subdomain, DNS 전파 중 구주소·신주소 동시 접속</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout">
+          <p><strong>아임웹 변경 순서:</strong> 관리자·결제 권한 인계 → 현재 메뉴·버튼·코드 위젯에서 <code>chatbot.encorecampus.ai</code> 전체 검색 → 변경 전 화면·코드 백업 → 새 HTTPS 주소로 교체 → 디자인 모드 게시 → PC·모바일에서 클릭 및 새 창/iframe 동작 확인 순서입니다. <a href="https://imweb.me/qna?mode=faq&amp;q=329" target="_blank" rel="noopener">아임웹 코드 위젯</a>은 외부 모듈·HTML·JS를 담을 수 있으므로 URL 문자열뿐 아니라 iframe <code>src</code>와 스크립트 설정도 함께 검색합니다.</p>
+        </div>
+
+        <h3>AWS 계정이 바뀔 때</h3>
+        <p>AWS 계정은 저장소처럼 소유권 버튼 하나로 이전되지 않습니다. 새 계정에 인프라를 만들고 데이터를 복사한 뒤 트래픽을 전환하는 <strong>병행 구축 방식</strong>이 가장 안전합니다. 가능하면 AWS 계정 이전과 도메인 변경을 같은 날 동시에 하지 않고, 새 인프라를 기존 주소로 먼저 검증한 다음 주소를 변경합니다.</p>
+
+        <div class="table-wrap">
+          <table>
+            <caption>AWS 계정 이전 시 자원별 작업</caption>
+            <thead><tr><th>자원</th><th>새 계정에서 할 일</th><th>전환 시 주의사항</th></tr></thead>
+            <tbody>
+              <tr><td>IAM·결제</td><td>회사 소유 계정, MFA·관리자, 비용 알림과 n·Xavis 연동 여부를 먼저 준비하고 EC2에는 S3 최소 권한 IAM Role을 부여합니다.</td><td>root·개인 장기 Access Key로 운영하지 않습니다. 새 계정번호와 비용 조회 경로를 보고서에 갱신합니다.</td></tr>
+              <tr><td>네트워크</td><td>VPC·subnet·route·security group, 고정 IP 또는 load balancer와 HTTPS 종단을 재구성합니다.</td><td>RDS는 앱에서만, SSH는 승인된 경로에서만 접근하도록 하고 새 public endpoint를 DNS 전환 전에 시험합니다.</td></tr>
+              <tr><td>EC2</td><td>AMI 공유/복사 또는 새 서버 구축 후 Python·Node·systemd·작업폴더와 self-hosted runner를 설치합니다.</td><td>새 PEM/SSM 접속, <code>chatbot.service</code>, runner online, 디스크 경로·권한을 검증합니다. 기존 PEM은 새 계정 자원에 자동 승계되지 않습니다.</td></tr>
+              <tr><td>RDS</td><td>이관 직전 manual snapshot을 만들고 새 계정에 공유·복사·복원하거나 승인된 DB migration을 수행합니다.</td><td><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_ShareSnapshot.html" target="_blank" rel="noopener">암호화 snapshot 공유</a>에는 KMS 공유·복사가 필요하며 AWS 관리형 키로 암호화된 snapshot은 그대로 공유할 수 없는 제한이 있습니다. 새 endpoint로 <code>DATABASE_URL</code>을 교체합니다.</td></tr>
+              <tr><td>S3</td><td>새 bucket에 <code>document-chatbot</code> 전체 객체를 <a href="https://docs.aws.amazon.com/en_us/prescriptive-guidance/latest/patterns/copy-data-from-an-s3-bucket-to-another-account-and-region-by-using-the-aws-cli.html" target="_blank" rel="noopener">cross-account copy/sync</a>하고 destination bucket 소유권·암호화·versioning을 설정합니다.</td><td>객체 수·용량·checksum 또는 표본을 대조하고 새 계정이 객체 소유권을 갖는지 확인합니다. <code>AWS_S3_BUCKET</code>을 교체합니다.</td></tr>
+              <tr><td>비밀정보</td><td><code>ENCRYPTION_KEY</code>는 정확히 유지하고 새 RDS·S3·AWS 자격정보를 GitHub Secrets에 등록합니다.</td><td>최소 변경 대상은 <code>DATABASE_URL</code>, <code>AWS_ACCESS_KEY_ID</code>, <code>AWS_SECRET_ACCESS_KEY</code>, <code>AWS_S3_BUCKET</code>입니다. IAM Role 적용 후에는 장기 AWS 키 제거를 검토합니다.</td></tr>
+              <tr><td>검색 인덱스</td><td>S3의 기존 FAISS를 복사하되 새 환경에서 승인 문서 전체 재인덱싱을 1회 수행합니다.</td><td>RDS 문서 상태, S3 원문과 EC2 인덱스가 같은 시점인지 확인하고 대표·회귀 질문을 실행합니다.</td></tr>
+              <tr><td>DNS·배포</td><td>새 EC2 runner 배포가 성공한 뒤 DNS를 새 endpoint로 전환하고 TTL 동안 양쪽을 관찰합니다.</td><td>기존 AWS 계정과 서버는 즉시 삭제하지 말고 합의한 안정화 기간 뒤 백업·로그를 확인하고 종료합니다.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>설정 전체가 바뀌는 경우의 권장 순서</h3>
+        <div class="flow" aria-label="호스팅 전체 전환 순서">
+          <div class="flow-step"><b>01</b><span>현행 화면·계정·URL 자산대장</span></div>
+          <div class="flow-step"><b>02</b><span>새 AWS·도메인 병행 구축</span></div>
+          <div class="flow-step"><b>03</b><span>RDS·S3·키 복사와 검증</span></div>
+          <div class="flow-step"><b>04</b><span>GitHub Secrets·runner 전환</span></div>
+          <div class="flow-step"><b>05</b><span>Google·아임웹·채널톡 변경</span></div>
+          <div class="flow-step"><b>06</b><span>DNS 전환·전체 인수 테스트</span></div>
+          <div class="flow-step"><b>07</b><span>관찰 후 구계정·키 종료</span></div>
+        </div>
+
+        <ul class="checklist">
+          <li>변경 전 현재 AWS account ID, region, resource ID, URL, 관리자와 결제 주체를 기록합니다.</li>
+          <li>새 환경은 임시 주소로 사용자·관리자·DB·S3·OpenAI·채널톡까지 먼저 검증합니다.</li>
+          <li><code>ENCRYPTION_KEY</code>와 데이터 snapshot을 확보하기 전에는 인프라를 이동하거나 키를 교체하지 않습니다.</li>
+          <li>DNS TTL을 미리 낮추고 전환 시간·담당자·중단 기준·원복 endpoint를 정합니다.</li>
+          <li>전환 후 아임웹 진입부터 실제 상담 연결까지 사용자 전체 동선을 점검합니다.</li>
+          <li>최소 안정화 기간 동안 구환경을 읽기 전용 또는 즉시 원복 가능한 상태로 유지합니다.</li>
+          <li>최종 종료 뒤 비용·DNS·인증서·GitHub·AWS·외부 서비스의 기존 권한을 정리합니다.</li>
+        </ul>
+
+        <h3>데이터 로드·저장 장애 진단</h3>
+        <div class="flow" aria-label="장애 진단 흐름">
+          <div class="flow-step"><b>01</b><span>발생 시각·화면·작업 기록</span></div>
+          <div class="flow-step"><b>02</b><span>브라우저 Network 상태코드</span></div>
+          <div class="flow-step"><b>03</b><span><code>/health</code>와 로그인 확인</span></div>
+          <div class="flow-step"><b>04</b><span>최근 배포·설정 변경 확인</span></div>
+          <div class="flow-step"><b>05</b><span>systemd 오류 로그 확인</span></div>
+          <div class="flow-step"><b>06</b><span>RDS·S3·OpenAI 분리 점검</span></div>
+          <div class="flow-step"><b>07</b><span>복구 후 동일 작업 재검증</span></div>
+        </div>
+
+        <pre class="tree"># EC2에서 먼저 실행하는 읽기 전용 점검
+sudo systemctl status chatbot
+sudo journalctl -u chatbot -n 200 --no-pager
+curl -fsS http://127.0.0.1:8888/health
+
+# FAISS 로컬 파일 존재 여부
+ls -l ~/document-chatbot_practice/data/faiss_index/</pre>
+
+        <div class="callout warning">
+          <p><strong><code>/health</code> 해석:</strong> 현재 endpoint는 백엔드 프로세스가 응답하는지만 보여주며 RDS·S3·OpenAI를 실제로 조회하지 않습니다. <code>healthy</code>여도 관리자 데이터나 문서 검색이 실패할 수 있으므로 다음 표의 저장소별 확인을 이어갑니다.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <caption>증상별 원인 후보와 복구 순서</caption>
+            <thead><tr><th>증상</th><th>주요 원인</th><th>확인</th><th>안전한 조치</th></tr></thead>
+            <tbody>
+              <tr><td>관리자 전체 데이터가 로드되지 않음</td><td>세션 만료(401), 백엔드 중단, RDS 연결 실패, 다섯 병렬 API 중 하나의 500 오류</td><td>브라우저 Network에서 <code>/api/admin/sessions</code>, <code>documents</code>, <code>faqs</code>, <code>prompts</code>, <code>logs</code>를 개별 확인합니다.</td><td>401은 다시 로그인합니다. 500은 systemd 로그와 <code>DATABASE_URL</code>·RDS 상태·보안그룹을 확인하고 서비스 복구 후 새로고침합니다.</td></tr>
+              <tr><td>저장 버튼을 눌러도 저장되지 않음</td><td>필수값·형식 오류(400), 권한 없음(403), 대상 없음(404), 중복 키(409), RDS 쓰기 실패(500)</td><td>Network의 응답 status와 detail, 관리자 감사 로그, RDS 여유 공간·연결 상태를 확인합니다.</td><td>검증 오류를 먼저 고칩니다. 시스템 테이블을 직접 SQL로 우회 수정하지 말고 해당 전용 메뉴에서 다시 저장합니다.</td></tr>
+              <tr><td>PDF·MD 업로드 또는 승인 반영이 실패함</td><td>PDF 변환·UTF-8 오류, S3 권한·버킷, RDS 쓰기 오류. FAQ 변환·승인 재색인 단계라면 OpenAI 키·한도 오류</td><td>문서 상태가 <code>uploaded → parsing → embedding → review → ready</code> 중 어디에서 <code>failed</code>가 됐는지 processing log와 error message를 봅니다.</td><td>원인을 해결한 뒤 같은 파일을 다시 업로드합니다. PDF 변환 문제면 검토한 Markdown으로 등록하고, 승인 실패면 OpenAI·S3를 복구한 뒤 다시 승인하거나 재색인합니다.</td></tr>
+              <tr><td>승인한 새 문서가 답변에 나오지 않음</td><td>문서가 <code>ready/is_active</code>가 아님, 원문 S3 읽기 실패, FAISS 불일치, 질문이 다른 문서로 검색됨</td><td>문서 상태·활성 버전, S3 <code>document.md</code>, EC2의 두 FAISS 파일과 processing log를 확인합니다.</td><td>승인 상태를 바로잡고 “FAISS 인덱스 재구성”을 1회 실행한 뒤 새 질문과 회귀 질문을 다시 시험합니다.</td></tr>
+              <tr><td>재시작 후 문서 검색이 비거나 FAISS가 로드되지 않음</td><td><code>AWS_S3_BUCKET</code>·prefix 오류, IAM 권한 부족, <code>index.faiss</code>/<code>index.pkl</code> 일부 유실, 임베딩 모델 불일치</td><td>S3의 <code>document-chatbot/faiss/</code>, EC2 로컬 파일, AWS 자격 증명과 로그를 확인합니다.</td><td>올바른 S3 설정을 복구하고 승인 문서에서 전체 인덱스를 재생성합니다. 임베딩 모델은 이전 값으로 복구하거나 전체 재인덱싱합니다.</td></tr>
+              <tr><td>관리자 데이터가 빈 문자열로 보임</td><td><code>ENCRYPTION_KEY</code>가 비었거나 기존 암호문을 만든 키와 다름</td><td>배포 전후 Secret 변경 이력, 서버 환경설정과 암호화 건수를 확인합니다.</td><td><strong>복호화·마이그레이션·재저장을 중지</strong>하고 정확한 기존 키를 복구한 뒤 서비스를 재시작합니다. 임의 새 키로 덮지 않습니다.</td></tr>
+              <tr><td>모델 목록 또는 모델 변경 실패</td><td>OpenAI 401·권한·네트워크 오류, 선택 모델 미지원, RDS 저장 실패</td><td>OpenAI Project 키와 모델 접근권한, Network 응답과 systemd 로그를 확인합니다. 목록 조회 실패 시 화면에 제한된 fallback 목록이 보일 수 있습니다.</td><td>직전 정상 모델로 되돌리고 키·권한을 복구합니다. 모델 변경과 임베딩 변경을 같은 작업으로 처리하지 않습니다.</td></tr>
+              <tr><td>FAQ를 저장했지만 답변이 이상함</td><td>FAQ key·유사 표현·내용 오류, 자동 재색인 실패, 프롬프트 재서술 영향</td><td>FAQ 원문과 processing/system 로그, 실제 검색 경로와 LangSmith trace를 확인합니다.</td><td>FAQ 내용을 수정하고 자동 재색인을 기다린 뒤 원문·줄임말·변형 질문을 시험합니다. 필요하면 수동 재색인을 1회 실행합니다.</td></tr>
+              <tr><td>배포 후 설정이 원래대로 돌아감</td><td><code>deploy.yml</code>이 <code>backend/.env</code>를 새로 생성해 서버에서만 바꾼 값을 덮어씀</td><td>GitHub Actions 로그, Secrets와 배포 후 <code>.env</code> 항목 이름을 비교합니다.</td><td>지속돼야 하는 값은 GitHub 배포 설정을 단일 기준으로 만듭니다. 단, 생성 모델은 RDS <code>app_settings</code>가 우선이므로 관리자 화면 값을 확인합니다.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>장애 종료 기준</h3>
+        <ul class="checklist">
+          <li>원인·발생 시각·영향 범위·복구 작업을 장애 기록에 남깁니다.</li>
+          <li>사용자 질문과 관리자 로드·저장, RDS·S3·FAISS를 각각 확인합니다.</li>
+          <li>암호화 데이터와 기존 문서 건수가 복구 전후 일치합니다.</li>
+          <li>OpenAI·LangSmith·AWS 비용이 복구 과정에서 비정상 급증하지 않았는지 확인합니다.</li>
+          <li>같은 장애가 반복되지 않도록 알림·health check·배포 검증 항목을 보완합니다.</li>
+        </ul>
+      </section>
+
+      <section id="priorities">
+        <div class="section-head">
+          <div class="section-no">06</div>
+          <div>
+            <h2>현재 한계와 개선 우선순위</h2>
+            <p class="section-summary">새 기능을 많이 나열하기보다 서비스 성과를 제대로 측정하고 중요한 상담을 놓치지 않는 데 우선순위를 둡니다.</p>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <article class="action">
+            <span class="tag high">우선순위 1</span>
+            <h4>방문·상담 전환 측정</h4>
+            <p>페이지 진입, 채팅 시작, 상담 버튼 클릭과 실제 상담 시작을 구분해 기록합니다. 최소 정보만 수집하고 보존 기간을 함께 정합니다.</p>
+          </article>
+          <article class="action">
+            <span class="tag high">우선순위 2</span>
+            <h4>중요 상담 확인 화면</h4>
+            <p>취소·환불·안전 차단·상담 연결을 별도 목록으로 모으고 미확인·처리 중·완료 상태와 담당자를 기록합니다.</p>
+          </article>
+          <article class="action">
+            <span class="tag medium">우선순위 3</span>
+            <h4>로그 기반 답변 개선</h4>
+            <p>오답·정보 부족·잘못된 분기 사례를 문서, FAQ, 프롬프트, 코드 문제로 나눠 수정하고 회귀 질문에 추가합니다.</p>
+          </article>
+          <article class="action">
+            <span class="tag medium">우선순위 4</span>
+            <h4>비용 집계 분리</h4>
+            <p>AWS 계정 전체 비용과 챗봇 비용을 구분하고, OpenAI 실제 청구 데이터를 사용해 월 비용과 세션당 비용을 계산합니다.</p>
+          </article>
+        </div>
+
+        <h3>완료 판단 기준</h3>
+        <ul class="checklist">
+          <li>동일 기간의 관리자 지표와 원본 로그 집계가 일치합니다.</li>
+          <li>방문자와 대화 참여 세션, 상담 버튼 표시와 실제 상담 시작을 혼용하지 않습니다.</li>
+          <li>중요 상담을 별도 목록에서 찾고 처리 상태를 기록할 수 있습니다.</li>
+          <li>개선한 질문과 기존 핵심 질문이 함께 회귀 검증을 통과합니다.</li>
+          <li>배포 후 health, 대표 질문, 관리자 로그인과 상담 연결을 확인합니다.</li>
+        </ul>
+      </section>
+
+      <section id="ownership">
+        <div class="section-head">
+          <div class="section-no">07</div>
+          <div>
+            <h2>운영 소유권과 담당자 변경</h2>
+            <p class="section-summary">챗봇 소스는 담당자의 개인 GitHub 저장소에서 관리합니다. 담당자가 바뀔 때는 새 저장소 복제보다 GitHub Repository Transfer를 우선합니다.</p>
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <article class="card">
+            <h4>평상시</h4>
+            <p>차기 담당자를 collaborator로 미리 등록하고, 코드와 관리자 운영을 최소 2명이 이해하도록 합니다.</p>
+          </article>
+          <article class="card">
+            <h4>담당자 변경 시</h4>
+            <p>저장소 전체를 차기 담당자의 개인 GitHub 계정으로 이전해 커밋·이슈·설정의 연속성을 유지합니다.</p>
+          </article>
+          <article class="card">
+            <h4>이전 후</h4>
+            <p>GitHub Secrets, EC2 runner, 서버 작업 폴더의 <code>origin</code>과 첫 배포를 차례로 확인합니다.</p>
+          </article>
+        </div>
+
+        <h3>빠른 이관 체크리스트</h3>
+        <ol>
+          <li>차기 담당자의 저장소·AWS·OpenAI·Google·EC2 접근 권한을 먼저 확인합니다.</li>
+          <li>RDS 백업, S3 데이터와 <code>ENCRYPTION_KEY</code>의 복구 가능성을 확인합니다.</li>
+          <li>GitHub Repository Transfer를 실행하고 차기 담당자가 수락합니다.</li>
+          <li>Actions Secrets와 self-hosted runner 상태를 확인합니다.</li>
+          <li>EC2와 개발 PC의 <code>origin</code>을 새 저장소 주소로 변경합니다.</li>
+          <li>첫 배포 후 사용자 채팅, 관리자 로그인, 문서 검색과 상담 연결을 점검합니다.</li>
+          <li>모든 확인이 끝난 뒤 기존 담당자의 권한을 정리합니다.</li>
+        </ol>
+
+        <h3>비밀정보 발급·인계·등록 방법</h3>
+        <div class="callout">
+          <p><strong>13개가 모두 암호키인 것은 아닙니다.</strong> 현재 <code>deploy.yml</code>이 GitHub Actions Secrets에서 읽는 값이 13개입니다. 이 중 실제 비밀·접속정보는 7개, AWS 자격 증명 식별자는 1개, 공개돼도 인증 자체가 깨지지는 않는 운영 설정값은 5개입니다. 한곳에 등록한 이유는 배포 때 서버와 프론트엔드 환경파일을 자동으로 만들기 위해서입니다.</p>
+        </div>
+
+        <div class="flow" aria-label="담당자 이관 로드맵">
+          <div class="flow-step"><b>D-7</b><span>소유권·자산 목록 확정</span></div>
+          <div class="flow-step"><b>D-5</b><span>새 담당자 계정과 권한 추가</span></div>
+          <div class="flow-step"><b>D-3</b><span>백업·복구와 PEM 접속 검증</span></div>
+          <div class="flow-step"><b>D-1</b><span>13개 값 인계·재발급</span></div>
+          <div class="flow-step"><b>D-DAY</b><span>저장소 이전·배포</span></div>
+          <div class="flow-step"><b>D+1</b><span>서비스·비용·로그 검증</span></div>
+          <div class="flow-step"><b>D+7</b><span>기존 키와 권한 폐기</span></div>
+        </div>
+
+        <div class="callout warning">
+          <p><strong>가장 중요한 구분:</strong> <code>ENCRYPTION_KEY</code>는 새로 발급받는 외부 서비스 키가 아닙니다. 운영 중인 정확한 기존 값을 안전하게 인계받아야 하며, 이 값 없이 새 키를 만들면 기존에 암호화된 대화·FAQ·프롬프트·문서 데이터를 읽지 못할 수 있습니다. 반면 OpenAI·AWS·LangSmith 키는 새 담당자 권한으로 재발급하고 검증 후 기존 키를 폐기할 수 있습니다.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <caption>13개 GitHub Actions 값: 필요한 이유와 이관 방법</caption>
+            <thead><tr><th>No.</th><th>등록 이름·분류</th><th>왜 필요한가</th><th>이관할 때 할 일</th><th>완료 확인</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>1</td><td><code>OPENAI_API_KEY</code><br><small>비밀·재발급</small></td>
+                <td>사용자 답변 생성, 질문 의도 분류와 문서 임베딩 요청을 OpenAI Project 비용으로 인증합니다.</td>
+                <td><a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">운영 Project의 API Keys</a>에서 새 담당자용 키를 만들고 GitHub에 교체합니다. 개인 실험용 키와 분리합니다.</td>
+                <td>대표 질문 응답, 문서 임베딩, OpenAI 사용량 기록을 확인한 뒤 기존 키를 폐기합니다.</td>
+              </tr>
+              <tr>
+                <td>2</td><td><code>ENCRYPTION_KEY</code><br><small>비밀·원본 유지</small></td>
+                <td>RDS에 저장된 대화·FAQ·프롬프트·문서 관련 보호 필드를 암호화하고 기존 값을 복호화합니다.</td>
+                <td>기존 담당자의 승인된 비밀 저장소에서 <strong>운영 중인 정확한 원본 값</strong>을 인계합니다. 기존 데이터가 있으면 새로 만들지 않습니다.</td>
+                <td>기존 암호화 데이터가 정상 표시되는지 확인합니다. 이관 완료 후에도 복구용 금고에 별도 보관합니다.</td>
+              </tr>
+              <tr>
+                <td>3</td><td><code>ADMIN_PASSWORD</code><br><small>비밀·레거시</small></td>
+                <td>과거 관리자 비밀번호 기능과의 호환을 위해 워크플로에 남아 있습니다. 현재 주 인증은 Google OAuth입니다.</td>
+                <td>첫 이관에서는 기존 값을 유지해 예상치 못한 의존성을 피합니다. 이후 사용 코드를 점검해 별도 변경으로 제거합니다.</td>
+                <td>Google 관리자 로그인이 정상이고 레거시 비밀번호 의존이 없는지 확인합니다.</td>
+              </tr>
+              <tr>
+                <td>4</td><td><code>VITE_GOOGLE_CLIENT_ID</code><br><small>설정값</small></td>
+                <td>프론트엔드 Google 로그인과 백엔드 ID token 검증이 동일한 OAuth client를 사용하게 합니다.</td>
+                <td><a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Credentials</a>에서 기존 Web client의 관리권한을 넘기거나 새 client를 만들고 운영 origin을 등록합니다.</td>
+                <td><code>https://chatbot.encorecampus.ai</code>에서 새 담당자 Google 로그인을 확인합니다.</td>
+              </tr>
+              <tr>
+                <td>5</td><td><code>CHANNEL_TALK_URL</code><br><small>설정값</small></td>
+                <td>챗봇이 답변하지 못하거나 상담이 필요한 사용자를 실제 상담 채널로 연결합니다.</td>
+                <td>상담 운영 담당자로부터 현재 운영 URL과 채널 소유권을 확인하고 동일 값을 넘깁니다.</td>
+                <td>사용자 화면의 상담 버튼이 올바른 채널로 열리는지 확인합니다.</td>
+              </tr>
+              <tr>
+                <td>6</td><td><code>DATABASE_URL</code><br><small>비밀·접속정보</small></td>
+                <td>Aurora RDS의 대화, 사용자, FAQ, 문서 메타데이터와 운영 설정을 영구 저장하는 연결정보입니다.</td>
+                <td>RDS endpoint·DB·사용자·비밀번호로 <code>postgresql://USER:PASSWORD@HOST:5432/DB</code>를 구성합니다. 암호 특수문자는 URL 인코딩합니다.</td>
+                <td><code>/health</code>, 기존 데이터 건수와 관리자 목록을 확인합니다. 비밀번호 교체는 DB와 Secret을 같은 작업창에서 수행합니다.</td>
+              </tr>
+              <tr>
+                <td>7</td><td><code>AWS_ACCESS_KEY_ID</code><br><small>자격 증명 식별자</small></td>
+                <td>백엔드가 어떤 AWS IAM 자격 증명으로 S3 API를 호출하는지 식별합니다.</td>
+                <td><code>AWS_SECRET_ACCESS_KEY</code>와 한 쌍으로 새 운영 IAM 자격 증명을 발급합니다. S3 버킷·prefix 최소 권한만 부여합니다.</td>
+                <td>S3 목록·다운로드·업로드가 되고 다른 버킷에는 접근하지 못하는지 확인합니다.</td>
+              </tr>
+              <tr>
+                <td>8</td><td><code>AWS_SECRET_ACCESS_KEY</code><br><small>비밀·재발급</small></td>
+                <td>AWS 요청 서명에 사용되는 실제 비밀값이며 Access Key ID와 짝이 맞아야 합니다.</td>
+                <td>IAM에서 새 키를 만들 때 한 번만 안전하게 저장합니다. Git·보고서·메신저로 보내지 않습니다.</td>
+                <td>새 키 검증 후 기존 키를 비활성화하고 관찰한 뒤 삭제합니다. 권장 최종 상태는 EC2 IAM Role 사용입니다.</td>
+              </tr>
+              <tr>
+                <td>9</td><td><code>AWS_S3_BUCKET</code><br><small>설정값</small></td>
+                <td>PDF·정제 문서·FAQ·FAISS 인덱스가 저장된 S3 위치를 지정합니다.</td>
+                <td>AWS 계정 <strong>249173798473</strong>의 실제 운영 버킷 이름과 <code>document-chatbot</code> prefix를 그대로 확인합니다.</td>
+                <td>기존 문서 검색과 새 문서 반영 후 S3 동기화를 확인합니다.</td>
+              </tr>
+              <tr>
+                <td>10</td><td><code>LANGSMITH_API_KEY</code><br><small>비밀·재발급</small></td>
+                <td>LLM 호출 trace, 지연시간과 오류를 LangSmith workspace로 전송합니다.</td>
+                <td><a href="https://smith.langchain.com/settings" target="_blank" rel="noopener">LangSmith Settings → API Keys</a>에서 개인 PAT가 아닌 운영 service key를 준비합니다.</td>
+                <td>새 질문의 trace가 운영 프로젝트에 쌓이는지 확인한 후 기존 키를 폐기합니다.</td>
+              </tr>
+              <tr>
+                <td>11</td><td><code>LANGSMITH_PROJECT</code><br><small>설정값</small></td>
+                <td>챗봇 trace를 다른 서비스와 분리해 한 프로젝트에서 조회하게 합니다.</td>
+                <td>기존 운영 프로젝트 이름을 확인합니다. 현재 코드 기본 이름은 <code>document-chatbot</code>입니다.</td>
+                <td>trace가 새 이름의 빈 프로젝트가 아니라 기존 운영 프로젝트에 들어가는지 확인합니다.</td>
+              </tr>
+              <tr>
+                <td>12</td><td><code>JWT_SECRET</code><br><small>비밀·교체 가능</small></td>
+                <td>Google 로그인 후 발급되는 8시간 관리자 세션 토큰의 위변조를 막는 서명키입니다.</td>
+                <td>세션 유지가 필요하면 기존 값을 인계하고, 강제 로그아웃이 허용되는 전환 시점에는 새 난수로 교체합니다.</td>
+                <td>기존 세션 영향과 새 로그인·관리자 API 호출을 확인합니다.</td>
+              </tr>
+              <tr>
+                <td>13</td><td><code>ADMIN_EMAIL</code><br><small>설정값</small></td>
+                <td>DB 상태와 무관하게 최초 관리자 접근이 가능한 부트스트랩 계정을 지정합니다.</td>
+                <td>차기 담당자의 회사 Google 계정을 먼저 설정하고 로그인한 뒤 추가 관리자를 등록합니다.</td>
+                <td>차기 담당자 로그인을 확인한 후에만 기존 담당자 이메일과 권한을 제거합니다.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid-2">
+          <article class="card">
+            <h4>신규 환경에서만 생성하는 값</h4>
+            <pre class="tree"># ENCRYPTION_KEY — 기존 데이터가 없는 신규 환경 전용
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# JWT_SECRET
+python -c "import secrets; print(secrets.token_urlsafe(48))"</pre>
+          </article>
+          <article class="card">
+            <h4>GitHub 등록 위치</h4>
+            <p><code>Repository → Settings → Secrets and variables → Actions → New repository secret</code>에서 표의 이름과 정확히 같은 이름으로 하나씩 등록합니다. 저장한 값은 화면에서 다시 전체 조회할 수 없으므로 먼저 승인된 비밀 저장소에 원본을 보관합니다.</p>
+          </article>
+        </div>
+
+        <h3>13개 값 외에 반드시 넘겨야 할 운영 자산</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>계정·서버·데이터·외부 서비스 이관 목록</caption>
+            <thead><tr><th>영역</th><th>넘겨야 할 것</th><th>완료 기준</th></tr></thead>
+            <tbody>
+              <tr><td>GitHub</td><td>개인 저장소 소유권, 차기 담당자 계정, branch·Actions 권한, 이슈와 배포 이력</td><td>Repository Transfer 수락, 새 소유자 push 가능, Actions 실행 가능. GitHub 문서상 저장소 Secret과 deploy key는 이전 후에도 연결되지만 반드시 값의 존재와 배포를 다시 검증합니다.</td></tr>
+              <tr><td>EC2 서버</td><td>계정 <strong>249173798473</strong>, region, instance ID·이름, 운영 IP/DNS, Linux 사용자, PEM 또는 대체 접속수단, 보안그룹</td><td>차기 담당자가 자기 SSH 키 또는 Session Manager로 접속하고 <code>chatbot.service</code> 상태·로그를 확인할 수 있습니다.</td></tr>
+              <tr><td>배포 runner</td><td>EC2의 GitHub self-hosted runner 설치 경로·서비스명·실행 사용자와 작업 디렉터리</td><td><code>Repository → Settings → Actions → Runners</code>에서 online이며 새 소유자의 커밋으로 배포가 1회 성공합니다. offline이면 새 등록 token으로 재등록합니다.</td></tr>
+              <tr><td>RDS</td><td>Aurora cluster·instance 식별자, endpoint, DB명·계정, 보안그룹, 자동 백업·snapshot 보존정책</td><td>이관 직전 수동 snapshot 또는 복구지점을 기록하고, 차기 담당자가 연결·조회·복구 절차를 설명할 수 있습니다.</td></tr>
+              <tr><td>S3</td><td>운영 bucket, <code>document-chatbot</code> prefix, 정책, 암호화·versioning·수명주기 설정</td><td>기존 PDF·문서·FAQ·FAISS가 보이고 업로드 후 EC2와 동기화됩니다.</td></tr>
+              <tr><td>도메인·HTTPS</td><td><code>chatbot.encorecampus.ai</code> DNS 관리주체, record 대상, 인증서 발급·갱신 위치와 만료 알림 수신자</td><td>새 담당자에게 DNS·인증서 관리 권한과 갱신 알림이 있고 HTTPS 접속이 정상입니다.</td></tr>
+              <tr><td>외부 서비스</td><td>OpenAI Project·결제·사용량, Google Cloud OAuth, LangSmith workspace, 채널톡 운영 계정</td><td>차기 담당자가 관리자 화면과 사용량/오류를 조회하고 운영용 키를 직접 재발급할 수 있습니다.</td></tr>
+              <tr><td>보고서·운영기록</td><td>공개 Work-Reports 경로, 장애·배포 기록, 비용 조회 방법, 담당자 연락망과 비밀 저장소 위치</td><td>새 담당자가 보고서를 갱신·배포하고 장애 시 기술·상담·비용 담당자에게 연락할 수 있습니다.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>PEM 키와 EC2 접속권한 이관</h3>
+        <div class="grid-2">
+          <article class="card">
+            <h4>PEM은 무엇이며 왜 별도인가</h4>
+            <p>PEM은 Linux EC2에 SSH로 접속할 때 사용하는 개인키입니다. 애플리케이션이 실행될 때 읽는 13개 값이 아니므로 GitHub Secrets에 넣지 않습니다. AWS는 private key 사본을 보관하지 않기 때문에 분실한 같은 PEM을 다시 내려받을 수 없습니다.</p>
+          </article>
+          <article class="card">
+            <h4>권장 인계 방식</h4>
+            <p>기존 PEM 파일을 여러 사람이 공유하지 말고, 차기 담당자가 새 key pair를 만들게 합니다. 기존 담당자가 접속 가능한 동안 새 공개키를 서버의 <code>~/.ssh/authorized_keys</code>에 추가하고 새 키 접속을 확인한 뒤, 최종 검증 후 기존 공개키를 제거합니다.</p>
+          </article>
+        </div>
+
+        <div class="callout warning">
+          <p><strong>PEM 전환 순서:</strong> 새 key pair 생성 → private key를 차기 담당자의 승인된 금고에 저장 → 기존 접속으로 새 public key 추가 → <code>ssh -i &lt;new-key&gt;.pem &lt;user&gt;@&lt;host&gt;</code> 접속 시험 → 새 키로 sudo·서비스 로그·runner 상태 확인 → Session Manager 같은 비상 접속수단 확인 → D+7 이후 기존 public key 제거. 새 접속이 검증되기 전에는 기존 키를 먼저 제거하지 않습니다.</p>
+        </div>
+
+        <h3>실제 이관 실행 로드맵</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>중단과 복구를 고려한 권장 일정</caption>
+            <thead><tr><th>시점</th><th>기존 담당자</th><th>차기 담당자</th><th>통과 조건·되돌리기</th></tr></thead>
+            <tbody>
+              <tr><td>D-7</td><td>GitHub·AWS·OpenAI·Google·LangSmith·채널톡·DNS의 소유자와 결제 주체를 자산대장에 기록합니다.</td><td>각 서비스에 회사 이메일과 MFA로 가입하고 접근을 요청합니다.</td><td>모든 자산에 최소 2명의 관리자와 연락처가 있습니다.</td></tr>
+              <tr><td>D-5</td><td>GitHub collaborator, AWS 최소 권한, 외부 서비스 관리자/운영 권한을 추가합니다.</td><td>로그인·비용 조회·키 생성 권한을 직접 확인합니다.</td><td>권한 부족 항목이 있으면 저장소 이전을 진행하지 않습니다.</td></tr>
+              <tr><td>D-3</td><td>RDS snapshot, S3 상태, 현재 commit과 배포 성공 이력, 13개 이름의 존재를 기록합니다.</td><td>새 PEM/SSH 또는 Session Manager 접속과 복구 자료를 확인합니다.</td><td>백업 시점·복구 담당자·기존 정상 commit을 롤백 기준으로 확정합니다.</td></tr>
+              <tr><td>D-1</td><td><code>ENCRYPTION_KEY</code> 원본과 유지 설정값을 승인된 비밀 저장소로 인계합니다.</td><td>OpenAI·AWS·LangSmith 키를 새로 발급하고 GitHub Secret 교체 준비를 합니다.</td><td>실제 값은 메신저·메일·보고서·Git에 남기지 않습니다.</td></tr>
+              <tr><td>D-DAY</td><td>개인 GitHub 저장소를 차기 담당자 개인 계정으로 Transfer하고 수락을 확인합니다.</td><td>remote·Secrets·runner를 확인하고 <code>main</code> 배포를 실행합니다.</td><td>배포 실패 시 기존 정상 commit과 기존 Secret으로 복귀하고 기존 권한을 유지합니다.</td></tr>
+              <tr><td>D+1</td><td>장애 대응을 위해 연락 가능한 상태를 유지합니다.</td><td>health, 사용자 질문, 관리자 로그인, DB·S3, 상담 연결, LangSmith, AWS·OpenAI 비용을 점검합니다.</td><td>핵심 검증이 하나라도 실패하면 기존 키·계정을 폐기하지 않습니다.</td></tr>
+              <tr><td>D+7</td><td>차기 담당자 확인을 받고 개인 키·서버 공개키·불필요한 서비스 권한을 제거합니다.</td><td>자산대장·보고서·장애 연락망을 최신화하고 단독 배포·복구 연습을 완료합니다.</td><td>새 담당자가 단독 운영 가능한 경우에만 기존 접근을 최종 종료합니다.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>최종 인수 테스트</h3>
+        <ul class="checklist">
+          <li>GitHub 새 소유자가 직접 수정·push하고 Actions 배포를 완료합니다.</li>
+          <li>self-hosted runner가 online이고 EC2에서 <code>chatbot.service</code> 재시작·로그 조회가 가능합니다.</li>
+          <li>기존 암호화 데이터, RDS 데이터 건수와 S3 문서·FAISS가 유지됩니다.</li>
+          <li>일반 질문, 문서 기반 질문, 관리자 Google 로그인과 상담 연결을 검증합니다.</li>
+          <li>OpenAI·LangSmith trace와 n·Xavis AWS 비용을 차기 담당자가 직접 조회합니다.</li>
+          <li>DNS·HTTPS 인증서 만료 알림과 장애 연락망이 차기 담당자에게 전달됩니다.</li>
+          <li>백업에서 복구하는 절차와 롤백할 마지막 정상 commit을 기록합니다.</li>
+        </ul>
+
+        <div class="callout">
+          <p><strong>AWS 권장 방향:</strong> AWS는 EC2에서 장기 Access Key를 저장하는 방식보다 IAM Role의 임시 자격 증명을 권장합니다. 가장 빠른 이관은 현행 키 구성을 먼저 정상화하는 것이지만, 후속 보안 개선에서는 EC2 instance profile에 S3 최소 권한을 부여하고 <code>AWS_ACCESS_KEY_ID</code>와 <code>AWS_SECRET_ACCESS_KEY</code> 의존성을 제거하는 것이 좋습니다.</p>
+        </div>
+
+        <div class="callout danger">
+          <p><strong>비밀정보 원칙:</strong> API 키, DB 접속 문자열과 암호화 키의 실제 값은 이 보고서나 Git 저장소에 기록하지 않습니다. 특히 <code>ENCRYPTION_KEY</code>는 기존 암호화 데이터를 복구하는 데 필요하므로 승인된 비밀 저장소에 별도 보관합니다.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>이 문서는 공개 공유용 요약본입니다. 개인정보, 실제 비밀값, 내부 전용 접속정보와 원문 대화는 포함하지 않습니다.</p>
+    </footer>
+  </article>
+</body>
+</html>

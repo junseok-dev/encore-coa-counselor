@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, Text, String
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Text, String, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.db.database import Base
@@ -106,6 +106,63 @@ class CancelRequest(Base):
     message = Column(Text, nullable=False)
     status = Column(String(30), default="requested", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class OperationsAlert(Base):
+    __tablename__ = "operations_alerts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chat_log_id = Column(Integer, unique=True, index=True, nullable=False)
+    session_id = Column(String(64), index=True, nullable=False)
+    signal_type = Column(String(30), index=True, nullable=False)
+    severity = Column(String(20), index=True, nullable=False)
+    reason = Column(Text, nullable=False)
+    status = Column(String(20), index=True, default="open", nullable=False)
+    assigned_to = Column(String(255), nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class SystemHealthProbe(Base):
+    """Dedicated heartbeat row used to verify that the application can persist data."""
+
+    __tablename__ = "system_health_probes"
+
+    key = Column(String(50), primary_key=True)
+    nonce = Column(String(64), nullable=False)
+    checked_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class BillingCostRecord(Base):
+    __tablename__ = "billing_cost_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    billing_month = Column(String(7), unique=True, index=True, nullable=False)
+    amount_krw = Column(Integer, nullable=False)
+    source = Column(String(30), default="nxavis_manual", nullable=False)
+    note = Column(Text, nullable=True)
+    updated_by = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BillingDailyCostRecord(Base):
+    __tablename__ = "billing_daily_cost_records"
+    __table_args__ = (
+        UniqueConstraint("usage_date", "account_id", "service_name", name="uq_daily_cost_account_service"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    usage_date = Column(Date, index=True, nullable=False)
+    account_id = Column(String(64), index=True, nullable=False)
+    account_name = Column(String(255), nullable=False)
+    service_name = Column(String(120), index=True, nullable=False)
+    amount_krw = Column(Integer, nullable=False)
+    source = Column(String(30), default="nxavis_excel", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class ProcessingLog(Base):
