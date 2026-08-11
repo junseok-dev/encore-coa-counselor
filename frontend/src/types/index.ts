@@ -161,6 +161,9 @@ export interface ChatLog {
   source: string | null;
   error: string | null;
   processing_status: string;
+  question_category: string | null;
+  question_category_label: string | null;
+  question_category_source: string | null;
   embedding_cost: number;
   llm_cost: number;
   created_at: string;
@@ -251,6 +254,7 @@ export interface OperationsAnalyticsData {
   question_categories_top5: QuestionCategoryMetric[];
   answer_source_summary: AnswerSourceSummary;
   handoff_categories: HandoffCategoryMetric[];
+  unclassified_count: number;
 }
 
 export interface CostAccountSummary {

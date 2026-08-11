@@ -155,6 +155,13 @@ export const adminApi = {
     return response.data;
   },
 
+  reclassifyQuestionCategories: async (): Promise<{ classified: number; rule_classified: number; llm_classified: number; remaining: number }> => {
+    const response = await adminApiClient.post('/admin/operations/analytics/reclassify', null, {
+      params: { limit: 500 },
+    });
+    return response.data;
+  },
+
   getSystemHealth: async (): Promise<SystemHealthData> => {
     const response = await adminApiClient.get<SystemHealthData>('/admin/operations/health');
     return response.data;

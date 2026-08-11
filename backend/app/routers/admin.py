@@ -15,7 +15,7 @@ from fastapi.responses import Response
 from openai import AsyncOpenAI
 from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel
-from sqlalchemy import inspect as sa_inspect, text
+from sqlalchemy import inspect as sa_inspect, or_, text
 from sqlalchemy.orm import Session
 
 from app.config import ENV_FILE_PATH, get_settings
@@ -38,6 +38,7 @@ from app.services.admin_service import (
 from app.services.faq_service import _serialize_faq, seed_faqs, sync_faqs_to_file
 from app.services.model_settings import get_active_model, set_active_model
 from app.services.prompt_service import PROMPT_DEFAULTS, seed_prompt_configs, serialize_prompt
+from app.services.question_category_service import categorize_question_rule, classify_questions_batch
 from app.services.storage_service import read_text_from_storage, storage_exists
 from app.utils.crypto import ENCRYPTED_PREFIX, decrypt_if_needed, encrypt, maybe_encrypt
 
@@ -170,6 +171,9 @@ def _serialize_chat_log(row: ChatLog) -> dict:
         "source": row.source,
         "error": decrypt_if_needed(row.error),
         "processing_status": row.processing_status,
+        "question_category": row.question_category,
+        "question_category_label": row.question_category_label,
+        "question_category_source": row.question_category_source,
         "embedding_cost": row.embedding_cost,
         "llm_cost": row.llm_cost,
         "created_at": row.created_at,
@@ -264,22 +268,8 @@ def _operations_summary(
 
 
 def _question_category(question: str) -> tuple[str, str]:
-    normalized = "".join((question or "").lower().split())
-    category_rules = (
-        ("cancel", "취소·환불", ("취소", "환불", "중도포기", "일정변경")),
-        ("schedule", "개강·일정", ("개강", "일정", "기수", "모집기간", "교육기간", "시간표", "언제")),
-        ("cost", "비용·지원금", ("수강료", "교육비", "비용", "지원금", "장려금", "훈련비", "내일배움")),
-        ("employment", "취업·진로", ("취업", "채용", "진로", "포트폴리오", "기업연계", "수료후")),
-        ("counseling", "상담 연결", ("상담원", "상담", "매니저", "전화", "연락", "사람")),
-        ("admission", "지원·선발", ("지원", "신청", "자격", "비전공", "면접", "인터뷰", "코딩테스트", "선발")),
-        ("curriculum", "과정·커리큘럼", ("과정", "커리큘럼", "수업", "프로젝트", "학습", "기술", "머신러닝", "mlops", "데이터")),
-        ("attendance", "출결·수료", ("출석", "출결", "결석", "지각", "수료")),
-        ("campus", "캠퍼스·시설", ("캠퍼스", "위치", "동작", "서초", "가산", "g밸리", "노트북", "시설")),
-    )
-    for key, label, keywords in category_rules:
-        if any(keyword in normalized for keyword in keywords):
-            return key, label
-    return "other", "기타"
+    category = categorize_question_rule(question)
+    return category.key, category.label
 
 
 def _shift_month(month_start: date, offset: int) -> date:
@@ -812,9 +802,16 @@ def get_operations_analytics(
         for row in analysis_cancels
     }
 
+    unclassified_count = 0
     for row in analysis_logs:
         question = decrypt_if_needed(row.question) or ""
-        category_key, category_label = _question_category(question)
+        if row.question_category and row.question_category != "general":
+            category_key = row.question_category
+            category_label = row.question_category_label or row.question_category
+        else:
+            category_key, category_label = _question_category(question)
+        if category_key == "general":
+            unclassified_count += 1
         category = question_category_map.setdefault(
             category_key,
             {"key": category_key, "label": category_label, "count": 0},
@@ -837,7 +834,7 @@ def get_operations_analytics(
     monthly = list(monthly_map.values())
     hourly = list(hourly_map.values())
     question_categories_top5 = sorted(
-        question_category_map.values(),
+        (item for item in question_category_map.values() if item["key"] != "general"),
         key=lambda item: (-item["count"], item["label"]),
     )[:5]
     handoff_categories = [
@@ -864,6 +861,68 @@ def get_operations_analytics(
             "total": sum(answer_source_summary.values()),
         },
         "handoff_categories": handoff_categories,
+        "unclassified_count": unclassified_count,
+    }
+
+
+@router.post("/operations/analytics/reclassify")
+async def reclassify_question_categories(
+    limit: int = Query(500, ge=1, le=2000),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    rows = db.query(ChatLog).filter(
+        or_(
+            ChatLog.question_category.is_(None),
+            ChatLog.question_category == "general",
+            ChatLog.question_category_source == "pending",
+        )
+    ).order_by(ChatLog.created_at.desc()).limit(limit).all()
+
+    pending_items = []
+    rule_classified = 0
+    for row in rows:
+        question = decrypt_if_needed(row.question) or ""
+        category = categorize_question_rule(question)
+        if category.key != "general":
+            row.question_category = category.key
+            row.question_category_label = category.label
+            row.question_category_source = category.source
+            rule_classified += 1
+        else:
+            pending_items.append({"id": row.id, "question": question})
+
+    llm_classified = 0
+    for offset in range(0, len(pending_items), 50):
+        classified = await classify_questions_batch(pending_items[offset:offset + 50])
+        if not classified:
+            continue
+        batch_ids = list(classified.keys())
+        batch_rows = db.query(ChatLog).filter(ChatLog.id.in_(batch_ids)).all()
+        for row in batch_rows:
+            category = classified.get(row.id)
+            if category is None:
+                continue
+            row.question_category = category.key
+            row.question_category_label = category.label
+            row.question_category_source = category.source
+            llm_classified += 1
+
+    db.commit()
+    remaining = max(0, len(pending_items) - llm_classified)
+    create_audit_log(
+        db,
+        "question_categories_reclassified",
+        "chat_log",
+        None,
+        f"rule={rule_classified}, llm={llm_classified}, remaining={remaining}",
+        actor=current_user,
+    )
+    return {
+        "classified": rule_classified + llm_classified,
+        "rule_classified": rule_classified,
+        "llm_classified": llm_classified,
+        "remaining": remaining,
     }
 
 
@@ -1103,7 +1162,11 @@ def get_operations_dashboard(
     question_category_map: dict[str, dict] = {}
     answer_source_summary = {"faq": 0, "llm": 0, "other": 0}
     for row in current_logs:
-        category_key, category_label = _question_category(decrypt_if_needed(row.question) or "")
+        if row.question_category and row.question_category != "general":
+            category_key = row.question_category
+            category_label = row.question_category_label or row.question_category
+        else:
+            category_key, category_label = _question_category(decrypt_if_needed(row.question) or "")
         category = question_category_map.setdefault(
             category_key,
             {"key": category_key, "label": category_label, "count": 0},
@@ -1118,7 +1181,7 @@ def get_operations_dashboard(
             answer_source_summary["other"] += 1
 
     question_categories_top5 = sorted(
-        question_category_map.values(),
+        (item for item in question_category_map.values() if item["key"] != "general"),
         key=lambda item: (-item["count"], item["label"]),
     )[:5]
     recent_sessions = sorted(

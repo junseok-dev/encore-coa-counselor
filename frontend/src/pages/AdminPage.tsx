@@ -387,7 +387,12 @@ export default function AdminPage() {
   const loadAnalytics = async () => {
     setAnalyticsLoading(true);
     try {
-      setAnalyticsData(await adminApi.getOperationsAnalytics());
+      let result = await adminApi.getOperationsAnalytics();
+      if (result.unclassified_count > 0) {
+        const classified = await adminApi.reclassifyQuestionCategories();
+        if (classified.classified > 0) result = await adminApi.getOperationsAnalytics();
+      }
+      setAnalyticsData(result);
     } catch {
       setLoadError('운영 분석 데이터를 불러오지 못했습니다.');
     } finally {

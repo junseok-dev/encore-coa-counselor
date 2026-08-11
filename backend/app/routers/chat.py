@@ -25,6 +25,7 @@ from app.services.guardrail_service import check as guardrail_check
 from app.services.intent_service import classify_intent
 from app.services.openai_service import restyle_faq_answer, stream_ai_response
 from app.services.router_service import route
+from app.services.question_category_service import categorize_question_rule
 from app.services.prompt_service import get_prompt_value
 from app.services.response_formatter import apply_link_tracking, course_link_for, format_chat_response, _strip_meta_disclaimer
 from app.services.website_course_service import is_live_course_fact_query
@@ -245,6 +246,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     error_message = None
     processing_status = "ready"
     history = [{"role": h.role, "content": h.content} for h in request.history]
+    question_category = categorize_question_rule(request.message)
 
     async def _run_rag(search_query: str | None = None) -> None:
         nonlocal answer, llm_cost, source, retrieval_chunks, processing_status, error_message
@@ -355,6 +357,9 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             source=source,
             error=maybe_encrypt(error_message),
             processing_status=processing_status,
+            question_category=question_category.key,
+            question_category_label=question_category.label,
+            question_category_source=question_category.source,
             embedding_cost=0.0,
             llm_cost=llm_cost,
         )
@@ -379,6 +384,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
     get_or_create_session(db, request.session_id, None)
     save_message(db, request.session_id, "user", request.message, source="user")
     db.commit()
+    question_category = categorize_question_rule(request.message)
 
     async def generate():
         source = "fallback"
@@ -559,6 +565,9 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                 source=source,
                 error=maybe_encrypt(error_message),
                 processing_status=processing_status,
+                question_category=question_category.key,
+                question_category_label=question_category.label,
+                question_category_source=question_category.source,
                 embedding_cost=0.0,
                 llm_cost=0.0,
             )
