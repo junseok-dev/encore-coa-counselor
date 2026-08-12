@@ -231,6 +231,8 @@ export default function AdminPage() {
   const [operationsLoading, setOperationsLoading] = useState(false);
   const [analyticsData, setAnalyticsData] = useState<OperationsAnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsYear, setAnalyticsYear] = useState('all');
+  const [analyticsMonth, setAnalyticsMonth] = useState('all');
   const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
 
@@ -384,13 +386,13 @@ export default function AdminPage() {
     }
   };
 
-  const loadAnalytics = async () => {
+  const loadAnalytics = async (selectedYear = analyticsYear, selectedMonth = analyticsMonth) => {
     setAnalyticsLoading(true);
     try {
-      let result = await adminApi.getOperationsAnalytics();
+      let result = await adminApi.getOperationsAnalytics(selectedYear, selectedMonth);
       if (result.unclassified_count > 0) {
         const classified = await adminApi.reclassifyQuestionCategories();
-        if (classified.classified > 0) result = await adminApi.getOperationsAnalytics();
+        if (classified.classified > 0) result = await adminApi.getOperationsAnalytics(selectedYear, selectedMonth);
       }
       setAnalyticsData(result);
     } catch {
@@ -398,6 +400,21 @@ export default function AdminPage() {
     } finally {
       setAnalyticsLoading(false);
     }
+  };
+
+  const handleAnalyticsYearChange = (selectedYear: string) => {
+    setAnalyticsYear(selectedYear);
+    if (selectedYear === 'all') {
+      setAnalyticsMonth('all');
+      void loadAnalytics('all', 'all');
+      return;
+    }
+    void loadAnalytics(selectedYear, analyticsMonth);
+  };
+
+  const handleAnalyticsMonthChange = (selectedMonth: string) => {
+    setAnalyticsMonth(selectedMonth);
+    void loadAnalytics(analyticsYear, selectedMonth);
   };
 
   const handleUpdateOperationsAlert = async (alertId: number, status: 'open' | 'checking' | 'resolved') => {
@@ -1164,7 +1181,15 @@ export default function AdminPage() {
 
         {activeTab === 'analytics' && (
           <div className="mt-5">
-            <OperationsAnalytics data={analyticsData} loading={analyticsLoading} onRefresh={loadAnalytics} />
+            <OperationsAnalytics
+              data={analyticsData}
+              loading={analyticsLoading}
+              selectedYear={analyticsYear}
+              selectedMonth={analyticsMonth}
+              onYearChange={handleAnalyticsYearChange}
+              onMonthChange={handleAnalyticsMonthChange}
+              onRefresh={loadAnalytics}
+            />
           </div>
         )}
 

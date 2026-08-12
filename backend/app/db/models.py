@@ -163,7 +163,23 @@ class BillingDailyCostRecord(Base):
     account_name = Column(String(255), nullable=False)
     service_name = Column(String(120), index=True, nullable=False)
     amount_krw = Column(Integer, nullable=False)
+    amount_usd = Column(Float, nullable=True)
+    exchange_rate_krw = Column(Float, nullable=True)
     source = Column(String(30), default="nxavis_excel", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BillingSyncState(Base):
+    __tablename__ = "billing_sync_states"
+
+    billing_month = Column(String(7), primary_key=True)
+    provider = Column(String(30), default="aws_cost_explorer", nullable=False)
+    status = Column(String(20), default="pending", nullable=False)
+    message = Column(Text, nullable=True)
+    currency = Column(String(10), default="USD", nullable=False)
+    exchange_rate_krw = Column(Float, nullable=True)
+    synced_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

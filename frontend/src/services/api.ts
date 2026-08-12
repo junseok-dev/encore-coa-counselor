@@ -133,6 +133,13 @@ export const adminApi = {
     return response.data;
   },
 
+  syncAwsBillingCosts: async (billingMonth: string, force = false): Promise<{ status: string; message: string; synced_at: string | null; cached: boolean }> => {
+    const response = await adminApiClient.post('/admin/operations/costs/aws-sync', null, {
+      params: { billing_month: billingMonth, force },
+    });
+    return response.data;
+  },
+
   importBillingCosts: async (file: File, billingMonth: string, accountId: string, accountName: string): Promise<{ message: string; imported_rows: number }> => {
     const formData = new FormData();
     formData.append('file', file);
@@ -148,9 +155,14 @@ export const adminApi = {
     return response.data;
   },
 
-  getOperationsAnalytics: async (months = 12, hourlyDays = 90): Promise<OperationsAnalyticsData> => {
+  getOperationsAnalytics: async (selectedYear = 'all', selectedMonth = 'all'): Promise<OperationsAnalyticsData> => {
+    const params: Record<string, string | number> = {};
+    if (selectedYear !== 'all') params.selected_year = Number(selectedYear);
+    if (selectedYear !== 'all' && selectedMonth !== 'all') {
+      params.selected_month = `${selectedYear}-${selectedMonth.padStart(2, '0')}`;
+    }
     const response = await adminApiClient.get<OperationsAnalyticsData>('/admin/operations/analytics', {
-      params: { months, hourly_days: hourlyDays },
+      params,
     });
     return response.data;
   },

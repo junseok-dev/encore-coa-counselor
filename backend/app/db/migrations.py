@@ -21,6 +21,12 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
             "question_category_source": "VARCHAR(20)",
         }
         return mapping.get(column_name)
+    if table_name == "billing_daily_cost_records":
+        mapping = {
+            "amount_usd": "FLOAT",
+            "exchange_rate_krw": "FLOAT",
+        }
+        return mapping.get(column_name)
     return None
 
 
@@ -79,6 +85,15 @@ def migrate_database(engine: Engine) -> None:
             column_sql = _column_sql("chat_logs", column_name)
             with engine.begin() as connection:
                 connection.execute(text(f"ALTER TABLE chat_logs ADD COLUMN {column_name} {column_sql}"))
+
+    if "billing_daily_cost_records" in inspector.get_table_names():
+        existing = {column["name"] for column in inspector.get_columns("billing_daily_cost_records")}
+        for column_name in ("amount_usd", "exchange_rate_krw"):
+            if column_name in existing:
+                continue
+            column_sql = _column_sql("billing_daily_cost_records", column_name)
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TABLE billing_daily_cost_records ADD COLUMN {column_name} {column_sql}"))
 
     _ensure_text_columns(engine)
     _drop_legacy_tables(engine)

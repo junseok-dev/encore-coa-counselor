@@ -15,13 +15,13 @@ from fastapi.responses import Response
 from openai import AsyncOpenAI
 from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel
-from sqlalchemy import inspect as sa_inspect, or_, text
+from sqlalchemy import func, inspect as sa_inspect, or_, text
 from sqlalchemy.orm import Session
 
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_all_sessions, get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminUser, BillingCostRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminUser, BillingCostRecord, BillingDailyCostRecord, BillingSyncState, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
 from app.models.session import MessageDetail, SessionDetail, SessionSummary
 from app.services.admin_service import (
     approve_document,
@@ -35,6 +35,7 @@ from app.services.admin_service import (
     restore_document,
     soft_delete_document,
 )
+from app.services.aws_cost_service import AwsCostSyncError, sync_aws_costs
 from app.services.faq_service import _serialize_faq, seed_faqs, sync_faqs_to_file
 from app.services.model_settings import get_active_model, set_active_model
 from app.services.prompt_service import PROMPT_DEFAULTS, seed_prompt_configs, serialize_prompt
@@ -58,6 +59,7 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "system_health_probes": "시스템 상태 점검 — 데이터베이스 저장 가능 여부 확인",
     "billing_cost_records": "월별 실제 원화 청구액 — n·Xavis 청구 내역 기준",
     "billing_daily_cost_records": "계정·서비스·일자별 실제 원화 사용 금액",
+    "billing_sync_states": "AWS Cost Explorer 월별 동기화 상태",
     "processing_logs": "문서 처리 로그 — 파싱, 임베딩 등 단계별 처리 결과",
     "prompt_configs": "LLM 프롬프트 설정 — 시스템 프롬프트, 스타일 가이드 등",
     "faqs": "FAQ 데이터 — 질문, 답변, 키워드, 카테고리",
@@ -718,29 +720,77 @@ def export_chat_logs(start_date: date | None = None, end_date: date | None = Non
 
 @router.get("/operations/analytics")
 def get_operations_analytics(
-    months: int = Query(12, ge=3, le=24),
-    hourly_days: int = Query(90, ge=7, le=365),
+    selected_year: int | None = Query(None, ge=2026, le=2100),
+    selected_month: str | None = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     db: Session = Depends(get_db),
     _: None = Depends(verify_admin),
 ):
     today = datetime.now().date()
     current_month = today.replace(day=1)
-    month_starts = [_shift_month(current_month, offset) for offset in range(-(months - 1), 1)]
-    analysis_start = datetime.combine(month_starts[0], time.min)
-    hourly_start = datetime.combine(today - timedelta(days=hourly_days - 1), time.min)
-    query_start = min(analysis_start, hourly_start)
 
-    sessions = db.query(ChatSession).filter(ChatSession.created_at >= query_start).all()
-    logs = db.query(ChatLog).filter(ChatLog.created_at >= query_start).all()
-    cancels = db.query(CancelRequest).filter(CancelRequest.created_at >= query_start).all()
-    analysis_logs = [
-        row for row in logs
-        if row.created_at and _analysis_datetime(row.created_at).replace(tzinfo=None) >= analysis_start
+    date_ranges = [
+        db.query(func.min(model.created_at), func.max(model.created_at)).one()
+        for model in (ChatSession, ChatLog, CancelRequest)
     ]
-    analysis_cancels = [
-        row for row in cancels
-        if row.created_at and _analysis_datetime(row.created_at).replace(tzinfo=None) >= analysis_start
+    latest_values = [value for _, maximum in date_ranges if (value := maximum) is not None]
+    latest_data_month = (
+        max(_analysis_datetime(value).date() for value in latest_values).replace(day=1)
+        if latest_values else current_month
+    )
+    first_available_year = 2026
+    last_available_year = max(today.year, first_available_year)
+    available_month_starts = [
+        date(year, month, 1)
+        for year in range(first_available_year, last_available_year + 1)
+        for month in range(1, 13)
     ]
+    available_months = [month.strftime("%Y-%m") for month in available_month_starts]
+
+    if selected_month:
+        selected_start = datetime.strptime(selected_month, "%Y-%m").date()
+        if selected_year is not None and selected_start.year != selected_year:
+            raise HTTPException(status_code=400, detail="선택한 연도와 월이 일치하지 않습니다.")
+        month_starts = [selected_start]
+        analysis_start = datetime.combine(selected_start, time.min)
+        analysis_end = datetime.combine(_shift_month(selected_start, 1), time.min)
+    elif selected_year is not None:
+        selected_start = date(selected_year, 1, 1)
+        month_starts = [_shift_month(selected_start, offset) for offset in range(12)]
+        analysis_start = datetime.combine(selected_start, time.min)
+        analysis_end = datetime.combine(date(selected_year + 1, 1, 1), time.min)
+    else:
+        first_month = date(first_available_year, 1, 1)
+        last_month = max(current_month, latest_data_month)
+        month_count = (last_month.year - first_month.year) * 12 + last_month.month
+        month_starts = [_shift_month(first_month, offset) for offset in range(month_count)]
+        analysis_start = datetime.combine(first_month, time.min)
+        analysis_end = datetime.combine(_shift_month(last_month, 1), time.min)
+
+    # 시간대·질문·응답·상담 분석도 선택한 월 또는 전체 기간과 동일하게 맞춥니다.
+    query_start = analysis_start - timedelta(days=1)
+    query_end = analysis_end + timedelta(days=1)
+    sessions = db.query(ChatSession).filter(
+        ChatSession.created_at >= query_start,
+        ChatSession.created_at < query_end,
+    ).all()
+    logs = db.query(ChatLog).filter(
+        ChatLog.created_at >= query_start,
+        ChatLog.created_at < query_end,
+    ).all()
+    cancels = db.query(CancelRequest).filter(
+        CancelRequest.created_at >= query_start,
+        CancelRequest.created_at < query_end,
+    ).all()
+
+    def in_analysis_period(value: datetime | None) -> bool:
+        if not value:
+            return False
+        local_value = _analysis_datetime(value).replace(tzinfo=None)
+        return analysis_start <= local_value < analysis_end
+
+    analysis_sessions = [row for row in sessions if in_analysis_period(row.created_at)]
+    analysis_logs = [row for row in logs if in_analysis_period(row.created_at)]
+    analysis_cancels = [row for row in cancels if in_analysis_period(row.created_at)]
 
     monthly_map = {
         month_start.strftime("%Y-%m"): {
@@ -757,17 +807,16 @@ def get_operations_analytics(
         for hour in range(24)
     }
 
-    for row in sessions:
+    for row in analysis_sessions:
         if not row.created_at:
             continue
         local_created_at = _analysis_datetime(row.created_at)
         month_key = local_created_at.strftime("%Y-%m")
         if month_key in monthly_map:
             monthly_map[month_key]["visitors"] += 1
-        if local_created_at.replace(tzinfo=None) >= hourly_start:
-            hourly_map[local_created_at.hour]["visitors"] += 1
+        hourly_map[local_created_at.hour]["visitors"] += 1
 
-    for row in logs:
+    for row in analysis_logs:
         if not row.created_at:
             continue
         local_created_at = _analysis_datetime(row.created_at)
@@ -776,10 +825,9 @@ def get_operations_analytics(
             monthly_map[month_key]["chats"] += 1
             if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff":
                 monthly_map[month_key]["handoffs"] += 1
-        if local_created_at.replace(tzinfo=None) >= hourly_start:
-            hourly_map[local_created_at.hour]["chats"] += 1
+        hourly_map[local_created_at.hour]["chats"] += 1
 
-    for row in cancels:
+    for row in analysis_cancels:
         if not row.created_at:
             continue
         month_key = _analysis_datetime(row.created_at).strftime("%Y-%m")
@@ -844,8 +892,17 @@ def get_operations_analytics(
     handoff_categories.sort(key=lambda item: item["count"], reverse=True)
 
     return {
-        "period_months": months,
-        "hourly_days": hourly_days,
+        "period_months": len(month_starts),
+        "hourly_days": max(1, (analysis_end.date() - analysis_start.date()).days),
+        "selected_year": selected_year,
+        "selected_month": selected_month,
+        "available_years": list(range(first_available_year, last_available_year + 1)),
+        "available_months": available_months,
+        "period_label": (
+            f"{selected_start.year}년 {selected_start.month}월"
+            if selected_month
+            else f"{selected_year}년" if selected_year is not None else "전체 기간"
+        ),
         "generated_at": datetime.now(),
         "monthly": monthly,
         "hourly": hourly,
@@ -1256,6 +1313,28 @@ def save_billing_cost(
     return _serialize_billing_cost(row)
 
 
+@router.post("/operations/costs/aws-sync")
+def sync_aws_billing_costs(
+    billing_month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    force: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    try:
+        result = sync_aws_costs(db, billing_month, force=force)
+    except AwsCostSyncError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    create_audit_log(
+        db,
+        "aws_costs_synced",
+        "billing_cost",
+        billing_month,
+        f"cached={result.get('cached', False)}, status={result.get('status')}",
+        actor=current_user,
+    )
+    return result
+
+
 @router.get("/operations/cost-management")
 def get_cost_management(
     billing_month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
@@ -1263,42 +1342,56 @@ def get_cost_management(
     db: Session = Depends(get_db),
     _: None = Depends(verify_admin),
 ):
+    settings = get_settings()
+    configured_account_ids = [value.strip() for value in settings.aws_billing_account_ids.split(",") if value.strip()]
+    configured_account = {
+        "account_id": configured_account_ids[0],
+        "account_name": settings.aws_billing_account_name or f"AWS 계정 {configured_account_ids[0]}",
+    } if len(configured_account_ids) == 1 else None
+    effective_account_id = configured_account["account_id"] if configured_account and account_id == "all" else account_id
     try:
         month_start = datetime.strptime(billing_month, "%Y-%m").date().replace(day=1)
     except ValueError:
         raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.")
     month_end = _shift_month(month_start, 1)
-    all_rows = db.query(BillingDailyCostRecord).filter(
+    stored_rows = db.query(BillingDailyCostRecord).filter(
         BillingDailyCostRecord.usage_date >= month_start,
         BillingDailyCostRecord.usage_date < month_end,
     ).all()
+    sync_state = db.query(BillingSyncState).filter(BillingSyncState.billing_month == billing_month).first()
+    aws_rows = [row for row in stored_rows if row.source == "aws_cost_explorer"]
+    use_aws_rows = bool(aws_rows) or bool(sync_state and sync_state.status == "success")
+    all_rows = aws_rows if use_aws_rows else stored_rows
 
     account_map: dict[str, dict] = {}
     for row in all_rows:
         account = account_map.setdefault(
             row.account_id,
-            {"account_id": row.account_id, "account_name": row.account_name, "total_krw": 0},
+            {"account_id": row.account_id, "account_name": row.account_name, "total_krw": 0, "total_usd": 0.0},
         )
         account["total_krw"] += row.amount_krw
+        account["total_usd"] += row.amount_usd or 0
     accounts = sorted(account_map.values(), key=lambda item: item["account_name"])
-    selected_rows = all_rows if account_id == "all" else [row for row in all_rows if row.account_id == account_id]
+    selected_rows = all_rows if effective_account_id == "all" else [row for row in all_rows if row.account_id == effective_account_id]
 
     _, last_day = calendar.monthrange(month_start.year, month_start.month)
     day_keys = [f"{day:02d}" for day in range(1, last_day + 1)]
     service_map: dict[str, dict] = {}
     daily_map = {
-        day: {"date": f"{billing_month}-{day}", "day": int(day), "total_krw": 0, "services": {}}
+        day: {"date": f"{billing_month}-{day}", "day": int(day), "total_krw": 0, "total_usd": 0.0, "services": {}}
         for day in day_keys
     }
     for row in selected_rows:
         day_key = f"{row.usage_date.day:02d}"
         service = service_map.setdefault(
             row.service_name,
-            {"service_name": row.service_name, "total_krw": 0, "daily": {day: 0 for day in day_keys}},
+            {"service_name": row.service_name, "total_krw": 0, "total_usd": 0.0, "daily": {day: 0 for day in day_keys}},
         )
         service["total_krw"] += row.amount_krw
+        service["total_usd"] += row.amount_usd or 0
         service["daily"][day_key] += row.amount_krw
         daily_map[day_key]["total_krw"] += row.amount_krw
+        daily_map[day_key]["total_usd"] += row.amount_usd or 0
         daily_map[day_key]["services"][row.service_name] = (
             daily_map[day_key]["services"].get(row.service_name, 0) + row.amount_krw
         )
@@ -1307,20 +1400,42 @@ def get_cost_management(
     invoice = db.query(BillingCostRecord).filter(BillingCostRecord.billing_month == billing_month).first()
     monthly_history = db.query(BillingCostRecord).order_by(BillingCostRecord.billing_month.desc()).limit(12).all()
     usage_total = sum(row.amount_krw for row in selected_rows)
+    usage_total_usd = sum(row.amount_usd or 0 for row in selected_rows)
+    all_aws_rows = db.query(BillingDailyCostRecord).filter(
+        BillingDailyCostRecord.source == "aws_cost_explorer"
+    ).all()
+    aws_monthly_map: dict[str, dict] = {}
+    for row in all_aws_rows:
+        key = row.usage_date.strftime("%Y-%m")
+        item = aws_monthly_map.setdefault(key, {"billing_month": key, "total_krw": 0, "total_usd": 0.0})
+        item["total_krw"] += row.amount_krw
+        item["total_usd"] += row.amount_usd or 0
+    aws_monthly_history = sorted(aws_monthly_map.values(), key=lambda item: item["billing_month"])[-12:]
     return {
         "billing_month": billing_month,
-        "selected_account_id": account_id,
+        "selected_account_id": effective_account_id,
+        "configured_account": configured_account,
+        "cost_source": "aws_cost_explorer" if use_aws_rows else "manual",
+        "currency": "USD" if use_aws_rows else "KRW",
+        "exchange_rate_krw": sync_state.exchange_rate_krw if sync_state else None,
+        "sync": {
+            "status": sync_state.status if sync_state else "pending",
+            "message": sync_state.message if sync_state else "아직 AWS 비용을 동기화하지 않았습니다.",
+            "synced_at": sync_state.synced_at if sync_state else None,
+        },
         "accounts": accounts,
         "actual_invoice_krw": invoice.amount_krw if invoice else None,
         "usage_total_krw": usage_total,
-        "difference_krw": (invoice.amount_krw - usage_total) if invoice and account_id == "all" else None,
+        "usage_total_usd": usage_total_usd,
+        "difference_krw": (invoice.amount_krw - usage_total) if invoice and effective_account_id == "all" else None,
         "service_totals": [
-            {"service_name": item["service_name"], "amount_krw": item["total_krw"]}
+            {"service_name": item["service_name"], "amount_krw": item["total_krw"], "amount_usd": item["total_usd"]}
             for item in services
         ],
         "daily_totals": list(daily_map.values()),
         "service_daily_rows": services,
         "monthly_history": [_serialize_billing_cost(row) for row in monthly_history],
+        "aws_monthly_history": aws_monthly_history,
     }
 
 
