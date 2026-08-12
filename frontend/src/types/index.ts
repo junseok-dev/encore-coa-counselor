@@ -16,6 +16,39 @@ export interface EncryptionSettings {
   categories: EncryptionCategory[];
 }
 
+export interface SecurityVaultStatus {
+  configured: boolean;
+  can_setup: boolean;
+  unlock_minutes: number;
+  protected_keys: string[];
+}
+
+export interface SecurityVaultCredential {
+  key: 'nxavis' | 'aws_console';
+  label: string;
+  login_url: string | null;
+  account_identifier: string | null;
+  username: string;
+  password: string;
+  note: string;
+  updated_by: string | null;
+  updated_at: string | null;
+}
+
+export interface SecurityVaultEnvironmentItem {
+  key: string;
+  label: string;
+  value: string;
+  configured: boolean;
+  sensitive: boolean;
+}
+
+export interface SecurityVaultData {
+  credentials: SecurityVaultCredential[];
+  environment: SecurityVaultEnvironmentItem[];
+  expires_in_seconds: number;
+}
+
 export interface AdminInfo {
   email: string;
   added_by: string | null;

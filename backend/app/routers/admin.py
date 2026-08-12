@@ -1,8 +1,12 @@
 import csv
 import calendar
+import base64
+import hashlib
 import io
 import json
+import os
 import re
+import secrets
 from time import perf_counter
 from urllib.parse import quote
 from uuid import uuid4
@@ -11,6 +15,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import jwt
+from dotenv import dotenv_values
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from openai import AsyncOpenAI
@@ -22,7 +27,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_all_sessions, get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminUser, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
 from app.models.session import MessageDetail, SessionDetail, SessionSummary
 from app.services.admin_service import (
     approve_document,
@@ -65,6 +70,7 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "prompt_configs": "LLM 프롬프트 설정 — 시스템 프롬프트, 스타일 가이드 등",
     "faqs": "FAQ 데이터 — 질문, 답변, 키워드, 카테고리",
     "admin_audit_logs": "관리자 감사 로그 — 누가, 무엇을, 언제 수행했는지",
+    "admin_secret_records": "관리자 보안정보 금고 — 접속 계정과 비밀번호 암호화 저장",
     "custom_tables": "사용자 정의 테이블 메타데이터 (데이터 관리 탭에서 생성한 테이블 목록)",
     "custom_columns": "사용자 정의 테이블 컬럼 정의",
 }
@@ -117,6 +123,160 @@ class PromptPayload(BaseModel):
 class OperationsAlertUpdate(BaseModel):
     status: str
     note: str | None = None
+
+
+class VaultPasswordRequest(BaseModel):
+    password: str
+
+
+class VaultSecretPayload(BaseModel):
+    label: str
+    login_url: str | None = None
+    account_identifier: str | None = None
+    username: str | None = None
+    password: str | None = None
+    note: str | None = None
+
+
+VAULT_PASSWORD_SETTING_KEY = "admin_security_vault_password_hash"
+VAULT_TOKEN_MINUTES = 10
+VAULT_DEFAULTS = {
+    "nxavis": {
+        "label": "n·Xavis 비용 확인",
+        "login_url": "https://nxavis.com/layout/usageReport/usageDailyReport",
+        "account_identifier": None,
+    },
+    "aws_console": {
+        "label": "AWS 콘솔",
+        "login_url": "https://console.aws.amazon.com/",
+        "account_identifier": NXAVIS_ACCOUNT_ID,
+    },
+}
+VAULT_ENV_FIELDS = (
+    ("OPENAI_API_KEY", "OpenAI API 키", True),
+    ("DATABASE_URL", "데이터베이스 연결 주소", True),
+    ("AWS_ACCESS_KEY_ID", "AWS 액세스 키 ID", True),
+    ("AWS_SECRET_ACCESS_KEY", "AWS 시크릿 액세스 키", True),
+    ("AWS_REGION", "AWS 리전", False),
+    ("AWS_S3_BUCKET", "S3 버킷", False),
+    ("AWS_S3_PREFIX", "S3 경로 접두사", False),
+    ("AWS_EC2_INSTANCE_ID", "EC2 인스턴스 ID", False),
+    ("LANGSMITH_API_KEY", "LangSmith API 키", True),
+    ("LANGSMITH_PROJECT", "LangSmith 프로젝트", False),
+    ("LANGSMITH_TRACING", "LangSmith 추적 여부", False),
+    ("GOOGLE_CLIENT_ID", "Google OAuth 클라이언트 ID", False),
+    ("CHANNEL_TALK_URL", "채널톡 연결 주소", False),
+    ("MODEL_NAME", "기본 LLM 모델", False),
+    ("ADMIN_EMAIL", "최상위 관리자 이메일", False),
+)
+
+
+def _hash_vault_password(password: str) -> str:
+    iterations = 310_000
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return "$".join((
+        "pbkdf2_sha256",
+        str(iterations),
+        base64.urlsafe_b64encode(salt).decode("ascii"),
+        base64.urlsafe_b64encode(digest).decode("ascii"),
+    ))
+
+
+def _verify_vault_password(password: str, encoded: str) -> bool:
+    try:
+        algorithm, iterations_text, salt_text, digest_text = encoded.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        salt = base64.urlsafe_b64decode(salt_text.encode("ascii"))
+        expected = base64.urlsafe_b64decode(digest_text.encode("ascii"))
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations_text))
+        return secrets.compare_digest(actual, expected)
+    except (TypeError, ValueError):
+        return False
+
+
+def _validate_vault_password(password: str) -> None:
+    categories = sum((
+        any(char.isalpha() for char in password),
+        any(char.isdigit() for char in password),
+        any(not char.isalnum() for char in password),
+    ))
+    if len(password) < 12 or categories < 2:
+        raise HTTPException(status_code=400, detail="보관 비밀번호는 12자 이상이며 문자·숫자·특수문자 중 2종 이상을 포함해야 합니다.")
+
+
+def _vault_password_setting(db: Session) -> AppSetting | None:
+    return db.query(AppSetting).filter(AppSetting.key == VAULT_PASSWORD_SETTING_KEY).first()
+
+
+def _create_vault_token(current_user: str) -> str:
+    return jwt.encode(
+        {
+            "sub": current_user,
+            "scope": "admin_security_vault",
+            "exp": datetime.now(tz=ZoneInfo("UTC")) + timedelta(minutes=VAULT_TOKEN_MINUTES),
+        },
+        get_settings().jwt_secret,
+        algorithm="HS256",
+    )
+
+
+def _require_vault_token(current_user: str, token: str | None) -> None:
+    if not token:
+        raise HTTPException(status_code=403, detail="보안 정보 잠금을 다시 해제해 주세요.")
+    try:
+        payload = jwt.decode(token, get_settings().jwt_secret, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=403, detail="보안 정보 열람 시간이 만료되었습니다. 다시 잠금 해제해 주세요.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=403, detail="유효하지 않은 보안 정보 인증입니다.")
+    if payload.get("scope") != "admin_security_vault" or payload.get("sub") != current_user:
+        raise HTTPException(status_code=403, detail="보안 정보 접근 권한이 없습니다.")
+
+
+def _ensure_vault_defaults(db: Session) -> list[AdminSecretRecord]:
+    records: list[AdminSecretRecord] = []
+    for secret_key, defaults in VAULT_DEFAULTS.items():
+        row = db.query(AdminSecretRecord).filter(AdminSecretRecord.secret_key == secret_key).first()
+        if row is None:
+            row = AdminSecretRecord(secret_key=secret_key, **defaults)
+            db.add(row)
+        records.append(row)
+    db.flush()
+    return records
+
+
+def _serialize_vault_secret(row: AdminSecretRecord) -> dict:
+    return {
+        "key": row.secret_key,
+        "label": row.label,
+        "login_url": row.login_url,
+        "account_identifier": row.account_identifier,
+        "username": decrypt_if_needed(row.username_encrypted) or "",
+        "password": decrypt_if_needed(row.password_encrypted) or "",
+        "note": decrypt_if_needed(row.note_encrypted) or "",
+        "updated_by": row.updated_by,
+        "updated_at": row.updated_at or row.created_at,
+    }
+
+
+def _vault_environment_items() -> list[dict]:
+    file_values = dotenv_values(ENV_PATH) if ENV_PATH.exists() else {}
+    items = []
+    for key, label, sensitive in VAULT_ENV_FIELDS:
+        value = os.getenv(key)
+        if value is None:
+            value = file_values.get(key)
+        text_value = str(value or "")
+        items.append({
+            "key": key,
+            "label": label,
+            "value": text_value,
+            "configured": bool(text_value),
+            "sensitive": sensitive,
+        })
+    return items
 
 
 def _serialize_document(record: DocumentRecord) -> dict:
@@ -2271,6 +2431,131 @@ def change_model(body: ModelChangeRequest, db: Session = Depends(get_db), _: Non
     set_active_model(db, model_name)
     create_audit_log(db, "model_changed", "system", "model_name", model_name)
     return {"message": f"모델을 {model_name}으로 변경했습니다.", "model_name": model_name}
+
+
+@router.get("/security-vault/status")
+def get_security_vault_status(
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    configured = _vault_password_setting(db) is not None
+    return {
+        "configured": configured,
+        "can_setup": not configured and current_user == get_settings().admin_email,
+        "unlock_minutes": VAULT_TOKEN_MINUTES,
+        "protected_keys": ["ENCRYPTION_KEY", "JWT_SECRET", "ADMIN_PASSWORD"],
+    }
+
+
+@router.post("/security-vault/setup")
+def setup_security_vault(
+    body: VaultPasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    if current_user != get_settings().admin_email:
+        raise HTTPException(status_code=403, detail="최상위 관리자만 보안 정보 보관 비밀번호를 최초 설정할 수 있습니다.")
+    if _vault_password_setting(db) is not None:
+        raise HTTPException(status_code=409, detail="보안 정보 보관 비밀번호가 이미 설정되어 있습니다.")
+    _validate_vault_password(body.password)
+    db.add(AppSetting(key=VAULT_PASSWORD_SETTING_KEY, value=_hash_vault_password(body.password)))
+    _ensure_vault_defaults(db)
+    db.commit()
+    create_audit_log(db, "security_vault_configured", "security_vault", "setup", actor=current_user)
+    return {
+        "message": "보안 정보 보관 비밀번호를 설정했습니다.",
+        "vault_token": _create_vault_token(current_user),
+        "expires_in_seconds": VAULT_TOKEN_MINUTES * 60,
+    }
+
+
+@router.post("/security-vault/unlock")
+def unlock_security_vault(
+    body: VaultPasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    setting = _vault_password_setting(db)
+    if setting is None:
+        raise HTTPException(status_code=409, detail="먼저 보안 정보 보관 비밀번호를 설정해 주세요.")
+    if not _verify_vault_password(body.password, setting.value or ""):
+        create_audit_log(db, "security_vault_unlock_failed", "security_vault", "unlock", actor=current_user)
+        raise HTTPException(status_code=403, detail="보관 비밀번호가 올바르지 않습니다.")
+    create_audit_log(db, "security_vault_unlocked", "security_vault", "unlock", actor=current_user)
+    return {
+        "message": "보안 정보 잠금을 해제했습니다.",
+        "vault_token": _create_vault_token(current_user),
+        "expires_in_seconds": VAULT_TOKEN_MINUTES * 60,
+    }
+
+
+@router.get("/security-vault/data")
+def get_security_vault_data(
+    x_vault_token: str | None = Header(None, alias="X-Vault-Token"),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    _require_vault_token(current_user, x_vault_token)
+    records = _ensure_vault_defaults(db)
+    db.commit()
+    create_audit_log(
+        db,
+        "security_vault_viewed",
+        "security_vault",
+        "credentials_and_environment",
+        "허용된 보안정보와 환경설정 열람",
+        actor=current_user,
+    )
+    return {
+        "credentials": [_serialize_vault_secret(row) for row in records],
+        "environment": _vault_environment_items(),
+        "expires_in_seconds": VAULT_TOKEN_MINUTES * 60,
+    }
+
+
+@router.put("/security-vault/items/{secret_key}")
+def save_security_vault_item(
+    secret_key: str,
+    body: VaultSecretPayload,
+    x_vault_token: str | None = Header(None, alias="X-Vault-Token"),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    _require_vault_token(current_user, x_vault_token)
+    if secret_key not in VAULT_DEFAULTS:
+        raise HTTPException(status_code=404, detail="지원하지 않는 보안 정보 항목입니다.")
+    label = body.label.strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="항목 이름을 입력해 주세요.")
+    login_url = (body.login_url or "").strip()
+    if login_url and not re.match(r"^https://", login_url, flags=re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="접속 주소는 https:// 형식이어야 합니다.")
+
+    row = db.query(AdminSecretRecord).filter(AdminSecretRecord.secret_key == secret_key).first()
+    if row is None:
+        row = AdminSecretRecord(secret_key=secret_key, label=label)
+        db.add(row)
+    row.label = label
+    row.login_url = login_url or None
+    row.account_identifier = (body.account_identifier or "").strip() or None
+    if body.username is not None:
+        row.username_encrypted = maybe_encrypt(body.username.strip()) or None
+    if body.password is not None:
+        row.password_encrypted = maybe_encrypt(body.password) or None
+    if body.note is not None:
+        row.note_encrypted = maybe_encrypt(body.note.strip()) or None
+    row.updated_by = current_user
+    db.commit()
+    db.refresh(row)
+    create_audit_log(
+        db,
+        "security_vault_item_saved",
+        "security_vault",
+        secret_key,
+        "보안 정보 항목 수정",
+        actor=current_user,
+    )
+    return _serialize_vault_secret(row)
 
 
 @router.put("/password")

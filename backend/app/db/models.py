@@ -24,6 +24,24 @@ class AppSetting(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class AdminSecretRecord(Base):
+    """관리자 보안정보 금고. 실제 값은 ENCRYPTION_KEY로 암호화해 저장한다."""
+
+    __tablename__ = "admin_secret_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    secret_key = Column(String(80), unique=True, index=True, nullable=False)
+    label = Column(String(120), nullable=False)
+    login_url = Column(Text, nullable=True)
+    account_identifier = Column(String(120), nullable=True)
+    username_encrypted = Column(Text, nullable=True)
+    password_encrypted = Column(Text, nullable=True)
+    note_encrypted = Column(Text, nullable=True)
+    updated_by = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
 

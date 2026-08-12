@@ -8,6 +8,7 @@ import {
   Database,
   FileCheck2,
   LayoutDashboard,
+  LockKeyhole,
   LogOut,
   Menu,
   RefreshCw,
@@ -23,6 +24,7 @@ import InfoTooltip from '../components/admin/InfoTooltip';
 import OperationsDashboard from '../components/admin/OperationsDashboard';
 import OperationsAnalytics from '../components/admin/OperationsAnalytics';
 import CostManagement from '../components/admin/CostManagement';
+import SecurityVault from '../components/admin/SecurityVault';
 import {
   AdminDocument,
   AdminDocumentDetail,
@@ -45,7 +47,7 @@ import {
   SystemHealthData,
 } from '../types';
 
-type TabKey = 'dashboard' | 'analytics' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'settings' | 'permissions';
+type TabKey = 'dashboard' | 'analytics' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'security' | 'settings' | 'permissions';
 
 const NAV_GROUPS: { label: string; items: { key: TabKey; label: string; icon: typeof LayoutDashboard }[] }[] = [
   {
@@ -70,6 +72,7 @@ const NAV_GROUPS: { label: string; items: { key: TabKey; label: string; icon: ty
       { key: 'chats' as const, label: '로그·내보내기', icon: ScrollText },
       { key: 'data' as const, label: '데이터 관리', icon: Table2 },
       { key: 'db' as const, label: 'DB 브라우저', icon: Database },
+      { key: 'security' as const, label: '보안 정보', icon: LockKeyhole },
       { key: 'settings' as const, label: '설정', icon: Settings },
       { key: 'permissions' as const, label: '권한 관리', icon: ShieldCheck },
     ],
@@ -86,6 +89,7 @@ const PAGE_META: Record<TabKey, { title: string; description: string }> = {
   chats: { title: '로그·내보내기', description: '채팅·처리·감사 로그를 조회하고 필요한 데이터를 내보냅니다.' },
   data: { title: '데이터 관리', description: '관리자 정의 데이터 테이블과 행·열 데이터를 관리합니다.' },
   db: { title: 'DB 브라우저', description: '서비스 데이터베이스 구조와 레코드를 직접 확인합니다.' },
+  security: { title: '보안 정보', description: '운영 접속 계정과 허용된 환경설정을 별도 잠금으로 관리합니다.' },
   settings: { title: '설정', description: 'AI 모델과 데이터 암호화 정책을 설정합니다.' },
   permissions: { title: '권한 관리', description: '관리자 계정과 최상위 관리자 권한을 관리합니다.' },
 };
@@ -2328,6 +2332,8 @@ export default function AdminPage() {
             </section>
           </div>
         )}
+
+        {activeTab === 'security' && <div className="mt-6"><SecurityVault /></div>}
       </div>
 
       {/* DB 브라우저 행 편집 모달 */}

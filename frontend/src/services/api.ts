@@ -25,6 +25,9 @@ import {
   ProcessingLog,
   PromptConfig,
   PromptPayload,
+  SecurityVaultCredential,
+  SecurityVaultData,
+  SecurityVaultStatus,
   SuggestedQuestionsResponse,
 } from '../types';
 
@@ -125,6 +128,38 @@ export const chatApi = {
 };
 
 export const adminApi = {
+  getSecurityVaultStatus: async (): Promise<SecurityVaultStatus> => {
+    const response = await adminApiClient.get<SecurityVaultStatus>('/admin/security-vault/status');
+    return response.data;
+  },
+
+  setupSecurityVault: async (password: string): Promise<{ message: string; vault_token: string; expires_in_seconds: number }> => {
+    const response = await adminApiClient.post('/admin/security-vault/setup', { password });
+    return response.data;
+  },
+
+  unlockSecurityVault: async (password: string): Promise<{ message: string; vault_token: string; expires_in_seconds: number }> => {
+    const response = await adminApiClient.post('/admin/security-vault/unlock', { password });
+    return response.data;
+  },
+
+  getSecurityVaultData: async (vaultToken: string): Promise<SecurityVaultData> => {
+    const response = await adminApiClient.get<SecurityVaultData>('/admin/security-vault/data', {
+      headers: { 'X-Vault-Token': vaultToken },
+    });
+    return response.data;
+  },
+
+  saveSecurityVaultCredential: async (
+    vaultToken: string,
+    item: SecurityVaultCredential,
+  ): Promise<SecurityVaultCredential> => {
+    const response = await adminApiClient.put<SecurityVaultCredential>(`/admin/security-vault/items/${item.key}`, item, {
+      headers: { 'X-Vault-Token': vaultToken },
+    });
+    return response.data;
+  },
+
   getCostManagement: async (billingMonth: string, accountId = 'all'): Promise<CostManagementData> => {
     const response = await adminApiClient.get<CostManagementData>('/admin/operations/cost-management', {
       params: { billing_month: billingMonth, account_id: accountId },

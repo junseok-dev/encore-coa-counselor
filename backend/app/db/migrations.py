@@ -21,6 +21,8 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
             "question_category_source": "VARCHAR(20)",
         }
         return mapping.get(column_name)
+    if table_name == "admin_secret_records":
+        return {"account_identifier": "VARCHAR(120)"}.get(column_name)
     return None
 
 
@@ -79,6 +81,12 @@ def migrate_database(engine: Engine) -> None:
             column_sql = _column_sql("chat_logs", column_name)
             with engine.begin() as connection:
                 connection.execute(text(f"ALTER TABLE chat_logs ADD COLUMN {column_name} {column_sql}"))
+
+    if "admin_secret_records" in inspector.get_table_names():
+        existing = {column["name"] for column in inspector.get_columns("admin_secret_records")}
+        if "account_identifier" not in existing:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE admin_secret_records ADD COLUMN account_identifier VARCHAR(120)"))
 
     _ensure_text_columns(engine)
     _drop_legacy_tables(engine)
