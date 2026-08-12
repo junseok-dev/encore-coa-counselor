@@ -33,8 +33,8 @@ function ServiceDonut({ data }: { data: CostManagementData }) {
   const circumference = Math.PI * 2 * radius;
   let offset = 0;
   return (
-    <div className="grid gap-5 lg:grid-cols-[230px_1fr] lg:items-center">
-      <div className="relative mx-auto h-52 w-52">
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="relative mx-auto h-48 w-48 shrink-0">
         <svg viewBox="0 0 180 180" className="h-full w-full -rotate-90">
           <circle cx="90" cy="90" r={radius} fill="none" stroke="#f1f5f9" strokeWidth="24" />
           {data.service_totals.map((service, index) => {
@@ -46,9 +46,9 @@ function ServiceDonut({ data }: { data: CostManagementData }) {
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="text-xs font-bold text-slate-400">사용 합계</span><strong className="mt-1 text-xl font-black text-slate-950">{krw(data.usage_total_krw)}</strong></div>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid min-w-0 gap-2">
         {data.service_totals.map((service, index) => (
-          <div key={service.service_name} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 text-xs"><span className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} /><span className="truncate font-semibold text-slate-600">{service.service_name}</span></span><span className="shrink-0 font-black text-slate-900">{krw(service.amount_krw)}</span></div>
+          <div key={service.service_name} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 text-xs"><span className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} /><span className="min-w-0 break-words font-semibold leading-5 text-slate-600">{service.service_name}</span></span><span className="whitespace-nowrap font-black text-slate-900">{krw(service.amount_krw)}</span></div>
         ))}
         {data.service_totals.length === 0 && <p className="col-span-full py-10 text-center text-sm text-slate-400">업로드된 서비스 비용이 없습니다.</p>}
       </div>
@@ -60,8 +60,8 @@ function DailyStackedChart({ data }: { data: CostManagementData }) {
   const maxValue = Math.max(1, ...data.daily_totals.map((item) => item.total_krw));
   const services = data.service_totals.map((item) => item.service_name);
   return (
-    <div className="overflow-x-auto pb-2">
-      <div className="flex h-64 min-w-[1100px] items-end gap-2 border-b border-slate-200 px-2">
+    <div className="max-w-full overflow-x-auto pb-2">
+      <div className="flex h-64 min-w-[820px] items-end gap-1.5 border-b border-slate-200 px-2">
         {data.daily_totals.map((day) => (
           <div key={day.date} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
             <div className="flex w-full flex-col-reverse overflow-hidden rounded-t" style={{ height: `${Math.max(day.total_krw ? 5 : 0, (day.total_krw / maxValue) * 205)}px` }} title={`${day.date} ${krw(day.total_krw)}`}>
@@ -183,9 +183,9 @@ export default function CostManagement() {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-blue-600" /><div><h2 className="font-bold text-slate-950">월별 사용 비용</h2><p className="mt-1 text-xs text-slate-500">업로드한 일별 서비스 비용을 월별로 합산했습니다. 막대를 누르면 해당 월 상세로 이동합니다.</p></div></div>{history.length ? <div className="mt-5 overflow-x-auto"><div className="flex h-48 items-end gap-3 border-b border-slate-200 px-2" style={{ minWidth: `${Math.max(600, history.length * 76)}px` }}>{history.map((item) => <button type="button" key={item.billing_month} onClick={() => setBillingMonth(item.billing_month)} className="group flex h-full min-w-14 flex-1 flex-col items-center justify-end gap-1" title={`${item.billing_month} ${krw(item.amount_krw)}`}><span className="text-[10px] font-bold text-slate-500 opacity-0 transition group-hover:opacity-100">{item.amount_krw.toLocaleString()}</span><span className={`w-full max-w-16 rounded-t transition ${billingMonth === item.billing_month ? 'bg-blue-700' : 'bg-blue-400 group-hover:bg-blue-600'}`} style={{ height: `${Math.max(8, (item.amount_krw / monthlyMax) * 125)}px` }} /><span className="text-[10px] font-semibold text-slate-500">{item.billing_month}</span></button>)}</div></div> : <p className="py-14 text-center text-sm text-slate-400">업로드된 월별 비용 데이터가 없습니다.</p>}</section>
 
-      <div className={`grid gap-5 ${isAllPeriod ? '' : 'xl:grid-cols-[0.85fr_1.15fr]'}`}>
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">서비스별 사용 금액</h2><p className="mt-1 text-xs text-slate-500">{isAllPeriod ? '입력된 전체 기간의 서비스별 실제 원화 비중입니다.' : '선택한 월과 계정의 실제 원화 비중입니다.'}</p><div className="mt-4">{data && <ServiceDonut data={data} />}</div></section>
-        {!isAllPeriod && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">일별 서비스 사용 금액</h2><p className="mt-1 text-xs text-slate-500">막대 색상은 서비스별 금액을 나타냅니다.</p><div className="mt-4">{data && <DailyStackedChart data={data} />}</div></section>}
+      <div className={`grid min-w-0 gap-5 ${isAllPeriod ? '' : 'xl:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]'}`}>
+        <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">서비스별 사용 금액</h2><p className="mt-1 text-xs leading-5 text-slate-500">{isAllPeriod ? '입력된 전체 기간의 서비스별 실제 원화 비중입니다.' : '선택한 월과 계정의 실제 원화 비중입니다.'}</p><div className="mt-4 min-w-0">{data && <ServiceDonut data={data} />}</div></section>
+        {!isAllPeriod && <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">일별 서비스 사용 금액</h2><p className="mt-1 text-xs leading-5 text-slate-500">막대 색상은 서비스별 금액을 나타냅니다. 화면이 좁으면 차트를 좌우로 이동할 수 있습니다.</p><div className="mt-4 min-w-0">{data && <DailyStackedChart data={data} />}</div></section>}
       </div>
 
       {!isAllPeriod && <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4"><div><h2 className="font-bold text-slate-950">일별 서비스 사용 금액 리스트</h2><p className="mt-1 text-xs text-slate-500">서비스 행과 일자 열로 원화 금액을 비교합니다.</p></div></div><div className="overflow-x-auto"><table className="min-w-max text-xs"><thead><tr className="bg-slate-100 text-slate-600"><th className="sticky left-0 z-10 min-w-40 border-r border-slate-200 bg-slate-100 px-4 py-3 text-left">서비스</th><th className="min-w-24 px-3 py-3 text-right">합계</th>{data?.daily_totals.map((day) => <th key={day.date} className="min-w-20 px-3 py-3 text-right">{String(day.day).padStart(2, '0')}일</th>)}</tr></thead><tbody><tr className="bg-cyan-50 font-black text-cyan-900"><td className="sticky left-0 border-r border-cyan-100 bg-cyan-50 px-4 py-3">Total</td><td className="px-3 py-3 text-right">{data?.usage_total_krw.toLocaleString()}</td>{data?.daily_totals.map((day) => <td key={day.date} className="px-3 py-3 text-right">{day.total_krw.toLocaleString()}</td>)}</tr>{data?.service_daily_rows.map((row) => <tr key={row.service_name} className="border-t border-slate-100 hover:bg-slate-50"><td className="sticky left-0 border-r border-slate-100 bg-white px-4 py-3 font-semibold text-slate-700">{row.service_name}</td><td className="px-3 py-3 text-right font-bold">{row.total_krw.toLocaleString()}</td>{data.daily_totals.map((day) => <td key={day.date} className="px-3 py-3 text-right text-slate-600">{(row.daily[String(day.day).padStart(2, '0')] ?? 0).toLocaleString()}</td>)}</tr>)}</tbody></table></div></section>}
