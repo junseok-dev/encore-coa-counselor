@@ -266,58 +266,37 @@ export interface CostAccountSummary {
   account_id: string;
   account_name: string;
   total_krw: number;
-  total_usd: number;
 }
 
 export interface CostServiceTotal {
   service_name: string;
   amount_krw: number;
-  amount_usd: number;
 }
 
 export interface CostDailyTotal {
   date: string;
   day: number;
   total_krw: number;
-  total_usd: number;
   services: Record<string, number>;
 }
 
 export interface CostServiceDailyRow {
   service_name: string;
   total_krw: number;
-  total_usd: number;
   daily: Record<string, number>;
-}
-
-export interface AwsMonthlyCostSummary {
-  billing_month: string;
-  total_krw: number;
-  total_usd: number;
 }
 
 export interface CostManagementData {
   billing_month: string;
   selected_account_id: string;
-  configured_account: { account_id: string; account_name: string } | null;
-  cost_source: 'aws_cost_explorer' | 'manual';
-  currency: 'USD' | 'KRW';
-  exchange_rate_krw: number | null;
-  sync: {
-    status: 'pending' | 'success' | 'failed' | 'not_configured';
-    message: string;
-    synced_at: string | null;
-  };
   accounts: CostAccountSummary[];
   actual_invoice_krw: number | null;
   usage_total_krw: number;
-  usage_total_usd: number;
   difference_krw: number | null;
   service_totals: CostServiceTotal[];
   daily_totals: CostDailyTotal[];
   service_daily_rows: CostServiceDailyRow[];
   monthly_history: BillingCostRecord[];
-  aws_monthly_history: AwsMonthlyCostSummary[];
 }
 
 export type SystemHealthStatus = 'healthy' | 'degraded' | 'critical' | 'unknown' | 'not_configured';

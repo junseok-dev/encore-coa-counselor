@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_all_sessions, get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminUser, BillingCostRecord, BillingDailyCostRecord, BillingSyncState, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminUser, BillingCostRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
 from app.models.session import MessageDetail, SessionDetail, SessionSummary
 from app.services.admin_service import (
     approve_document,
@@ -35,7 +35,6 @@ from app.services.admin_service import (
     restore_document,
     soft_delete_document,
 )
-from app.services.aws_cost_service import AwsCostSyncError, sync_aws_costs
 from app.services.faq_service import _serialize_faq, seed_faqs, sync_faqs_to_file
 from app.services.model_settings import get_active_model, set_active_model
 from app.services.prompt_service import PROMPT_DEFAULTS, seed_prompt_configs, serialize_prompt
@@ -47,6 +46,8 @@ router = APIRouter()
 
 ENV_PATH = ENV_FILE_PATH
 PROTECTED_PROMPTS = set(PROMPT_DEFAULTS.keys())
+NXAVIS_ACCOUNT_ID = "249173798473"
+NXAVIS_ACCOUNT_NAME = "엔코아 동작 캠퍼스 5반 30번 학생"
 
 TABLE_DESCRIPTIONS: dict[str, str] = {
     "chat_sessions": "사용자 채팅 세션 목록 — 세션 ID, 생성 시간, 메시지 수 등",
@@ -59,7 +60,6 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "system_health_probes": "시스템 상태 점검 — 데이터베이스 저장 가능 여부 확인",
     "billing_cost_records": "월별 실제 원화 청구액 — n·Xavis 청구 내역 기준",
     "billing_daily_cost_records": "계정·서비스·일자별 실제 원화 사용 금액",
-    "billing_sync_states": "AWS Cost Explorer 월별 동기화 상태",
     "processing_logs": "문서 처리 로그 — 파싱, 임베딩 등 단계별 처리 결과",
     "prompt_configs": "LLM 프롬프트 설정 — 시스템 프롬프트, 스타일 가이드 등",
     "faqs": "FAQ 데이터 — 질문, 답변, 키워드, 카테고리",
@@ -1313,28 +1313,6 @@ def save_billing_cost(
     return _serialize_billing_cost(row)
 
 
-@router.post("/operations/costs/aws-sync")
-def sync_aws_billing_costs(
-    billing_month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
-    force: bool = Query(False),
-    db: Session = Depends(get_db),
-    current_user: str = Depends(verify_admin),
-):
-    try:
-        result = sync_aws_costs(db, billing_month, force=force)
-    except AwsCostSyncError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    create_audit_log(
-        db,
-        "aws_costs_synced",
-        "billing_cost",
-        billing_month,
-        f"cached={result.get('cached', False)}, status={result.get('status')}",
-        actor=current_user,
-    )
-    return result
-
-
 @router.get("/operations/cost-management")
 def get_cost_management(
     billing_month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
@@ -1342,56 +1320,42 @@ def get_cost_management(
     db: Session = Depends(get_db),
     _: None = Depends(verify_admin),
 ):
-    settings = get_settings()
-    configured_account_ids = [value.strip() for value in settings.aws_billing_account_ids.split(",") if value.strip()]
-    configured_account = {
-        "account_id": configured_account_ids[0],
-        "account_name": settings.aws_billing_account_name or f"AWS 계정 {configured_account_ids[0]}",
-    } if len(configured_account_ids) == 1 else None
-    effective_account_id = configured_account["account_id"] if configured_account and account_id == "all" else account_id
     try:
         month_start = datetime.strptime(billing_month, "%Y-%m").date().replace(day=1)
     except ValueError:
         raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.")
     month_end = _shift_month(month_start, 1)
-    stored_rows = db.query(BillingDailyCostRecord).filter(
+    all_rows = db.query(BillingDailyCostRecord).filter(
         BillingDailyCostRecord.usage_date >= month_start,
         BillingDailyCostRecord.usage_date < month_end,
     ).all()
-    sync_state = db.query(BillingSyncState).filter(BillingSyncState.billing_month == billing_month).first()
-    aws_rows = [row for row in stored_rows if row.source == "aws_cost_explorer"]
-    use_aws_rows = bool(aws_rows) or bool(sync_state and sync_state.status == "success")
-    all_rows = aws_rows if use_aws_rows else stored_rows
 
     account_map: dict[str, dict] = {}
     for row in all_rows:
         account = account_map.setdefault(
             row.account_id,
-            {"account_id": row.account_id, "account_name": row.account_name, "total_krw": 0, "total_usd": 0.0},
+            {"account_id": row.account_id, "account_name": row.account_name, "total_krw": 0},
         )
         account["total_krw"] += row.amount_krw
-        account["total_usd"] += row.amount_usd or 0
     accounts = sorted(account_map.values(), key=lambda item: item["account_name"])
-    selected_rows = all_rows if effective_account_id == "all" else [row for row in all_rows if row.account_id == effective_account_id]
+    selected_rows = all_rows if account_id == "all" else [row for row in all_rows if row.account_id == account_id]
 
     _, last_day = calendar.monthrange(month_start.year, month_start.month)
     day_keys = [f"{day:02d}" for day in range(1, last_day + 1)]
     service_map: dict[str, dict] = {}
     daily_map = {
-        day: {"date": f"{billing_month}-{day}", "day": int(day), "total_krw": 0, "total_usd": 0.0, "services": {}}
+        day: {"date": f"{billing_month}-{day}", "day": int(day), "total_krw": 0, "services": {}}
         for day in day_keys
     }
     for row in selected_rows:
         day_key = f"{row.usage_date.day:02d}"
         service = service_map.setdefault(
             row.service_name,
-            {"service_name": row.service_name, "total_krw": 0, "total_usd": 0.0, "daily": {day: 0 for day in day_keys}},
+            {"service_name": row.service_name, "total_krw": 0, "daily": {day: 0 for day in day_keys}},
         )
         service["total_krw"] += row.amount_krw
-        service["total_usd"] += row.amount_usd or 0
         service["daily"][day_key] += row.amount_krw
         daily_map[day_key]["total_krw"] += row.amount_krw
-        daily_map[day_key]["total_usd"] += row.amount_usd or 0
         daily_map[day_key]["services"][row.service_name] = (
             daily_map[day_key]["services"].get(row.service_name, 0) + row.amount_krw
         )
@@ -1400,58 +1364,44 @@ def get_cost_management(
     invoice = db.query(BillingCostRecord).filter(BillingCostRecord.billing_month == billing_month).first()
     monthly_history = db.query(BillingCostRecord).order_by(BillingCostRecord.billing_month.desc()).limit(12).all()
     usage_total = sum(row.amount_krw for row in selected_rows)
-    usage_total_usd = sum(row.amount_usd or 0 for row in selected_rows)
-    all_aws_rows = db.query(BillingDailyCostRecord).filter(
-        BillingDailyCostRecord.source == "aws_cost_explorer"
-    ).all()
-    aws_monthly_map: dict[str, dict] = {}
-    for row in all_aws_rows:
-        key = row.usage_date.strftime("%Y-%m")
-        item = aws_monthly_map.setdefault(key, {"billing_month": key, "total_krw": 0, "total_usd": 0.0})
-        item["total_krw"] += row.amount_krw
-        item["total_usd"] += row.amount_usd or 0
-    aws_monthly_history = sorted(aws_monthly_map.values(), key=lambda item: item["billing_month"])[-12:]
     return {
         "billing_month": billing_month,
-        "selected_account_id": effective_account_id,
-        "configured_account": configured_account,
-        "cost_source": "aws_cost_explorer" if use_aws_rows else "manual",
-        "currency": "USD" if use_aws_rows else "KRW",
-        "exchange_rate_krw": sync_state.exchange_rate_krw if sync_state else None,
-        "sync": {
-            "status": sync_state.status if sync_state else "pending",
-            "message": sync_state.message if sync_state else "아직 AWS 비용을 동기화하지 않았습니다.",
-            "synced_at": sync_state.synced_at if sync_state else None,
-        },
+        "selected_account_id": account_id,
         "accounts": accounts,
         "actual_invoice_krw": invoice.amount_krw if invoice else None,
         "usage_total_krw": usage_total,
-        "usage_total_usd": usage_total_usd,
-        "difference_krw": (invoice.amount_krw - usage_total) if invoice and effective_account_id == "all" else None,
+        "difference_krw": (invoice.amount_krw - usage_total) if invoice else None,
         "service_totals": [
-            {"service_name": item["service_name"], "amount_krw": item["total_krw"], "amount_usd": item["total_usd"]}
+            {"service_name": item["service_name"], "amount_krw": item["total_krw"]}
             for item in services
         ],
         "daily_totals": list(daily_map.values()),
         "service_daily_rows": services,
         "monthly_history": [_serialize_billing_cost(row) for row in monthly_history],
-        "aws_monthly_history": aws_monthly_history,
     }
 
 
 @router.get("/operations/costs/template")
-def download_cost_template(_: None = Depends(verify_admin)):
+def download_cost_template(
+    billing_month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
+    _: None = Depends(verify_admin),
+):
+    template_month = billing_month or datetime.now().strftime("%Y-%m")
+    try:
+        datetime.strptime(template_month, "%Y-%m")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="유효한 반영 월을 선택해 주세요.") from exc
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "일별 서비스 비용"
     sheet.append(["사용일자", "계정ID", "계정명", "서비스", "원화금액"])
-    sheet.append([datetime.now().strftime("%Y-%m-01"), "123456789012", "운영 계정", "AmazonRDS", 0])
+    sheet.append([f"{template_month}-01", NXAVIS_ACCOUNT_ID, NXAVIS_ACCOUNT_NAME, "AmazonRDS", 0])
     buffer = io.BytesIO()
     workbook.save(buffer)
     return Response(
         content=buffer.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="cost_import_template.xlsx"'},
+        headers={"Content-Disposition": f'attachment; filename="cost_import_template_{template_month}.xlsx"'},
     )
 
 
@@ -1476,6 +1426,12 @@ async def import_cost_details(
         raise HTTPException(status_code=400, detail=".xlsx 또는 .csv 파일만 업로드할 수 있습니다.")
     if len(values) < 2:
         raise HTTPException(status_code=400, detail="비용 데이터 행이 없습니다.")
+    if not re.fullmatch(r"\d{4}-\d{2}", billing_month):
+        raise HTTPException(status_code=400, detail="반영 월은 YYYY-MM 형식이어야 합니다.")
+    try:
+        datetime.strptime(billing_month, "%Y-%m")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="유효한 반영 월을 선택해 주세요.") from exc
 
     raw_headers = values[0]
     headers = [_normalize_cost_header(value) for value in raw_headers]
@@ -1534,7 +1490,21 @@ async def import_cost_details(
     except (ValueError, TypeError, IndexError) as exc:
         raise HTTPException(status_code=400, detail=f"비용 파일 형식을 확인하세요: {exc}")
 
-    for usage_date, row_account_id, row_account_name, service_name, amount_krw in parsed_rows:
+    mismatched_dates = sorted({
+        usage_date.strftime("%Y-%m-%d")
+        for usage_date, *_ in parsed_rows
+        if usage_date.strftime("%Y-%m") != billing_month
+    })
+    if mismatched_dates:
+        preview = ", ".join(mismatched_dates[:3])
+        raise HTTPException(
+            status_code=400,
+            detail=f"선택한 반영 월({billing_month})과 다른 날짜가 포함되어 있습니다: {preview}",
+        )
+
+    for usage_date, _, _, service_name, amount_krw in parsed_rows:
+        row_account_id = NXAVIS_ACCOUNT_ID
+        row_account_name = NXAVIS_ACCOUNT_NAME
         row = db.query(BillingDailyCostRecord).filter(
             BillingDailyCostRecord.usage_date == usage_date,
             BillingDailyCostRecord.account_id == row_account_id,
@@ -1562,7 +1532,11 @@ async def import_cost_details(
         f"rows={len(parsed_rows)}",
         actor=current_user,
     )
-    return {"message": "실제 원화 비용 자료를 반영했습니다.", "imported_rows": len(parsed_rows)}
+    return {
+        "message": f"{billing_month} 실제 원화 비용 자료를 반영했습니다.",
+        "billing_month": billing_month,
+        "imported_rows": len(parsed_rows),
+    }
 
 
 @router.patch("/operations/alerts/{alert_id}")
