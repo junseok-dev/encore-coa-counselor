@@ -142,9 +142,31 @@ class OperationsAlert(Base):
     status = Column(String(20), index=True, default="open", nullable=False)
     assigned_to = Column(String(255), nullable=True)
     note = Column(Text, nullable=True)
+    test_question = Column(Text, nullable=True)
+    test_answer = Column(Text, nullable=True)
+    test_source = Column(String(30), nullable=True)
+    test_passed = Column(Boolean, default=False, nullable=False)
+    tested_by = Column(String(255), nullable=True)
+    tested_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     resolved_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class OperationsAlertHistory(Base):
+    __tablename__ = "operations_alert_histories"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    alert_id = Column(Integer, index=True, nullable=False)
+    action = Column(String(40), index=True, nullable=False)
+    actor = Column(String(255), nullable=False)
+    from_status = Column(String(20), nullable=True)
+    to_status = Column(String(20), nullable=True)
+    test_question = Column(Text, nullable=True)
+    test_answer = Column(Text, nullable=True)
+    test_source = Column(String(30), nullable=True)
+    test_passed = Column(Boolean, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class SystemHealthProbe(Base):

@@ -203,13 +203,15 @@ export interface ChatLog {
   created_at: string;
 }
 
-export type OperationsSignalType = 'handoff' | 'cancel' | 'safety' | 'error';
+export type OperationsSignalType = 'handoff' | 'cancel' | 'refund' | 'safety' | 'error';
 
 export interface OperationsMetricSummary {
   visitors: number;
   chats: number;
   handoffs: number;
   cancels: number;
+  refunds: number;
+  homepage_requests: number;
   safety: number;
   failed: number;
 }
@@ -220,7 +222,10 @@ export interface OperationsDailyMetric {
   chats: number;
   handoffs: number;
   cancels: number;
+  refunds: number;
+  homepage_requests: number;
   safety: number;
+  failed: number;
 }
 
 export interface HandoffCategoryMetric {
@@ -248,6 +253,10 @@ export interface OperationsMonthlyMetric {
   chats: number;
   handoffs: number;
   cancels: number;
+  refunds: number;
+  homepage_requests: number;
+  safety: number;
+  failed: number;
 }
 
 export interface OperationsHourlyMetric {
@@ -272,7 +281,18 @@ export interface OperationsAnalyticsData {
   period_label: string;
   generated_at: string;
   monthly: OperationsMonthlyMetric[];
+  daily: OperationsDailyMetric[];
   hourly: OperationsHourlyMetric[];
+  period_summary: {
+    visitors: number;
+    chats: number;
+    handoffs: number;
+    cancels: number;
+    refunds: number;
+    homepage_requests: number;
+    safety: number;
+    failed: number;
+  };
   highlights: {
     busiest_visitor_month: AnalyticsPeak | null;
     busiest_chat_month: AnalyticsPeak | null;
@@ -391,11 +411,68 @@ export interface OperationsDashboardData {
 
 export interface OperationsAlertUpdateResult {
   id: number;
+  session_id: string;
+  signal_type: OperationsSignalType;
+  severity: 'low' | 'medium' | 'high';
+  reason: string;
   status: 'open' | 'checking' | 'resolved';
   assigned_to: string | null;
   note: string | null;
+  test_question: string | null;
+  test_answer: string | null;
+  test_source: string | null;
+  test_passed: boolean;
+  tested_by: string | null;
+  tested_at: string | null;
+  created_at: string;
   resolved_at: string | null;
   updated_at: string | null;
+}
+
+export interface OperationsAlertHistory {
+  id: number;
+  action: 'checking_started' | 'work_updated' | 'answer_tested' | 'resolved' | string;
+  actor: string;
+  from_status: 'open' | 'checking' | 'resolved' | null;
+  to_status: 'open' | 'checking' | 'resolved' | null;
+  test_question: string | null;
+  test_answer: string | null;
+  test_source: string | null;
+  test_passed: boolean | null;
+  created_at: string;
+}
+
+export interface OperationsAlertDetail {
+  alert: OperationsAlertUpdateResult;
+  problem_start_message_id: number | null;
+  messages: AdminMessage[];
+  history: OperationsAlertHistory[];
+  related_resolutions: OperationsRelatedResolution[];
+}
+
+export interface OperationsRelatedResolution {
+  alert_id: number;
+  reason: string;
+  test_question: string | null;
+  test_answer: string | null;
+  test_source: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+}
+
+export interface OperationsAlertTestResult {
+  question: string;
+  answer: string;
+  source: string;
+  tested_by: string;
+  tested_at: string;
+}
+
+export interface OperationsAlertWorkflowPayload {
+  status: 'open' | 'checking' | 'resolved';
+  note?: string;
+  test_question?: string;
+  test_passed?: boolean;
 }
 
 export interface PromptPayload {

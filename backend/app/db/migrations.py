@@ -26,6 +26,15 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
             "account_identifier": "VARCHAR(120)",
             "instance_identifier": "VARCHAR(120)",
         }.get(column_name)
+    if table_name == "operations_alerts":
+        return {
+            "test_question": "TEXT",
+            "test_answer": "TEXT",
+            "test_source": "VARCHAR(30)",
+            "test_passed": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "tested_by": "VARCHAR(255)",
+            "tested_at": "TIMESTAMP WITH TIME ZONE",
+        }.get(column_name)
     return None
 
 
@@ -93,6 +102,19 @@ def migrate_database(engine: Engine) -> None:
             with engine.begin() as connection:
                 connection.execute(text(
                     f"ALTER TABLE admin_secret_records ADD COLUMN {column_name} VARCHAR(120)"
+                ))
+
+    if "operations_alerts" in inspector.get_table_names():
+        existing = {column["name"] for column in inspector.get_columns("operations_alerts")}
+        for column_name in (
+            "test_question", "test_answer", "test_source", "test_passed", "tested_by", "tested_at",
+        ):
+            if column_name in existing:
+                continue
+            column_sql = _column_sql("operations_alerts", column_name)
+            with engine.begin() as connection:
+                connection.execute(text(
+                    f"ALTER TABLE operations_alerts ADD COLUMN {column_name} {column_sql}"
                 ))
 
     _ensure_text_columns(engine)

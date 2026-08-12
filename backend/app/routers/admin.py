@@ -27,8 +27,10 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_all_sessions, get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, SystemHealthProbe
+from app.models.chat import ChatRequest, HistoryMessage
 from app.models.session import MessageDetail, SessionDetail, SessionSummary
+from app.routers.chat import chat as run_chat_preview
 from app.services.admin_service import (
     approve_document,
     create_audit_log,
@@ -129,6 +131,12 @@ class PromptPayload(BaseModel):
 class OperationsAlertUpdate(BaseModel):
     status: str
     note: str | None = None
+    test_question: str | None = None
+    test_passed: bool | None = None
+
+
+class OperationsAlertTestRequest(BaseModel):
+    question: str
 
 
 class VaultPasswordRequest(BaseModel):
@@ -170,9 +178,6 @@ VAULT_ENV_FIELDS = (
     ("AWS_S3_BUCKET", "S3 버킷", False),
     ("AWS_S3_PREFIX", "S3 경로 접두사", False),
     ("AWS_EC2_INSTANCE_ID", "EC2 인스턴스 ID", False),
-    ("LANGSMITH_API_KEY", "LangSmith API 키", True),
-    ("LANGSMITH_PROJECT", "LangSmith 프로젝트", False),
-    ("LANGSMITH_TRACING", "LangSmith 추적 여부", False),
     ("GOOGLE_CLIENT_ID", "Google OAuth 클라이언트 ID", False),
     ("CHANNEL_TALK_URL", "채널톡 연결 주소", False),
     ("MODEL_NAME", "기본 LLM 모델", False),
@@ -416,19 +421,54 @@ def _percent_change(current: int, previous: int) -> float | None:
     return round(((current - previous) / previous) * 100, 1)
 
 
-def _handoff_reason(question: str, status: str, is_cancel: bool) -> tuple[str, str]:
-    normalized = "".join((question or "").lower().split())
+def _is_refund_request(value: str | None) -> bool:
+    normalized = "".join((value or "").lower().split())
+    return any(token in normalized for token in ("환불", "환급", "돈돌려", "결제취소", "수강료돌려"))
+
+
+def _is_homepage_request(value: str | None) -> bool:
+    normalized = "".join((value or "").lower().split())
+    return any(token in normalized for token in (
+        "홈페이지", "홈피", "공식사이트", "사이트주소", "홈페이지주소", "홈페이지링크", "공식링크",
+    ))
+
+
+def _handoff_reason(
+    question: str,
+    status: str,
+    is_cancel: bool,
+    answer: str = "",
+    session_context: str = "",
+) -> tuple[str, str]:
+    normalized = "".join(f"{session_context} {question} {answer}".lower().split())
     if is_cancel:
         return "cancel", "취소 요청"
-    if status == "handoff_offer":
-        return "bot_offer", "봇 상담 권유"
     if any(token in normalized for token in ("취업", "합격", "채용", "책임", "보장")):
-        return "employment", "취업·책임 상담"
+        return "employment", "취업·채용 상담"
     if any(token in normalized for token in ("환불", "결제", "수강료", "비용", "입금")):
         return "payment", "환불·결제 문의"
+    if any(token in normalized for token in ("신청", "지원", "접수", "등록", "선발", "합격발표")):
+        return "application", "신청·등록 문의"
+    if any(token in normalized for token in ("출결", "출석", "결석", "지각", "조퇴", "휴가", "일정", "개강", "수업시간")):
+        return "schedule", "일정·출결 문의"
+    if any(token in normalized for token in ("커리큘럼", "과정", "강의", "수업", "교육내용", "난이도", "프로젝트")):
+        return "course", "과정·커리큘럼 상담"
+    if any(token in normalized for token in ("자격", "전공", "비전공", "나이", "국비", "내일배움", "수강조건")):
+        return "eligibility", "지원 자격 상담"
+    if any(token in normalized for token in ("캠퍼스", "위치", "주소", "주차", "시설", "강의장")):
+        return "campus", "캠퍼스·시설 문의"
+    if any(token in normalized for token in ("서류", "증명서", "수료증", "행정", "제출", "발급")):
+        return "document", "서류·행정 문의"
+    if any(token in normalized for token in ("오류", "에러", "로그인", "접속", "저장", "데이터", "사이트", "시스템")):
+        return "technical", "기술·시스템 문제"
     if any(token in normalized for token in ("상담", "상담원", "매니저", "사람", "전화", "연락")):
         return "direct", "상담원 직접 요청"
-    return "other", "기타 상담"
+    category = categorize_question_rule(normalized)
+    if category.key != "general":
+        return f"question_{category.key}", f"{category.label} 상담"
+    if status == "handoff_offer":
+        return "bot_offer", "답변 한계로 상담 권유"
+    return "review_needed", "내용 확인 필요"
 
 
 def _operations_summary(
@@ -442,11 +482,17 @@ def _operations_summary(
     ]
     safety = [row for row in logs if row.source == "guardrail"]
     failed = [row for row in logs if row.processing_status == "failed" or bool(row.error)]
+    refund_count = sum(1 for row in cancels if _is_refund_request(decrypt_if_needed(row.message)))
+    homepage_request_count = sum(
+        1 for row in logs if _is_homepage_request(decrypt_if_needed(row.question))
+    )
     return {
         "visitors": len(sessions),
         "chats": len(logs),
         "handoffs": len(handoffs),
-        "cancels": len(cancels),
+        "cancels": len(cancels) - refund_count,
+        "refunds": refund_count,
+        "homepage_requests": homepage_request_count,
         "safety": len(safety),
         "failed": len(failed),
     }
@@ -486,7 +532,11 @@ def _ec2_health_check() -> dict:
             "message": "인스턴스 ID를 설정하면 AWS 상태 검사를 표시합니다.",
             "latency_ms": None,
             "checked_at": checked_at,
-            "details": {"instance_id": None},
+            "details": {
+                "instance_id": None,
+                "cause": "AWS_EC2_INSTANCE_ID가 백엔드 환경 변수에 설정되지 않았습니다.",
+                "action": "보안 정보 또는 백엔드 .env에 실제 EC2 인스턴스 ID를 설정하고 백엔드를 재시작하세요.",
+            },
         }
 
     started = perf_counter()
@@ -541,16 +591,40 @@ def _ec2_health_check() -> dict:
             },
         }
     except Exception as exc:
+        error_code = ""
+        try:
+            error_code = str(exc.response.get("Error", {}).get("Code", ""))
+        except (AttributeError, TypeError):
+            pass
+        access_denied = error_code in {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}
         return {
             "key": "ec2",
             "label": "EC2",
             "status": "unknown",
-            "message": "AWS 상태를 조회하지 못했습니다. IAM 권한과 인스턴스 설정을 확인하세요.",
+            "message": (
+                "EC2 장애가 아니라 IAM 상태 조회 권한이 없어 확인할 수 없습니다. "
+                "AWS 관리자에게 ec2:DescribeInstanceStatus 읽기 권한을 요청하세요."
+                if access_denied else
+                "AWS 상태를 조회하지 못했습니다. IAM 권한과 인스턴스 설정을 확인하세요."
+            ),
             "latency_ms": round((perf_counter() - started) * 1000),
             "checked_at": checked_at,
             "details": {
                 "instance_id": settings.aws_ec2_instance_id,
+                "region": settings.aws_region,
                 "error_type": type(exc).__name__,
+                "error_code": error_code or None,
+                "cause": (
+                    "현재 AWS 자격 증명에 EC2 상태 조회 권한이 없습니다. EC2 장애를 의미하지는 않습니다."
+                    if access_denied else
+                    "AWS 자격 증명, 리전, 네트워크 또는 인스턴스 설정 때문에 상태 조회 요청이 실패했습니다."
+                ),
+                "action": (
+                    "AWS 관리자에게 ec2:DescribeInstanceStatus 허용을 요청하세요. SCP의 명시적 거부가 있으면 IAM 권한만 추가해도 해결되지 않습니다."
+                    if access_denied else
+                    "AWS 자격 증명과 리전, 인스턴스 ID를 확인한 뒤 다시 점검하세요."
+                ),
+                "required_permission": "ec2:DescribeInstanceStatus",
             },
         }
 
@@ -982,6 +1056,10 @@ def get_operations_analytics(
             "chats": 0,
             "handoffs": 0,
             "cancels": 0,
+            "refunds": 0,
+            "homepage_requests": 0,
+            "safety": 0,
+            "failed": 0,
         }
         for month_start in month_starts
     }
@@ -989,6 +1067,23 @@ def get_operations_analytics(
         hour: {"hour": hour, "label": f"{hour:02d}시", "visitors": 0, "chats": 0}
         for hour in range(24)
     }
+    daily_map: dict[str, dict] = {}
+    if selected_month:
+        _, day_count = calendar.monthrange(selected_start.year, selected_start.month)
+        daily_map = {
+            date(selected_start.year, selected_start.month, day).isoformat(): {
+                "date": date(selected_start.year, selected_start.month, day).isoformat(),
+                "visitors": 0,
+                "chats": 0,
+                "handoffs": 0,
+                "cancels": 0,
+                "refunds": 0,
+                "homepage_requests": 0,
+                "safety": 0,
+                "failed": 0,
+            }
+            for day in range(1, day_count + 1)
+        }
 
     for row in analysis_sessions:
         if not row.created_at:
@@ -998,6 +1093,9 @@ def get_operations_analytics(
         if month_key in monthly_map:
             monthly_map[month_key]["visitors"] += 1
         hourly_map[local_created_at.hour]["visitors"] += 1
+        day_key = local_created_at.date().isoformat()
+        if day_key in daily_map:
+            daily_map[day_key]["visitors"] += 1
 
     for row in analysis_logs:
         if not row.created_at:
@@ -1008,30 +1106,50 @@ def get_operations_analytics(
             monthly_map[month_key]["chats"] += 1
             if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff":
                 monthly_map[month_key]["handoffs"] += 1
+            if row.source == "guardrail":
+                monthly_map[month_key]["safety"] += 1
+            if row.processing_status == "failed" or bool(decrypt_if_needed(row.error)):
+                monthly_map[month_key]["failed"] += 1
+            if _is_homepage_request(decrypt_if_needed(row.question)):
+                monthly_map[month_key]["homepage_requests"] += 1
         hourly_map[local_created_at.hour]["chats"] += 1
+        day_key = local_created_at.date().isoformat()
+        if day_key in daily_map:
+            daily_map[day_key]["chats"] += 1
+            if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff":
+                daily_map[day_key]["handoffs"] += 1
+            if row.source == "guardrail":
+                daily_map[day_key]["safety"] += 1
+            if row.processing_status == "failed" or bool(decrypt_if_needed(row.error)):
+                daily_map[day_key]["failed"] += 1
+            if _is_homepage_request(decrypt_if_needed(row.question)):
+                daily_map[day_key]["homepage_requests"] += 1
 
     for row in analysis_cancels:
         if not row.created_at:
             continue
         month_key = _analysis_datetime(row.created_at).strftime("%Y-%m")
+        metric_key = "refunds" if _is_refund_request(decrypt_if_needed(row.message)) else "cancels"
         if month_key in monthly_map:
-            monthly_map[month_key]["cancels"] += 1
+            monthly_map[month_key][metric_key] += 1
+        day_key = _analysis_datetime(row.created_at).date().isoformat()
+        if day_key in daily_map:
+            daily_map[day_key][metric_key] += 1
 
     question_category_map: dict[str, dict] = {}
     answer_source_summary = {"faq": 0, "llm": 0, "other": 0}
-    handoff_category_labels = {
-        "direct": "상담원 직접 요청",
-        "cancel": "취소 요청",
-        "employment": "취업·채용 상담",
-        "payment": "환불·결제 문의",
-        "bot_offer": "봇 상담 권유",
-        "other": "기타 상담",
-    }
-    handoff_category_counts = {key: 0 for key in handoff_category_labels}
+    handoff_category_map: dict[str, dict] = {}
     cancel_keys = {
         (row.session_id, (decrypt_if_needed(row.message) or "").strip())
         for row in analysis_cancels
     }
+
+    session_context_map: dict[str, list[str]] = {}
+    for context_row in analysis_logs:
+        session_context_map.setdefault(context_row.session_id, []).extend([
+            decrypt_if_needed(context_row.question) or "",
+            decrypt_if_needed(context_row.answer) or "",
+        ])
 
     unclassified_count = 0
     for row in analysis_logs:
@@ -1059,8 +1177,19 @@ def get_operations_analytics(
         is_handoff = row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff"
         if is_handoff:
             is_cancel = (row.session_id, question.strip()) in cancel_keys
-            handoff_key, _ = _handoff_reason(question, row.processing_status, is_cancel)
-            handoff_category_counts[handoff_key] += 1
+            context = " ".join(session_context_map.get(row.session_id, []))
+            handoff_key, handoff_label = _handoff_reason(
+                question,
+                row.processing_status,
+                is_cancel,
+                decrypt_if_needed(row.answer) or "",
+                context,
+            )
+            handoff_category = handoff_category_map.setdefault(
+                handoff_key,
+                {"key": handoff_key, "label": handoff_label, "count": 0},
+            )
+            handoff_category["count"] += 1
 
     monthly = list(monthly_map.values())
     hourly = list(hourly_map.values())
@@ -1068,11 +1197,29 @@ def get_operations_analytics(
         (item for item in question_category_map.values() if item["key"] != "general"),
         key=lambda item: (-item["count"], item["label"]),
     )[:5]
-    handoff_categories = [
-        {"key": key, "label": label, "count": handoff_category_counts[key]}
-        for key, label in handoff_category_labels.items()
-    ]
+    handoff_categories = list(handoff_category_map.values())
     handoff_categories.sort(key=lambda item: item["count"], reverse=True)
+    chat_count = len(analysis_logs)
+    visitor_count = len(analysis_sessions)
+    handoff_count = sum(item["count"] for item in handoff_categories)
+    failed_count = sum(
+        1 for row in analysis_logs
+        if row.processing_status == "failed" or bool(decrypt_if_needed(row.error))
+    )
+    refund_count = sum(1 for row in analysis_cancels if _is_refund_request(decrypt_if_needed(row.message)))
+    homepage_request_count = sum(
+        1 for row in analysis_logs if _is_homepage_request(decrypt_if_needed(row.question))
+    )
+    period_summary = {
+        "visitors": visitor_count,
+        "chats": chat_count,
+        "handoffs": handoff_count,
+        "cancels": len(analysis_cancels) - refund_count,
+        "refunds": refund_count,
+        "homepage_requests": homepage_request_count,
+        "safety": sum(1 for row in analysis_logs if row.source == "guardrail"),
+        "failed": failed_count,
+    }
 
     return {
         "period_months": len(month_starts),
@@ -1088,7 +1235,9 @@ def get_operations_analytics(
         ),
         "generated_at": datetime.now(),
         "monthly": monthly,
+        "daily": list(daily_map.values()),
         "hourly": hourly,
+        "period_summary": period_summary,
         "highlights": {
             "busiest_visitor_month": _peak_item(monthly, "visitors", "month"),
             "busiest_chat_month": _peak_item(monthly, "chats", "month"),
@@ -1292,7 +1441,10 @@ def get_operations_dashboard(
             "chats": 0,
             "handoffs": 0,
             "cancels": 0,
+            "refunds": 0,
+            "homepage_requests": 0,
             "safety": 0,
+            "failed": 0,
         }
         for offset in range(days)
     }
@@ -1305,22 +1457,27 @@ def get_operations_dashboard(
             bucket["handoffs"] += 1
         if row.source == "guardrail":
             bucket["safety"] += 1
+        if row.processing_status == "failed" or bool(decrypt_if_needed(row.error)):
+            bucket["failed"] += 1
+        if _is_homepage_request(decrypt_if_needed(row.question)):
+            bucket["homepage_requests"] += 1
     for row in current_cancels:
-        daily_map[row.created_at.date().isoformat()]["cancels"] += 1
+        key = "refunds" if _is_refund_request(decrypt_if_needed(row.message)) else "cancels"
+        daily_map[row.created_at.date().isoformat()][key] += 1
 
-    cancel_keys = {
-        (row.session_id, (decrypt_if_needed(row.message) or "").strip())
+    request_signal_by_key = {
+        (row.session_id, (decrypt_if_needed(row.message) or "").strip()): (
+            "refund" if _is_refund_request(decrypt_if_needed(row.message)) else "cancel"
+        )
         for row in current_cancels
     }
-    category_labels = {
-        "direct": "상담원 직접 요청",
-        "cancel": "취소 요청",
-        "employment": "취업·책임 상담",
-        "payment": "환불·결제 문의",
-        "bot_offer": "봇 상담 권유",
-        "other": "기타 상담",
-    }
-    category_counts = {key: 0 for key in category_labels}
+    handoff_category_map: dict[str, dict] = {}
+    session_context_map: dict[str, list[str]] = {}
+    for context_row in current_logs:
+        session_context_map.setdefault(context_row.session_id, []).extend([
+            decrypt_if_needed(context_row.question) or "",
+            decrypt_if_needed(context_row.answer) or "",
+        ])
     attention = []
     log_ids = [row.id for row in current_logs]
     alert_by_log_id = {
@@ -1333,16 +1490,29 @@ def get_operations_dashboard(
         question = decrypt_if_needed(row.question) or ""
         answer = decrypt_if_needed(row.answer) or ""
         error = decrypt_if_needed(row.error)
-        is_cancel = (row.session_id, question.strip()) in cancel_keys
+        request_signal = request_signal_by_key.get((row.session_id, question.strip()))
+        is_cancel = request_signal is not None
         is_handoff = row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff"
         reason = ""
         if is_handoff:
-            category_key, reason = _handoff_reason(question, row.processing_status, is_cancel)
-            category_counts[category_key] += 1
+            category_key, reason = _handoff_reason(
+                question,
+                row.processing_status,
+                is_cancel,
+                answer,
+                " ".join(session_context_map.get(row.session_id, [])),
+            )
+            category = handoff_category_map.setdefault(
+                category_key,
+                {"key": category_key, "label": reason, "count": 0},
+            )
+            category["count"] += 1
 
         signal_type = None
         severity = "medium"
-        if is_cancel:
+        if request_signal == "refund":
+            signal_type, severity, reason = "refund", "high", "환불 요청 접수"
+        elif request_signal == "cancel":
             signal_type, severity, reason = "cancel", "high", "취소 요청 접수"
         elif row.source == "guardrail":
             signal_type, severity, reason = "safety", "high", "안전 가드레일 감지"
@@ -1393,10 +1563,7 @@ def get_operations_dashboard(
     if alerts_changed:
         db.commit()
 
-    handoff_categories = [
-        {"key": key, "label": label, "count": category_counts[key]}
-        for key, label in category_labels.items()
-    ]
+    handoff_categories = list(handoff_category_map.values())
     handoff_categories.sort(key=lambda item: item["count"], reverse=True)
 
     question_category_map: dict[str, dict] = {}
@@ -1775,6 +1942,184 @@ async def import_cost_details(
     }
 
 
+def _add_operations_alert_history(
+    db: Session,
+    alert: OperationsAlert,
+    action: str,
+    actor: str,
+    from_status: str | None = None,
+) -> None:
+    db.add(OperationsAlertHistory(
+        alert_id=alert.id,
+        action=action,
+        actor=actor,
+        from_status=from_status,
+        to_status=alert.status,
+        test_question=alert.test_question,
+        test_answer=alert.test_answer,
+        test_source=alert.test_source,
+        test_passed=alert.test_passed,
+    ))
+
+
+def _serialize_operations_alert(alert: OperationsAlert) -> dict:
+    return {
+        "id": alert.id,
+        "session_id": alert.session_id,
+        "signal_type": alert.signal_type,
+        "severity": alert.severity,
+        "reason": alert.reason,
+        "status": alert.status,
+        "assigned_to": alert.assigned_to,
+        "note": decrypt_if_needed(alert.note),
+        "test_question": decrypt_if_needed(alert.test_question),
+        "test_answer": decrypt_if_needed(alert.test_answer),
+        "test_source": alert.test_source,
+        "test_passed": bool(alert.test_passed),
+        "tested_by": alert.tested_by,
+        "tested_at": alert.tested_at,
+        "created_at": alert.created_at,
+        "updated_at": alert.updated_at,
+        "resolved_at": alert.resolved_at,
+    }
+
+
+@router.get("/operations/alerts/{alert_id}/detail")
+def get_operations_alert_detail(
+    alert_id: int,
+    db: Session = Depends(get_db),
+    _: str = Depends(verify_admin),
+):
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
+    messages = db.query(ChatMessage).filter(
+        ChatMessage.session_id == alert.session_id
+    ).order_by(ChatMessage.created_at, ChatMessage.id).all()
+    source_log = db.query(ChatLog).filter(ChatLog.id == alert.chat_log_id).first()
+    problem_question = (decrypt_if_needed(source_log.question) or "").strip() if source_log else ""
+    problem_start_message_id = None
+    for message in messages:
+        if message.role == "user" and (decrypt_if_needed(message.content) or "").strip() == problem_question:
+            problem_start_message_id = message.id
+    if problem_start_message_id is None and source_log and source_log.created_at:
+        for message in messages:
+            if message.role == "user" and message.created_at and message.created_at <= source_log.created_at:
+                problem_start_message_id = message.id
+
+    histories = db.query(OperationsAlertHistory).filter(
+        OperationsAlertHistory.alert_id == alert.id
+    ).order_by(OperationsAlertHistory.created_at.desc(), OperationsAlertHistory.id.desc()).all()
+    related_alerts = db.query(OperationsAlert).filter(
+        OperationsAlert.id != alert.id,
+        OperationsAlert.status == "resolved",
+        OperationsAlert.signal_type == alert.signal_type,
+        OperationsAlert.reason == alert.reason,
+    ).order_by(OperationsAlert.resolved_at.desc(), OperationsAlert.id.desc()).limit(5).all()
+    return {
+        "alert": _serialize_operations_alert(alert),
+        "problem_start_message_id": problem_start_message_id,
+        "messages": [
+            {
+                "id": message.id,
+                "role": message.role,
+                "content": decrypt_if_needed(message.content) or "",
+                "source": message.source,
+                "created_at": message.created_at,
+            }
+            for message in messages
+        ],
+        "history": [
+            {
+                "id": history.id,
+                "action": history.action,
+                "actor": history.actor,
+                "from_status": history.from_status,
+                "to_status": history.to_status,
+                "test_question": decrypt_if_needed(history.test_question),
+                "test_answer": decrypt_if_needed(history.test_answer),
+                "test_source": history.test_source,
+                "test_passed": history.test_passed,
+                "created_at": history.created_at,
+            }
+            for history in histories
+        ],
+        "related_resolutions": [
+            {
+                "alert_id": related.id,
+                "reason": related.reason,
+                "test_question": decrypt_if_needed(related.test_question),
+                "test_answer": decrypt_if_needed(related.test_answer),
+                "test_source": related.test_source,
+                "resolved_by": related.assigned_to,
+                "resolved_at": related.resolved_at,
+            }
+            for related in related_alerts
+        ],
+    }
+
+
+@router.post("/operations/alerts/{alert_id}/test")
+async def test_operations_alert_answer(
+    alert_id: int,
+    body: OperationsAlertTestRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="테스트 질문을 입력해 주세요.")
+    original_messages = db.query(ChatMessage).filter(
+        ChatMessage.session_id == alert.session_id,
+        ChatMessage.role.in_(("user", "assistant")),
+    ).order_by(ChatMessage.created_at, ChatMessage.id).all()
+    history = [
+        HistoryMessage(role=message.role, content=decrypt_if_needed(message.content) or "")
+        for message in original_messages[-8:]
+    ]
+    test_session_id = f"admin-test-{uuid4().hex}"
+    try:
+        response = await run_chat_preview(
+            ChatRequest(session_id=test_session_id, message=question, history=history),
+            db,
+        )
+        test_answer = response.answer
+        test_source = response.source
+    finally:
+        db.rollback()
+        db.query(OperationsAlert).filter(OperationsAlert.session_id == test_session_id).delete(synchronize_session=False)
+        db.query(CancelRequest).filter(CancelRequest.session_id == test_session_id).delete(synchronize_session=False)
+        db.query(ChatLog).filter(ChatLog.session_id == test_session_id).delete(synchronize_session=False)
+        db.query(ChatMessage).filter(ChatMessage.session_id == test_session_id).delete(synchronize_session=False)
+        db.query(ChatSession).filter(ChatSession.id == test_session_id).delete(synchronize_session=False)
+        db.commit()
+
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    alert.test_question = maybe_encrypt(question)
+    alert.test_answer = maybe_encrypt(test_answer)
+    alert.test_source = test_source
+    alert.test_passed = False
+    alert.tested_by = current_user
+    alert.tested_at = datetime.now()
+    if alert.status == "open":
+        previous_status = alert.status
+        alert.status = "checking"
+        alert.assigned_to = current_user
+        _add_operations_alert_history(db, alert, "checking_started", current_user, previous_status)
+    _add_operations_alert_history(db, alert, "answer_tested", current_user)
+    db.commit()
+    return {
+        "question": question,
+        "answer": test_answer,
+        "source": test_source,
+        "tested_by": current_user,
+        "tested_at": alert.tested_at,
+    }
+
+
 @router.patch("/operations/alerts/{alert_id}")
 def update_operations_alert(
     alert_id: int,
@@ -1788,11 +2133,49 @@ def update_operations_alert(
     if not alert:
         raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
 
+    previous_status = alert.status
+    if body.test_question is not None:
+        next_question = body.test_question.strip()
+        current_question = decrypt_if_needed(alert.test_question) or ""
+        if next_question != current_question:
+            alert.test_answer = None
+            alert.test_source = None
+            alert.test_passed = False
+            alert.tested_by = None
+            alert.tested_at = None
+        alert.test_question = maybe_encrypt(next_question) if next_question else None
+
+    for field_name in ("note",):
+        value = getattr(body, field_name)
+        if value is not None:
+            stripped = value.strip()
+            setattr(alert, field_name, maybe_encrypt(stripped) if stripped else None)
+    if body.test_passed is not None:
+        if body.test_passed and not alert.test_answer:
+            raise HTTPException(status_code=400, detail="먼저 수정 후 답변 테스트를 실행해 주세요.")
+        alert.test_passed = body.test_passed
+
+    if body.status == "resolved":
+        if not alert.tested_at or not alert.test_answer:
+            raise HTTPException(status_code=400, detail="완료 전에 같은 질문으로 수정 후 답변 테스트를 실행해 주세요.")
+        latest_test = db.query(OperationsAlertHistory).filter(
+            OperationsAlertHistory.alert_id == alert.id,
+            OperationsAlertHistory.action == "answer_tested",
+        ).order_by(OperationsAlertHistory.id.desc()).first()
+        latest_work = db.query(OperationsAlertHistory).filter(
+            OperationsAlertHistory.alert_id == alert.id,
+            OperationsAlertHistory.action.in_(("checking_started", "work_updated")),
+        ).order_by(OperationsAlertHistory.id.desc()).first()
+        if not latest_test or (latest_work and latest_test.id <= latest_work.id):
+            raise HTTPException(status_code=400, detail="마지막 작업 내용 저장 이후의 답변 테스트가 필요합니다.")
+        if not alert.test_passed:
+            raise HTTPException(status_code=400, detail="테스트 답변이 원하는 결과인지 확인해 주세요.")
+
     alert.status = body.status
     alert.assigned_to = current_user if body.status in {"checking", "resolved"} else None
     alert.resolved_at = datetime.now() if body.status == "resolved" else None
-    if body.note is not None:
-        alert.note = maybe_encrypt(body.note.strip()) if body.note.strip() else None
+    action = "resolved" if body.status == "resolved" else "checking_started" if previous_status != "checking" and body.status == "checking" else "work_updated"
+    _add_operations_alert_history(db, alert, action, current_user, previous_status)
     db.commit()
     db.refresh(alert)
     create_audit_log(
@@ -1800,17 +2183,10 @@ def update_operations_alert(
         "operations_alert_updated",
         "operations_alert",
         str(alert.id),
-        f"status={body.status}",
+        f"status={body.status}, action={action}",
         actor=current_user,
     )
-    return {
-        "id": alert.id,
-        "status": alert.status,
-        "assigned_to": alert.assigned_to,
-        "note": decrypt_if_needed(alert.note),
-        "resolved_at": alert.resolved_at,
-        "updated_at": alert.updated_at,
-    }
+    return _serialize_operations_alert(alert)
 
 
 # ── 커스텀 데이터 관리 ──────────────────────────────────────────

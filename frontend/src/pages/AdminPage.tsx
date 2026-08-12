@@ -429,16 +429,6 @@ export default function AdminPage() {
     void loadAnalytics(analyticsYear, selectedMonth);
   };
 
-  const handleUpdateOperationsAlert = async (alertId: number, status: 'open' | 'checking' | 'resolved') => {
-    try {
-      await adminApi.updateOperationsAlert(alertId, status);
-      await loadOperations();
-      setNotice(status === 'checking' ? '긴급 항목을 확인 중으로 변경했습니다.' : status === 'resolved' ? '긴급 항목을 처리 완료했습니다.' : '긴급 항목을 다시 열었습니다.');
-    } catch {
-      setNotice('긴급 항목 상태를 변경하지 못했습니다.');
-    }
-  };
-
   const loadModelSettings = async () => {
     setModelLoadError('');
     try {
@@ -1195,8 +1185,8 @@ export default function AdminPage() {
               systemHealth={systemHealth}
               healthLoading={healthLoading}
               onRefreshHealth={loadSystemHealth}
-              onOpenSession={(sessionId) => navigate(`/admin/sessions/${sessionId}`)}
-              onUpdateAlert={handleUpdateOperationsAlert}
+              onRefreshOperations={loadOperations}
+              onOpenPrompts={() => setActiveTab('prompts')}
             />
           </div>
         )}

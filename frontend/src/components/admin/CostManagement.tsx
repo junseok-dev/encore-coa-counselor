@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Download, FileSpreadsheet, RefreshCw, Upload, WalletCards } from 'lucide-react';
+import { CalendarDays, Download, ExternalLink, FileSpreadsheet, Info, RefreshCw, Upload, WalletCards } from 'lucide-react';
 import { adminApi } from '../../services/api';
 import { CostManagementData } from '../../types';
 
@@ -197,6 +197,11 @@ export default function CostManagement() {
       <div className="overflow-hidden rounded-2xl bg-[linear-gradient(120deg,#0f172a,#1d4ed8)] px-6 py-5 text-white shadow-lg">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex items-center gap-4"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15"><WalletCards className="h-6 w-6 text-blue-200" /></span><div><p className="text-sm font-semibold text-blue-100">n·Xavis 실제 원화 기준</p><h1 className="mt-1 text-2xl font-black">비용 관리</h1><p className="mt-1 text-xs text-blue-100">청구 자료를 전체 또는 월별로 확인합니다.</p></div></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-xl bg-white/10 px-3 py-2 text-xs font-bold ring-1 ring-white/20">{TARGET_ACCOUNT_ID} · {TARGET_ACCOUNT_NAME}</span><button onClick={() => setBillingMonth('all')} className={`rounded-xl px-3 py-2 text-xs font-bold ring-1 ${isAllPeriod ? 'bg-white text-blue-700 ring-white' : 'bg-white/10 text-white ring-white/20'}`}>전체</button><label className={`rounded-xl px-3 py-2 text-xs font-bold ring-1 ${isAllPeriod ? 'bg-white/10 ring-white/20' : 'bg-white text-blue-700 ring-white'}`}>월 <input type="month" value={isAllPeriod ? '' : billingMonth} onChange={(event) => event.target.value && setBillingMonth(event.target.value)} className="ml-2 bg-transparent outline-none" /></label><button onClick={() => void load()} className="rounded-xl bg-white/10 p-2.5 ring-1 ring-white/20"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button></div></div>
       </div>
+
+      <section className="flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3"><span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700"><Info className="h-5 w-5" /></span><div><h2 className="text-sm font-black text-amber-950">자동 연동이 아닌 월별 수동 업로드 방식입니다.</h2><p className="mt-1 text-xs leading-5 text-amber-800">n·Xavis에서 계정 <strong>{TARGET_ACCOUNT_ID}</strong>의 해당 월 일자별 사용 현황을 내려받은 뒤, 아래의 <strong>n·Xavis 월별 원화 자료 반영</strong>에서 직접 업로드해야 합니다. 업로드하지 않은 월은 비용이 자동으로 추가되지 않습니다.</p></div></div>
+        <a href="https://nxavis.com/layout/usageReport/usageDailyReport" target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-amber-700 px-4 py-2.5 text-xs font-black text-white hover:bg-amber-800">n·Xavis 비용 자료 열기<ExternalLink className="h-4 w-4" /></a>
+      </section>
 
       {message && <div className="rounded-xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">{message}</div>}
 

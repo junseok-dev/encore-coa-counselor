@@ -19,7 +19,10 @@ import {
   ModelSettings,
   OperationsDashboardData,
   OperationsAnalyticsData,
+  OperationsAlertDetail,
+  OperationsAlertTestResult,
   OperationsAlertUpdateResult,
+  OperationsAlertWorkflowPayload,
   SystemHealthData,
   PermissionsData,
   ProcessingLog,
@@ -247,6 +250,26 @@ export const adminApi = {
       status,
       note,
     });
+    return response.data;
+  },
+
+  getOperationsAlertDetail: async (alertId: number): Promise<OperationsAlertDetail> => {
+    const response = await adminApiClient.get<OperationsAlertDetail>(`/admin/operations/alerts/${alertId}/detail`);
+    return response.data;
+  },
+
+  testOperationsAlertAnswer: async (alertId: number, question: string): Promise<OperationsAlertTestResult> => {
+    const response = await adminApiClient.post<OperationsAlertTestResult>(`/admin/operations/alerts/${alertId}/test`, {
+      question,
+    });
+    return response.data;
+  },
+
+  updateOperationsAlertWorkflow: async (
+    alertId: number,
+    payload: OperationsAlertWorkflowPayload,
+  ): Promise<OperationsAlertUpdateResult> => {
+    const response = await adminApiClient.patch<OperationsAlertUpdateResult>(`/admin/operations/alerts/${alertId}`, payload);
     return response.data;
   },
 
