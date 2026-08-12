@@ -376,6 +376,7 @@ export interface OperationsAttentionItem {
 export interface OperationsDashboardData {
   period_days: number;
   generated_at: string;
+  last_conversation_at: string | null;
   summary: OperationsMetricSummary;
   previous_summary: OperationsMetricSummary;
   changes: Record<keyof OperationsMetricSummary, number | null>;

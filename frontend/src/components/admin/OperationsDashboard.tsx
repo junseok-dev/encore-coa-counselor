@@ -5,6 +5,7 @@ import {
   Ban,
   CheckCircle2,
   ChevronRight,
+  Clock3,
   Database,
   Headphones,
   MessageCircle,
@@ -66,6 +67,30 @@ function formatDateTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatLastConversation(value: string) {
+  return new Date(value).toLocaleString('ko-KR', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatRelativeTime(value: string) {
+  const diffSeconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+  if (diffSeconds < 60) return '방금 전';
+  const minutes = Math.floor(diffSeconds / 60);
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}일 전`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}개월 전`;
+  return `${Math.floor(months / 12)}년 전`;
 }
 
 function MetricCard({
@@ -278,6 +303,7 @@ export default function OperationsDashboard({ data, loading, systemHealth, healt
     .filter((item) => item.status !== 'resolved' && (item.severity === 'high' || (item.type === 'handoff' && item.status === 'open')))
     .sort((a, b) => Number(b.severity === 'high') - Number(a.severity === 'high'));
   const urgentCount = urgentItems.length;
+  const lastConversationAt = data?.last_conversation_at;
 
   return (
     <div className="space-y-6">
@@ -292,12 +318,21 @@ export default function OperationsDashboard({ data, loading, systemHealth, healt
               <p className="mt-1 text-2xl font-bold">우선 확인 {urgentCount}건 · 전체 신호 {attention.length}건</p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs font-semibold">
-            {(['cancel', 'safety', 'handoff', 'error'] as OperationsSignalType[]).map((type) => (
-              <span key={type} className="rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-white/15">
-                {SIGNAL_CONFIG[type].label} {attention.filter((item) => item.type === type).length}
-              </span>
-            ))}
+          <div className="flex flex-col gap-3 lg:items-end">
+            <div className="flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2 ring-1 ring-white/15">
+              <Clock3 className="h-4 w-4 shrink-0 text-cyan-200" />
+              <div>
+                <p className="text-[10px] font-semibold text-cyan-100">최근 대화</p>
+                {lastConversationAt ? <p className="mt-0.5 text-xs font-bold text-white">{formatLastConversation(lastConversationAt)} <span className="ml-1 text-cyan-200">· {formatRelativeTime(lastConversationAt)}</span></p> : <p className="mt-0.5 text-xs font-bold text-white">아직 저장된 대화가 없습니다.</p>}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs font-semibold">
+              {(['cancel', 'safety', 'handoff', 'error'] as OperationsSignalType[]).map((type) => (
+                <span key={type} className="rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-white/15">
+                  {SIGNAL_CONFIG[type].label} {attention.filter((item) => item.type === type).length}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </div>

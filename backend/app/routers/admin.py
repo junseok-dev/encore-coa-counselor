@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_all_sessions, get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
 from app.models.session import MessageDetail, SessionDetail, SessionSummary
 from app.services.admin_service import (
     approve_document,
@@ -197,13 +197,8 @@ def _verify_vault_password(password: str, encoded: str) -> bool:
 
 
 def _validate_vault_password(password: str) -> None:
-    categories = sum((
-        any(char.isalpha() for char in password),
-        any(char.isdigit() for char in password),
-        any(not char.isalnum() for char in password),
-    ))
-    if len(password) < 12 or categories < 2:
-        raise HTTPException(status_code=400, detail="보관 비밀번호는 12자 이상이며 문자·숫자·특수문자 중 2종 이상을 포함해야 합니다.")
+    if len(password) < 4:
+        raise HTTPException(status_code=400, detail="보관 비밀번호는 4자 이상이어야 합니다.")
 
 
 def _vault_password_setting(db: Session) -> AppSetting | None:
@@ -1406,9 +1401,11 @@ def get_operations_dashboard(
         key=lambda row: row.updated_at or row.created_at or datetime.min,
         reverse=True,
     )[:10]
+    last_conversation_at = db.query(func.max(ChatMessage.created_at)).scalar()
     return {
         "period_days": days,
         "generated_at": datetime.now(),
+        "last_conversation_at": last_conversation_at,
         "summary": summary,
         "previous_summary": previous_summary,
         "changes": changes,
