@@ -34,6 +34,7 @@ class AdminSecretRecord(Base):
     label = Column(String(120), nullable=False)
     login_url = Column(Text, nullable=True)
     account_identifier = Column(String(120), nullable=True)
+    instance_identifier = Column(String(120), nullable=True)
     username_encrypted = Column(Text, nullable=True)
     password_encrypted = Column(Text, nullable=True)
     note_encrypted = Column(Text, nullable=True)

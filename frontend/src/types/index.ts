@@ -28,6 +28,7 @@ export interface SecurityVaultCredential {
   label: string;
   login_url: string | null;
   account_identifier: string | null;
+  instance_identifier: string | null;
   username: string;
   password: string;
   note: string;

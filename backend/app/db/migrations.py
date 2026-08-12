@@ -22,7 +22,10 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
         }
         return mapping.get(column_name)
     if table_name == "admin_secret_records":
-        return {"account_identifier": "VARCHAR(120)"}.get(column_name)
+        return {
+            "account_identifier": "VARCHAR(120)",
+            "instance_identifier": "VARCHAR(120)",
+        }.get(column_name)
     return None
 
 
@@ -84,9 +87,13 @@ def migrate_database(engine: Engine) -> None:
 
     if "admin_secret_records" in inspector.get_table_names():
         existing = {column["name"] for column in inspector.get_columns("admin_secret_records")}
-        if "account_identifier" not in existing:
+        for column_name in ("account_identifier", "instance_identifier"):
+            if column_name in existing:
+                continue
             with engine.begin() as connection:
-                connection.execute(text("ALTER TABLE admin_secret_records ADD COLUMN account_identifier VARCHAR(120)"))
+                connection.execute(text(
+                    f"ALTER TABLE admin_secret_records ADD COLUMN {column_name} VARCHAR(120)"
+                ))
 
     _ensure_text_columns(engine)
     _drop_legacy_tables(engine)

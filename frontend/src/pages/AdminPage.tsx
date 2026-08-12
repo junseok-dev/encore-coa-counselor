@@ -293,6 +293,14 @@ export default function AdminPage() {
   const [permSaving, setPermSaving] = useState(false);
   const [newSuperadminEmail, setNewSuperadminEmail] = useState('');
   const [superadminSaving, setSuperadminSaving] = useState(false);
+  const isSuperadmin = permissionsData?.superadmin === permissionsData?.current_user;
+  const visibleNavGroups = useMemo(
+    () => NAV_GROUPS.map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.key !== 'security' || isSuperadmin),
+    })),
+    [isSuperadmin],
+  );
 
   // 암호화 설정
   const [encryptionSettings, setEncryptionSettings] = useState<EncryptionSettings | null>(null);
@@ -447,8 +455,18 @@ export default function AdminPage() {
       void loadSystemHealth();
       void loadDataTables();
       void loadDbTables();
+      void loadPermissions();
+    } else {
+      setPermissionsData(null);
+      setActiveTab('dashboard');
     }
   }, [authenticated]);
+
+  useEffect(() => {
+    if (permissionsData && !isSuperadmin && activeTab === 'security') {
+      setActiveTab('dashboard');
+    }
+  }, [activeTab, isSuperadmin, permissionsData]);
 
   useEffect(() => {
     if (activeTab === 'data' && dataTables.length > 0 && !selectedTable) {
@@ -1090,7 +1108,7 @@ export default function AdminPage() {
         </div>
 
         <nav className="flex-1 space-y-7 overflow-y-auto px-4 py-6">
-          {NAV_GROUPS.map((group) => (
+          {visibleNavGroups.map((group) => (
             <div key={group.label}>
               <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">{group.label}</p>
               <div className="space-y-1">
@@ -1156,7 +1174,7 @@ export default function AdminPage() {
 
         <div className="mx-auto max-w-[1680px] px-4 pb-10 pt-4 sm:px-6 xl:px-8">
           <div className="mb-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">
-            {NAV_GROUPS.flatMap((group) => group.items).map(({ key, label, icon: Icon }) => (
+            {visibleNavGroups.flatMap((group) => group.items).map(({ key, label, icon: Icon }) => (
               <button key={key} onClick={() => setActiveTab(key)} className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold ${activeTab === key ? 'bg-slate-950 text-white' : 'border border-slate-200 bg-white text-slate-600'}`}>
                 <Icon className="h-4 w-4" /> {label}
               </button>
@@ -2333,7 +2351,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {activeTab === 'security' && <div className="mt-6"><SecurityVault /></div>}
+        {activeTab === 'security' && isSuperadmin && <div className="mt-6"><SecurityVault /></div>}
       </div>
 
       {/* DB 브라우저 행 편집 모달 */}

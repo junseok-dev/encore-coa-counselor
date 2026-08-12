@@ -89,6 +89,12 @@ def verify_admin(authorization: str = Header(None)) -> str:
         raise HTTPException(status_code=401, detail="인증에 실패했습니다.")
 
 
+def verify_superadmin(current_user: str = Depends(verify_admin)) -> str:
+    if current_user != get_settings().admin_email:
+        raise HTTPException(status_code=403, detail="최상위 관리자만 보안 정보에 접근할 수 있습니다.")
+    return current_user
+
+
 class PasswordChangeRequest(BaseModel):
     new_password: str
 
@@ -133,23 +139,26 @@ class VaultSecretPayload(BaseModel):
     label: str
     login_url: str | None = None
     account_identifier: str | None = None
+    instance_identifier: str | None = None
     username: str | None = None
     password: str | None = None
     note: str | None = None
 
 
 VAULT_PASSWORD_SETTING_KEY = "admin_security_vault_password_hash"
-VAULT_TOKEN_MINUTES = 10
+VAULT_TOKEN_MINUTES = 30
 VAULT_DEFAULTS = {
     "nxavis": {
         "label": "n·Xavis 비용 확인",
         "login_url": "https://nxavis.com/layout/usageReport/usageDailyReport",
         "account_identifier": None,
+        "instance_identifier": None,
     },
     "aws_console": {
         "label": "AWS 콘솔",
         "login_url": "https://console.aws.amazon.com/",
         "account_identifier": NXAVIS_ACCOUNT_ID,
+        "instance_identifier": "i-0123456789abcdef0",
     },
 }
 VAULT_ENV_FIELDS = (
@@ -237,6 +246,8 @@ def _ensure_vault_defaults(db: Session) -> list[AdminSecretRecord]:
         if row is None:
             row = AdminSecretRecord(secret_key=secret_key, **defaults)
             db.add(row)
+        elif secret_key == "aws_console" and not row.instance_identifier:
+            row.instance_identifier = defaults["instance_identifier"]
         records.append(row)
     db.flush()
     return records
@@ -248,6 +259,7 @@ def _serialize_vault_secret(row: AdminSecretRecord) -> dict:
         "label": row.label,
         "login_url": row.login_url,
         "account_identifier": row.account_identifier,
+        "instance_identifier": row.instance_identifier,
         "username": decrypt_if_needed(row.username_encrypted) or "",
         "password": decrypt_if_needed(row.password_encrypted) or "",
         "note": decrypt_if_needed(row.note_encrypted) or "",
@@ -2433,7 +2445,7 @@ def change_model(body: ModelChangeRequest, db: Session = Depends(get_db), _: Non
 @router.get("/security-vault/status")
 def get_security_vault_status(
     db: Session = Depends(get_db),
-    current_user: str = Depends(verify_admin),
+    current_user: str = Depends(verify_superadmin),
 ):
     configured = _vault_password_setting(db) is not None
     return {
@@ -2448,10 +2460,8 @@ def get_security_vault_status(
 def setup_security_vault(
     body: VaultPasswordRequest,
     db: Session = Depends(get_db),
-    current_user: str = Depends(verify_admin),
+    current_user: str = Depends(verify_superadmin),
 ):
-    if current_user != get_settings().admin_email:
-        raise HTTPException(status_code=403, detail="최상위 관리자만 보안 정보 보관 비밀번호를 최초 설정할 수 있습니다.")
     if _vault_password_setting(db) is not None:
         raise HTTPException(status_code=409, detail="보안 정보 보관 비밀번호가 이미 설정되어 있습니다.")
     _validate_vault_password(body.password)
@@ -2470,7 +2480,7 @@ def setup_security_vault(
 def unlock_security_vault(
     body: VaultPasswordRequest,
     db: Session = Depends(get_db),
-    current_user: str = Depends(verify_admin),
+    current_user: str = Depends(verify_superadmin),
 ):
     setting = _vault_password_setting(db)
     if setting is None:
@@ -2486,11 +2496,26 @@ def unlock_security_vault(
     }
 
 
+@router.post("/security-vault/extend")
+def extend_security_vault(
+    x_vault_token: str | None = Header(None, alias="X-Vault-Token"),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_superadmin),
+):
+    _require_vault_token(current_user, x_vault_token)
+    create_audit_log(db, "security_vault_extended", "security_vault", "extend", actor=current_user)
+    return {
+        "message": "보안 정보 자동 잠금 시간을 연장했습니다.",
+        "vault_token": _create_vault_token(current_user),
+        "expires_in_seconds": VAULT_TOKEN_MINUTES * 60,
+    }
+
+
 @router.get("/security-vault/data")
 def get_security_vault_data(
     x_vault_token: str | None = Header(None, alias="X-Vault-Token"),
     db: Session = Depends(get_db),
-    current_user: str = Depends(verify_admin),
+    current_user: str = Depends(verify_superadmin),
 ):
     _require_vault_token(current_user, x_vault_token)
     records = _ensure_vault_defaults(db)
@@ -2516,7 +2541,7 @@ def save_security_vault_item(
     body: VaultSecretPayload,
     x_vault_token: str | None = Header(None, alias="X-Vault-Token"),
     db: Session = Depends(get_db),
-    current_user: str = Depends(verify_admin),
+    current_user: str = Depends(verify_superadmin),
 ):
     _require_vault_token(current_user, x_vault_token)
     if secret_key not in VAULT_DEFAULTS:
@@ -2535,6 +2560,10 @@ def save_security_vault_item(
     row.label = label
     row.login_url = login_url or None
     row.account_identifier = (body.account_identifier or "").strip() or None
+    instance_identifier = (body.instance_identifier or "").strip()
+    if instance_identifier and not re.fullmatch(r"i-[0-9a-fA-F]{8,17}", instance_identifier):
+        raise HTTPException(status_code=400, detail="EC2 인스턴스 ID는 i-로 시작하는 올바른 형식이어야 합니다.")
+    row.instance_identifier = instance_identifier or None
     if body.username is not None:
         row.username_encrypted = maybe_encrypt(body.username.strip()) or None
     if body.password is not None:
