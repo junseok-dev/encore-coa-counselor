@@ -150,6 +150,13 @@ export const adminApi = {
     return response.data;
   },
 
+  resetSecurityVaultPassword: async (vaultToken: string, password: string): Promise<{ message: string; vault_token: string; expires_in_seconds: number }> => {
+    const response = await adminApiClient.put('/admin/security-vault/password', { password }, {
+      headers: { 'X-Vault-Token': vaultToken },
+    });
+    return response.data;
+  },
+
   getSecurityVaultData: async (vaultToken: string): Promise<SecurityVaultData> => {
     const response = await adminApiClient.get<SecurityVaultData>('/admin/security-vault/data', {
       headers: { 'X-Vault-Token': vaultToken },

@@ -19,6 +19,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          AWS_EC2_INSTANCE_ID: i-05ee2bf2ce7f4d0ed
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
           LANGSMITH_PROJECT: ${{ secrets.LANGSMITH_PROJECT }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -39,6 +40,7 @@ jobs:
           AWS_REGION=ap-northeast-2
           AWS_S3_BUCKET=$AWS_S3_BUCKET
           AWS_S3_PREFIX=document-chatbot
+          AWS_EC2_INSTANCE_ID=$AWS_EC2_INSTANCE_ID
           LANGSMITH_API_KEY=$LANGSMITH_API_KEY
           LANGSMITH_PROJECT=$LANGSMITH_PROJECT
           LANGSMITH_TRACING=true

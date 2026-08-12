@@ -7,6 +7,10 @@ function errorDetail(error: unknown, fallback: string) {
   return (error as { response?: { data?: { detail?: string } } }).response?.data?.detail || fallback;
 }
 
+function isStrongVaultPassword(value: string) {
+  return value.length >= 8 && /[^A-Za-z0-9가-힣\s]/.test(value);
+}
+
 export default function SecurityVault() {
   const [status, setStatus] = useState<SecurityVaultStatus | null>(null);
   const [data, setData] = useState<SecurityVaultData | null>(null);
@@ -19,6 +23,10 @@ export default function SecurityVault() {
   const [savingKey, setSavingKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [extending, setExtending] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
+  const [resetting, setResetting] = useState(false);
   const [notice, setNotice] = useState('');
 
   const loadStatus = async () => {
@@ -50,6 +58,9 @@ export default function SecurityVault() {
     setSecondsLeft(0);
     setPassword('');
     setConfirmPassword('');
+    setResetOpen(false);
+    setNewPassword('');
+    setNewPasswordConfirm('');
     setRevealed(new Set());
     setNotice(message);
   };
@@ -111,6 +122,34 @@ export default function SecurityVault() {
     }
   };
 
+  const resetVaultPassword = async () => {
+    if (!vaultToken) return;
+    if (!isStrongVaultPassword(newPassword)) {
+      setNotice('새 비밀번호는 8자 이상이며 특수문자를 1개 이상 포함해야 합니다.');
+      return;
+    }
+    if (newPassword !== newPasswordConfirm) {
+      setNotice('새 비밀번호 확인이 일치하지 않습니다.');
+      return;
+    }
+    setResetting(true);
+    try {
+      const result = await adminApi.resetSecurityVaultPassword(vaultToken, newPassword);
+      setVaultToken(result.vault_token);
+      setExpiresAt(Date.now() + result.expires_in_seconds * 1000);
+      setNewPassword('');
+      setNewPasswordConfirm('');
+      setResetOpen(false);
+      setNotice('보안 정보 보관 비밀번호를 재설정했습니다. 기존 비밀번호는 더 이상 사용할 수 없습니다.');
+    } catch (error) {
+      const statusCode = (error as { response?: { status?: number } }).response?.status;
+      if (statusCode === 403) lockVault('보안 정보 열람 시간이 만료되었습니다. 다시 잠금 해제해 주세요.');
+      else setNotice(errorDetail(error, '보안 정보 보관 비밀번호를 재설정하지 못했습니다.'));
+    } finally {
+      setResetting(false);
+    }
+  };
+
   const updateCredential = (key: string, field: keyof SecurityVaultCredential, value: string) => {
     setData((current) => current ? {
       ...current,
@@ -167,16 +206,18 @@ export default function SecurityVault() {
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-950 text-white"><Lock className="h-6 w-6" /></div>
         <div className="mt-5 text-center"><h2 className="text-xl font-black text-slate-950">{needsSetup ? '보안 정보 보관 비밀번호 설정' : '보안 정보 잠금 해제'}</h2><p className="mt-2 text-sm leading-6 text-slate-500">관리자 로그인과 별도로 접속 계정·비밀번호·허용된 환경설정을 보호합니다.</p></div>
         {notice && <div className="mt-5 rounded-xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">{notice}</div>}
-        {needsSetup && !status.can_setup ? <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">최상위 관리자만 최초 보관 비밀번호를 설정할 수 있습니다.</div> : <div className="mt-6 space-y-4"><label className="block text-sm font-bold text-slate-700">보관 비밀번호<input autoComplete="new-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !needsSetup) void unlock(); }} placeholder="4자 이상" className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500" /></label>{needsSetup && <label className="block text-sm font-bold text-slate-700">비밀번호 확인<input autoComplete="new-password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500" /></label>}<button onClick={() => void (needsSetup ? setup() : unlock())} disabled={loading || password.length < (needsSetup ? 4 : 1) || (needsSetup && !confirmPassword)} className="w-full rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40">{loading ? '확인 중...' : needsSetup ? '보관 비밀번호 설정' : '잠금 해제'}</button>{needsSetup && <p className="text-xs leading-5 text-slate-400">테스트 환경에서는 숫자만 포함된 비밀번호도 사용할 수 있습니다. 4자 이상 입력해 주세요.</p>}</div>}
+        {needsSetup && !status.can_setup ? <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">최상위 관리자만 최초 보관 비밀번호를 설정할 수 있습니다.</div> : <div className="mt-6 space-y-4"><label className="block text-sm font-bold text-slate-700">보관 비밀번호<input autoComplete={needsSetup ? 'new-password' : 'current-password'} type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !needsSetup) void unlock(); }} placeholder={needsSetup ? '8자 이상, 특수문자 포함' : '현재 보관 비밀번호'} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500" /></label>{needsSetup && <label className="block text-sm font-bold text-slate-700">비밀번호 확인<input autoComplete="new-password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500" /></label>}<button onClick={() => void (needsSetup ? setup() : unlock())} disabled={loading || !password || (needsSetup && (!isStrongVaultPassword(password) || !confirmPassword))} className="w-full rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40">{loading ? '확인 중...' : needsSetup ? '보관 비밀번호 설정' : '잠금 해제'}</button>{needsSetup && <p className="text-xs leading-5 text-slate-400">8자 이상이며 특수문자를 1개 이상 포함해 주세요.</p>}</div>}
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <section className="flex flex-col gap-4 rounded-3xl bg-[linear-gradient(120deg,#0f172a,#1e3a8a)] p-6 text-white shadow-lg sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-4"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10"><ShieldCheck className="h-6 w-6 text-blue-200" /></span><div><h2 className="text-xl font-black">운영 보안 정보</h2><p className="mt-1 text-xs text-blue-100">잠금 해제 후 30분 동안 열람할 수 있으며 필요할 때 시간을 연장할 수 있습니다.</p></div></div><div className="flex flex-wrap items-center gap-3"><span className="rounded-xl bg-white/10 px-3 py-2 font-mono text-xs ring-1 ring-white/20">자동 잠금 {expiryLabel}</span><button onClick={() => void extendVault()} disabled={extending} className="inline-flex items-center gap-2 rounded-xl bg-blue-400/20 px-4 py-2 text-xs font-black text-white ring-1 ring-white/30 disabled:opacity-50"><Clock3 className="h-4 w-4" />{extending ? '연장 중...' : '30분 연장'}</button><button onClick={() => lockVault()} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-black text-slate-900"><Lock className="h-4 w-4" />잠그기</button></div></section>
+      <section className="flex flex-col gap-4 rounded-3xl bg-[linear-gradient(120deg,#0f172a,#1e3a8a)] p-6 text-white shadow-lg sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-4"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10"><ShieldCheck className="h-6 w-6 text-blue-200" /></span><div><h2 className="text-xl font-black">운영 보안 정보</h2><p className="mt-1 text-xs text-blue-100">잠금 해제 후 30분 동안 열람할 수 있으며 필요할 때 시간을 연장할 수 있습니다.</p></div></div><div className="flex flex-wrap items-center gap-3"><span className="rounded-xl bg-white/10 px-3 py-2 font-mono text-xs ring-1 ring-white/20">자동 잠금 {expiryLabel}</span><button onClick={() => setResetOpen((current) => !current)} className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-xs font-black text-white ring-1 ring-white/30"><KeyRound className="h-4 w-4" />비밀번호 재설정</button><button onClick={() => void extendVault()} disabled={extending} className="inline-flex items-center gap-2 rounded-xl bg-blue-400/20 px-4 py-2 text-xs font-black text-white ring-1 ring-white/30 disabled:opacity-50"><Clock3 className="h-4 w-4" />{extending ? '연장 중...' : '30분 연장'}</button><button onClick={() => lockVault()} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-black text-slate-900"><Lock className="h-4 w-4" />잠그기</button></div></section>
 
       {notice && <div className="rounded-xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">{notice}</div>}
+
+      {resetOpen && <section className="rounded-3xl border border-amber-200 bg-amber-50 p-6 shadow-sm"><div className="flex flex-col gap-5 lg:flex-row lg:items-end"><div className="flex-1"><h3 className="font-black text-slate-950">보관 비밀번호 재설정</h3><p className="mt-1 text-xs leading-5 text-slate-600">새 비밀번호로 변경하면 기존 비밀번호와 기존에 발급된 보안 정보 인증은 즉시 사용할 수 없습니다.</p><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-xs font-bold text-slate-700">새 비밀번호<input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="8자 이상, 특수문자 포함" className="mt-2 w-full rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-amber-500" /></label><label className="text-xs font-bold text-slate-700">새 비밀번호 확인<input type="password" autoComplete="new-password" value={newPasswordConfirm} onChange={(event) => setNewPasswordConfirm(event.target.value)} className="mt-2 w-full rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-amber-500" /></label></div></div><div className="flex gap-2"><button onClick={() => { setResetOpen(false); setNewPassword(''); setNewPasswordConfirm(''); }} className="rounded-xl border border-amber-300 bg-white px-4 py-3 text-sm font-bold text-slate-700">취소</button><button onClick={() => void resetVaultPassword()} disabled={resetting || !isStrongVaultPassword(newPassword) || newPassword !== newPasswordConfirm} className="rounded-xl bg-amber-600 px-5 py-3 text-sm font-black text-white disabled:opacity-40">{resetting ? '변경 중...' : '비밀번호 변경'}</button></div></div></section>}
 
       <div className="grid gap-5 xl:grid-cols-2">
         {data.credentials.map((item) => {

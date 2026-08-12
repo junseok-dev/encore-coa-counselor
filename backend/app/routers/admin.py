@@ -158,7 +158,7 @@ VAULT_DEFAULTS = {
         "label": "AWS 콘솔",
         "login_url": "https://console.aws.amazon.com/",
         "account_identifier": NXAVIS_ACCOUNT_ID,
-        "instance_identifier": "i-0123456789abcdef0",
+        "instance_identifier": "i-05ee2bf2ce7f4d0ed",
     },
 }
 VAULT_ENV_FIELDS = (
@@ -206,19 +206,29 @@ def _verify_vault_password(password: str, encoded: str) -> bool:
 
 
 def _validate_vault_password(password: str) -> None:
-    if len(password) < 4:
-        raise HTTPException(status_code=400, detail="보관 비밀번호는 4자 이상이어야 합니다.")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="보관 비밀번호는 8자 이상이어야 합니다.")
+    if not any(not character.isalnum() and not character.isspace() for character in password):
+        raise HTTPException(status_code=400, detail="보관 비밀번호에는 특수문자를 1개 이상 포함해야 합니다.")
 
 
 def _vault_password_setting(db: Session) -> AppSetting | None:
     return db.query(AppSetting).filter(AppSetting.key == VAULT_PASSWORD_SETTING_KEY).first()
 
 
-def _create_vault_token(current_user: str) -> str:
+def _vault_token_version(db: Session) -> str:
+    setting = _vault_password_setting(db)
+    if setting is None or not setting.value:
+        return ""
+    return hashlib.sha256(setting.value.encode("utf-8")).hexdigest()[:24]
+
+
+def _create_vault_token(current_user: str, db: Session) -> str:
     return jwt.encode(
         {
             "sub": current_user,
             "scope": "admin_security_vault",
+            "vault_version": _vault_token_version(db),
             "exp": datetime.now(tz=ZoneInfo("UTC")) + timedelta(minutes=VAULT_TOKEN_MINUTES),
         },
         get_settings().jwt_secret,
@@ -226,7 +236,7 @@ def _create_vault_token(current_user: str) -> str:
     )
 
 
-def _require_vault_token(current_user: str, token: str | None) -> None:
+def _require_vault_token(current_user: str, token: str | None, db: Session) -> None:
     if not token:
         raise HTTPException(status_code=403, detail="보안 정보 잠금을 다시 해제해 주세요.")
     try:
@@ -235,7 +245,11 @@ def _require_vault_token(current_user: str, token: str | None) -> None:
         raise HTTPException(status_code=403, detail="보안 정보 열람 시간이 만료되었습니다. 다시 잠금 해제해 주세요.")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=403, detail="유효하지 않은 보안 정보 인증입니다.")
-    if payload.get("scope") != "admin_security_vault" or payload.get("sub") != current_user:
+    if (
+        payload.get("scope") != "admin_security_vault"
+        or payload.get("sub") != current_user
+        or payload.get("vault_version") != _vault_token_version(db)
+    ):
         raise HTTPException(status_code=403, detail="보안 정보 접근 권한이 없습니다.")
 
 
@@ -246,7 +260,9 @@ def _ensure_vault_defaults(db: Session) -> list[AdminSecretRecord]:
         if row is None:
             row = AdminSecretRecord(secret_key=secret_key, **defaults)
             db.add(row)
-        elif secret_key == "aws_console" and not row.instance_identifier:
+        elif secret_key == "aws_console" and (
+            not row.instance_identifier or row.instance_identifier == "i-0123456789abcdef0"
+        ):
             row.instance_identifier = defaults["instance_identifier"]
         records.append(row)
     db.flush()
@@ -2471,7 +2487,7 @@ def setup_security_vault(
     create_audit_log(db, "security_vault_configured", "security_vault", "setup", actor=current_user)
     return {
         "message": "보안 정보 보관 비밀번호를 설정했습니다.",
-        "vault_token": _create_vault_token(current_user),
+        "vault_token": _create_vault_token(current_user, db),
         "expires_in_seconds": VAULT_TOKEN_MINUTES * 60,
     }
 
@@ -2491,7 +2507,7 @@ def unlock_security_vault(
     create_audit_log(db, "security_vault_unlocked", "security_vault", "unlock", actor=current_user)
     return {
         "message": "보안 정보 잠금을 해제했습니다.",
-        "vault_token": _create_vault_token(current_user),
+        "vault_token": _create_vault_token(current_user, db),
         "expires_in_seconds": VAULT_TOKEN_MINUTES * 60,
     }
 
@@ -2502,11 +2518,33 @@ def extend_security_vault(
     db: Session = Depends(get_db),
     current_user: str = Depends(verify_superadmin),
 ):
-    _require_vault_token(current_user, x_vault_token)
+    _require_vault_token(current_user, x_vault_token, db)
     create_audit_log(db, "security_vault_extended", "security_vault", "extend", actor=current_user)
     return {
         "message": "보안 정보 자동 잠금 시간을 연장했습니다.",
-        "vault_token": _create_vault_token(current_user),
+        "vault_token": _create_vault_token(current_user, db),
+        "expires_in_seconds": VAULT_TOKEN_MINUTES * 60,
+    }
+
+
+@router.put("/security-vault/password")
+def reset_security_vault_password(
+    body: VaultPasswordRequest,
+    x_vault_token: str | None = Header(None, alias="X-Vault-Token"),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_superadmin),
+):
+    _require_vault_token(current_user, x_vault_token, db)
+    _validate_vault_password(body.password)
+    setting = _vault_password_setting(db)
+    if setting is None:
+        raise HTTPException(status_code=409, detail="먼저 보안 정보 보관 비밀번호를 설정해 주세요.")
+    setting.value = _hash_vault_password(body.password)
+    db.commit()
+    create_audit_log(db, "security_vault_password_reset", "security_vault", "password", actor=current_user)
+    return {
+        "message": "보안 정보 보관 비밀번호를 재설정했습니다.",
+        "vault_token": _create_vault_token(current_user, db),
         "expires_in_seconds": VAULT_TOKEN_MINUTES * 60,
     }
 
@@ -2517,7 +2555,7 @@ def get_security_vault_data(
     db: Session = Depends(get_db),
     current_user: str = Depends(verify_superadmin),
 ):
-    _require_vault_token(current_user, x_vault_token)
+    _require_vault_token(current_user, x_vault_token, db)
     records = _ensure_vault_defaults(db)
     db.commit()
     create_audit_log(
@@ -2543,7 +2581,7 @@ def save_security_vault_item(
     db: Session = Depends(get_db),
     current_user: str = Depends(verify_superadmin),
 ):
-    _require_vault_token(current_user, x_vault_token)
+    _require_vault_token(current_user, x_vault_token, db)
     if secret_key not in VAULT_DEFAULTS:
         raise HTTPException(status_code=404, detail="지원하지 않는 보안 정보 항목입니다.")
     label = body.label.strip()
