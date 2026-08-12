@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     aws_s3_bucket: str = ""
     aws_s3_prefix: str = "document-chatbot"
     aws_ec2_instance_id: str = ""
-    aws_billing_enabled: bool = False
+    aws_billing_enabled: bool = True
     aws_billing_usd_krw_rate: float = 1430.0
     aws_billing_account_ids: str = ""
     aws_billing_account_name: str = ""
