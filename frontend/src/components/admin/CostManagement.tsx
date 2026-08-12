@@ -75,7 +75,7 @@ function DailyStackedChart({ data }: { data: CostManagementData }) {
   const services = data.service_totals.map((item) => item.service_name);
   return (
     <div className="max-w-full overflow-x-auto pb-1">
-      <div className="grid min-w-[760px] grid-cols-[44px_minmax(570px,1fr)_120px] gap-3">
+      <div className="grid min-w-[640px] grid-cols-[44px_minmax(570px,1fr)] gap-3">
         <div className="flex h-56 flex-col justify-between pb-0 text-right text-[10px] tabular-nums text-slate-500">{ticks.map((tick) => <span key={tick}>{tick.toLocaleString()}</span>)}</div>
         <div className="relative h-64">
           <div className="absolute inset-x-0 top-0 h-56 border-b border-slate-300">
@@ -99,7 +99,6 @@ function DailyStackedChart({ data }: { data: CostManagementData }) {
             })}
           </div>
         </div>
-        <div className="grid content-start gap-2.5 pt-1">{data.service_totals.map((service, index) => <div key={service.service_name} className="flex min-w-0 items-center gap-2 text-[10px] text-slate-600" title={`${service.service_name}: ${krw(service.amount_krw)}`}><span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} /><span className="break-words leading-4">{service.service_name}</span></div>)}</div>
       </div>
     </div>
   );
