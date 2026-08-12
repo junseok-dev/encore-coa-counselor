@@ -4,6 +4,7 @@ import io
 import json
 import re
 from time import perf_counter
+from urllib.parse import quote
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 from datetime import date, datetime, time, timedelta
@@ -21,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_all_sessions, get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminUser, BillingCostRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminUser, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, ProcessingLog, PromptConfig, SystemHealthProbe
 from app.models.session import MessageDetail, SessionDetail, SessionSummary
 from app.services.admin_service import (
     approve_document,
@@ -58,8 +59,8 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "cancel_requests": "취소 요청 내역",
     "operations_alerts": "긴급 운영 알림 — 확인 시작·처리 완료 상태 관리",
     "system_health_probes": "시스템 상태 점검 — 데이터베이스 저장 가능 여부 확인",
-    "billing_cost_records": "월별 실제 원화 청구액 — n·Xavis 청구 내역 기준",
     "billing_daily_cost_records": "계정·서비스·일자별 실제 원화 사용 금액",
+    "billing_cost_upload_records": "월별 n·Xavis 원본 비용 파일 — 마지막 업로드 파일 보관",
     "processing_logs": "문서 처리 로그 — 파싱, 임베딩 등 단계별 처리 결과",
     "prompt_configs": "LLM 프롬프트 설정 — 시스템 프롬프트, 스타일 가이드 등",
     "faqs": "FAQ 데이터 — 질문, 답변, 키워드, 카테고리",
@@ -115,11 +116,6 @@ class PromptPayload(BaseModel):
 
 class OperationsAlertUpdate(BaseModel):
     status: str
-    note: str | None = None
-
-
-class BillingCostPayload(BaseModel):
-    amount_krw: int
     note: str | None = None
 
 
@@ -194,16 +190,20 @@ def _serialize_audit_log(row: AdminAuditLog) -> dict:
     }
 
 
-def _serialize_billing_cost(row: BillingCostRecord) -> dict:
+def _serialize_billing_cost_upload(row: BillingCostUploadRecord | None) -> dict | None:
+    if row is None:
+        return None
     return {
         "id": row.id,
         "billing_month": row.billing_month,
-        "amount_krw": row.amount_krw,
-        "source": row.source,
-        "note": decrypt_if_needed(row.note),
-        "updated_by": row.updated_by,
-        "created_at": row.created_at,
-        "updated_at": row.updated_at,
+        "account_id": row.account_id,
+        "account_name": row.account_name,
+        "filename": row.original_filename,
+        "content_type": row.content_type,
+        "size_bytes": row.size_bytes,
+        "imported_rows": row.imported_rows,
+        "uploaded_by": row.uploaded_by,
+        "uploaded_at": row.updated_at or row.created_at,
     }
 
 
@@ -1246,8 +1246,6 @@ def get_operations_dashboard(
         key=lambda row: row.updated_at or row.created_at or datetime.min,
         reverse=True,
     )[:10]
-    billing_costs = db.query(BillingCostRecord).order_by(BillingCostRecord.billing_month.desc()).limit(12).all()
-
     return {
         "period_days": days,
         "generated_at": datetime.now(),
@@ -1261,7 +1259,6 @@ def get_operations_dashboard(
             **answer_source_summary,
             "total": sum(answer_source_summary.values()),
         },
-        "billing_costs": [_serialize_billing_cost(row) for row in billing_costs],
         "attention": attention,
         "recent_sessions": [
             {
@@ -1276,59 +1273,30 @@ def get_operations_dashboard(
     }
 
 
-@router.put("/operations/costs/{billing_month}")
-def save_billing_cost(
-    billing_month: str,
-    body: BillingCostPayload,
-    db: Session = Depends(get_db),
-    current_user: str = Depends(verify_admin),
-):
-    try:
-        parsed_month = datetime.strptime(billing_month, "%Y-%m")
-        if parsed_month.strftime("%Y-%m") != billing_month:
-            raise ValueError
-    except ValueError:
-        raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.")
-    if body.amount_krw < 0:
-        raise HTTPException(status_code=400, detail="원화 청구액은 0원 이상이어야 합니다.")
-
-    row = db.query(BillingCostRecord).filter(BillingCostRecord.billing_month == billing_month).first()
-    if row is None:
-        row = BillingCostRecord(billing_month=billing_month, amount_krw=body.amount_krw)
-        db.add(row)
-    row.amount_krw = body.amount_krw
-    row.source = "nxavis_manual"
-    row.note = maybe_encrypt(body.note.strip()) if body.note and body.note.strip() else None
-    row.updated_by = current_user
-    db.commit()
-    db.refresh(row)
-    create_audit_log(
-        db,
-        "billing_cost_saved",
-        "billing_cost",
-        billing_month,
-        f"amount_krw={body.amount_krw}",
-        actor=current_user,
-    )
-    return _serialize_billing_cost(row)
-
-
 @router.get("/operations/cost-management")
 def get_cost_management(
-    billing_month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    billing_month: str = Query(...),
     account_id: str = Query("all"),
     db: Session = Depends(get_db),
     _: None = Depends(verify_admin),
 ):
-    try:
-        month_start = datetime.strptime(billing_month, "%Y-%m").date().replace(day=1)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.")
-    month_end = _shift_month(month_start, 1)
-    all_rows = db.query(BillingDailyCostRecord).filter(
-        BillingDailyCostRecord.usage_date >= month_start,
-        BillingDailyCostRecord.usage_date < month_end,
-    ).all()
+    is_all_period = billing_month == "all"
+    month_start: date | None = None
+    month_end: date | None = None
+    if not is_all_period:
+        try:
+            month_start = datetime.strptime(billing_month, "%Y-%m").date().replace(day=1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식 또는 all이어야 합니다.")
+        month_end = _shift_month(month_start, 1)
+
+    rows_query = db.query(BillingDailyCostRecord)
+    if month_start is not None and month_end is not None:
+        rows_query = rows_query.filter(
+            BillingDailyCostRecord.usage_date >= month_start,
+            BillingDailyCostRecord.usage_date < month_end,
+        )
+    all_rows = rows_query.all()
 
     account_map: dict[str, dict] = {}
     for row in all_rows:
@@ -1340,44 +1308,65 @@ def get_cost_management(
     accounts = sorted(account_map.values(), key=lambda item: item["account_name"])
     selected_rows = all_rows if account_id == "all" else [row for row in all_rows if row.account_id == account_id]
 
-    _, last_day = calendar.monthrange(month_start.year, month_start.month)
-    day_keys = [f"{day:02d}" for day in range(1, last_day + 1)]
+    if month_start is not None:
+        _, last_day = calendar.monthrange(month_start.year, month_start.month)
+        day_keys = [f"{day:02d}" for day in range(1, last_day + 1)]
+    else:
+        day_keys = []
     service_map: dict[str, dict] = {}
     daily_map = {
         day: {"date": f"{billing_month}-{day}", "day": int(day), "total_krw": 0, "services": {}}
         for day in day_keys
     }
     for row in selected_rows:
-        day_key = f"{row.usage_date.day:02d}"
         service = service_map.setdefault(
             row.service_name,
             {"service_name": row.service_name, "total_krw": 0, "daily": {day: 0 for day in day_keys}},
         )
         service["total_krw"] += row.amount_krw
-        service["daily"][day_key] += row.amount_krw
-        daily_map[day_key]["total_krw"] += row.amount_krw
-        daily_map[day_key]["services"][row.service_name] = (
-            daily_map[day_key]["services"].get(row.service_name, 0) + row.amount_krw
-        )
+        if not is_all_period:
+            day_key = f"{row.usage_date.day:02d}"
+            service["daily"][day_key] += row.amount_krw
+            daily_map[day_key]["total_krw"] += row.amount_krw
+            daily_map[day_key]["services"][row.service_name] = (
+                daily_map[day_key]["services"].get(row.service_name, 0) + row.amount_krw
+            )
 
     services = sorted(service_map.values(), key=lambda item: item["total_krw"], reverse=True)
-    invoice = db.query(BillingCostRecord).filter(BillingCostRecord.billing_month == billing_month).first()
-    monthly_history = db.query(BillingCostRecord).order_by(BillingCostRecord.billing_month.desc()).limit(12).all()
+    history_query = db.query(BillingDailyCostRecord)
+    if account_id != "all":
+        history_query = history_query.filter(BillingDailyCostRecord.account_id == account_id)
+    monthly_map: dict[str, int] = {}
+    for row in history_query.all():
+        month_key = row.usage_date.strftime("%Y-%m")
+        monthly_map[month_key] = monthly_map.get(month_key, 0) + row.amount_krw
+    monthly_history = [
+        {"billing_month": month, "amount_krw": amount}
+        for month, amount in sorted(monthly_map.items())
+    ]
+
+    uploaded_file = None
+    if not is_all_period:
+        upload_account_id = NXAVIS_ACCOUNT_ID if account_id == "all" else account_id
+        uploaded_file = db.query(BillingCostUploadRecord).filter(
+            BillingCostUploadRecord.billing_month == billing_month,
+            BillingCostUploadRecord.account_id == upload_account_id,
+        ).first()
     usage_total = sum(row.amount_krw for row in selected_rows)
     return {
         "billing_month": billing_month,
+        "is_all_period": is_all_period,
         "selected_account_id": account_id,
         "accounts": accounts,
-        "actual_invoice_krw": invoice.amount_krw if invoice else None,
         "usage_total_krw": usage_total,
-        "difference_krw": (invoice.amount_krw - usage_total) if invoice else None,
         "service_totals": [
             {"service_name": item["service_name"], "amount_krw": item["total_krw"]}
             for item in services
         ],
         "daily_totals": list(daily_map.values()),
         "service_daily_rows": services,
-        "monthly_history": [_serialize_billing_cost(row) for row in monthly_history],
+        "monthly_history": monthly_history,
+        "uploaded_file": _serialize_billing_cost_upload(uploaded_file),
     }
 
 
@@ -1405,6 +1394,40 @@ def download_cost_template(
     )
 
 
+@router.get("/operations/costs/uploaded-file/{billing_month}")
+def download_uploaded_cost_file(
+    billing_month: str,
+    account_id: str = Query(NXAVIS_ACCOUNT_ID),
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
+    try:
+        parsed_month = datetime.strptime(billing_month, "%Y-%m")
+        if parsed_month.strftime("%Y-%m") != billing_month:
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.")
+
+    upload = db.query(BillingCostUploadRecord).filter(
+        BillingCostUploadRecord.billing_month == billing_month,
+        BillingCostUploadRecord.account_id == account_id,
+    ).first()
+    if upload is None:
+        raise HTTPException(status_code=404, detail="해당 월에 업로드된 비용 파일이 없습니다.")
+
+    fallback_filename = re.sub(r"[^A-Za-z0-9._-]", "_", upload.original_filename) or f"costs_{billing_month}"
+    encoded_filename = quote(upload.original_filename)
+    return Response(
+        content=upload.file_data,
+        media_type=upload.content_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{fallback_filename}"; filename*=UTF-8\'\'{encoded_filename}'
+            )
+        },
+    )
+
+
 @router.post("/operations/costs/import")
 async def import_cost_details(
     file: UploadFile = File(...),
@@ -1415,6 +1438,7 @@ async def import_cost_details(
     current_user: str = Depends(verify_admin),
 ):
     filename = file.filename or ""
+    safe_filename = Path(filename).name.replace("\r", "").replace("\n", "")[:255]
     raw = await file.read()
     if filename.lower().endswith(".csv"):
         decoded = raw.decode("utf-8-sig")
@@ -1502,40 +1526,67 @@ async def import_cost_details(
             detail=f"선택한 반영 월({billing_month})과 다른 날짜가 포함되어 있습니다: {preview}",
         )
 
+    if not parsed_rows:
+        raise HTTPException(status_code=400, detail="반영할 비용 항목이 없습니다.")
+
+    aggregated_rows: dict[tuple[date, str], int] = {}
     for usage_date, _, _, service_name, amount_krw in parsed_rows:
-        row_account_id = NXAVIS_ACCOUNT_ID
-        row_account_name = NXAVIS_ACCOUNT_NAME
-        row = db.query(BillingDailyCostRecord).filter(
-            BillingDailyCostRecord.usage_date == usage_date,
-            BillingDailyCostRecord.account_id == row_account_id,
-            BillingDailyCostRecord.service_name == service_name,
-        ).first()
-        if row is None:
-            row = BillingDailyCostRecord(
-                usage_date=usage_date,
-                account_id=row_account_id,
-                service_name=service_name,
-                amount_krw=amount_krw,
-                account_name=row_account_name,
-            )
-            db.add(row)
-        else:
-            row.account_name = row_account_name
-            row.amount_krw = amount_krw
-        row.source = "nxavis_excel"
+        key = (usage_date, service_name)
+        aggregated_rows[key] = aggregated_rows.get(key, 0) + amount_krw
+
+    month_start = datetime.strptime(billing_month, "%Y-%m").date().replace(day=1)
+    month_end = _shift_month(month_start, 1)
+    replaced_rows = db.query(BillingDailyCostRecord).filter(
+        BillingDailyCostRecord.usage_date >= month_start,
+        BillingDailyCostRecord.usage_date < month_end,
+        BillingDailyCostRecord.account_id == NXAVIS_ACCOUNT_ID,
+    ).delete(synchronize_session=False)
+
+    for (usage_date, service_name), amount_krw in aggregated_rows.items():
+        db.add(BillingDailyCostRecord(
+            usage_date=usage_date,
+            account_id=NXAVIS_ACCOUNT_ID,
+            account_name=NXAVIS_ACCOUNT_NAME,
+            service_name=service_name,
+            amount_krw=amount_krw,
+            source="nxavis_excel",
+        ))
+
+    upload = db.query(BillingCostUploadRecord).filter(
+        BillingCostUploadRecord.billing_month == billing_month,
+        BillingCostUploadRecord.account_id == NXAVIS_ACCOUNT_ID,
+    ).first()
+    if upload is None:
+        upload = BillingCostUploadRecord(
+            billing_month=billing_month,
+            account_id=NXAVIS_ACCOUNT_ID,
+        )
+        db.add(upload)
+    upload.account_name = NXAVIS_ACCOUNT_NAME
+    upload.original_filename = safe_filename or f"costs_{billing_month}{Path(filename).suffix.lower()}"
+    upload.content_type = file.content_type or (
+        "text/csv" if filename.lower().endswith(".csv")
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    upload.file_data = raw
+    upload.size_bytes = len(raw)
+    upload.imported_rows = len(aggregated_rows)
+    upload.uploaded_by = current_user
     db.commit()
     create_audit_log(
         db,
         "billing_cost_imported",
         "billing_daily_cost",
         filename,
-        f"rows={len(parsed_rows)}",
+        f"rows={len(aggregated_rows)}, replaced_rows={replaced_rows}",
         actor=current_user,
     )
     return {
         "message": f"{billing_month} 실제 원화 비용 자료를 반영했습니다.",
         "billing_month": billing_month,
-        "imported_rows": len(parsed_rows),
+        "imported_rows": len(aggregated_rows),
+        "replaced_rows": replaced_rows,
+        "filename": upload.original_filename,
     }
 
 

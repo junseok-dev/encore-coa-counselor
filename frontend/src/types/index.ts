@@ -208,17 +208,6 @@ export interface AnswerSourceSummary {
   total: number;
 }
 
-export interface BillingCostRecord {
-  id: number;
-  billing_month: string;
-  amount_krw: number;
-  source: 'nxavis_manual' | string;
-  note: string | null;
-  updated_by: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface OperationsMonthlyMetric {
   month: string;
   visitors: number;
@@ -286,17 +275,35 @@ export interface CostServiceDailyRow {
   daily: Record<string, number>;
 }
 
+export interface CostUploadedFile {
+  id: number;
+  billing_month: string;
+  account_id: string;
+  account_name: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  imported_rows: number;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
+export interface CostMonthlyTotal {
+  billing_month: string;
+  amount_krw: number;
+}
+
 export interface CostManagementData {
   billing_month: string;
+  is_all_period: boolean;
   selected_account_id: string;
   accounts: CostAccountSummary[];
-  actual_invoice_krw: number | null;
   usage_total_krw: number;
-  difference_krw: number | null;
   service_totals: CostServiceTotal[];
   daily_totals: CostDailyTotal[];
   service_daily_rows: CostServiceDailyRow[];
-  monthly_history: BillingCostRecord[];
+  monthly_history: CostMonthlyTotal[];
+  uploaded_file: CostUploadedFile | null;
 }
 
 export type SystemHealthStatus = 'healthy' | 'degraded' | 'critical' | 'unknown' | 'not_configured';
@@ -343,7 +350,6 @@ export interface OperationsDashboardData {
   handoff_categories: HandoffCategoryMetric[];
   question_categories_top5: QuestionCategoryMetric[];
   answer_source_summary: AnswerSourceSummary;
-  billing_costs: BillingCostRecord[];
   attention: OperationsAttentionItem[];
   recent_sessions: AdminSession[];
 }

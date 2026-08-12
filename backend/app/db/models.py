@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Text, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, Text, String, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.db.database import Base
@@ -138,19 +138,6 @@ class SystemHealthProbe(Base):
     checked_at = Column(DateTime(timezone=True), nullable=False)
 
 
-class BillingCostRecord(Base):
-    __tablename__ = "billing_cost_records"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    billing_month = Column(String(7), unique=True, index=True, nullable=False)
-    amount_krw = Column(Integer, nullable=False)
-    source = Column(String(30), default="nxavis_manual", nullable=False)
-    note = Column(Text, nullable=True)
-    updated_by = Column(String(255), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-
 class BillingDailyCostRecord(Base):
     __tablename__ = "billing_daily_cost_records"
     __table_args__ = (
@@ -164,6 +151,26 @@ class BillingDailyCostRecord(Base):
     service_name = Column(String(120), index=True, nullable=False)
     amount_krw = Column(Integer, nullable=False)
     source = Column(String(30), default="nxavis_excel", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BillingCostUploadRecord(Base):
+    __tablename__ = "billing_cost_upload_records"
+    __table_args__ = (
+        UniqueConstraint("billing_month", "account_id", name="uq_billing_cost_upload_month_account"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    billing_month = Column(String(7), index=True, nullable=False)
+    account_id = Column(String(64), index=True, nullable=False)
+    account_name = Column(String(255), nullable=False)
+    original_filename = Column(String(255), nullable=False)
+    content_type = Column(String(120), nullable=False)
+    file_data = Column(LargeBinary, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    imported_rows = Column(Integer, nullable=False)
+    uploaded_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -79,7 +79,7 @@ const NAV_GROUPS: { label: string; items: { key: TabKey; label: string; icon: ty
 const PAGE_META: Record<TabKey, { title: string; description: string }> = {
   dashboard: { title: '운영 대시보드', description: '방문과 대화 흐름, 상담 전환, 취소·안전 신호를 한눈에 확인합니다.' },
   analytics: { title: '데이터 분석', description: '월별·시간대별 이용 패턴과 질문·답변 유형을 분석합니다.' },
-  costs: { title: '비용 관리', description: '실제 원화 청구액을 계정·서비스·일자별로 관리하고 분석합니다.' },
+  costs: { title: '비용 관리', description: '업로드한 원화 비용을 월·서비스·일자별로 관리하고 분석합니다.' },
   documents: { title: '문서 검토', description: '업로드 문서를 검토하고 승인된 지식만 운영 검색에 반영합니다.' },
   faqs: { title: 'FAQ 관리', description: '자주 묻는 질문과 답변, 검색 키워드를 관리합니다.' },
   prompts: { title: '프롬프트', description: '상담 응답과 시스템 동작을 결정하는 프롬프트를 관리합니다.' },

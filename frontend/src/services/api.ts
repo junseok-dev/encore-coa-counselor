@@ -6,7 +6,6 @@ import {
   AdminSession,
   AuditLog,
   AdminSessionDetail,
-  BillingCostRecord,
   ChatLog,
   ChatResponse,
   CostManagementData,
@@ -133,7 +132,7 @@ export const adminApi = {
     return response.data;
   },
 
-  importBillingCosts: async (file: File, billingMonth: string, accountId: string, accountName: string): Promise<{ message: string; billing_month: string; imported_rows: number }> => {
+  importBillingCosts: async (file: File, billingMonth: string, accountId: string, accountName: string): Promise<{ message: string; billing_month: string; imported_rows: number; replaced_rows: number; filename: string }> => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('billing_month', billingMonth);
@@ -146,6 +145,14 @@ export const adminApi = {
   downloadCostTemplate: async (billingMonth: string): Promise<Blob> => {
     const response = await adminApiClient.get('/admin/operations/costs/template', {
       params: { billing_month: billingMonth },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  downloadUploadedCostFile: async (billingMonth: string, accountId: string): Promise<Blob> => {
+    const response = await adminApiClient.get(`/admin/operations/costs/uploaded-file/${billingMonth}`, {
+      params: { account_id: accountId },
       responseType: 'blob',
     });
     return response.data;
@@ -189,14 +196,6 @@ export const adminApi = {
   ): Promise<OperationsAlertUpdateResult> => {
     const response = await adminApiClient.patch<OperationsAlertUpdateResult>(`/admin/operations/alerts/${alertId}`, {
       status,
-      note,
-    });
-    return response.data;
-  },
-
-  saveBillingCost: async (billingMonth: string, amountKrw: number, note?: string): Promise<BillingCostRecord> => {
-    const response = await adminApiClient.put<BillingCostRecord>(`/admin/operations/costs/${billingMonth}`, {
-      amount_krw: amountKrw,
       note,
     });
     return response.data;
