@@ -29,26 +29,38 @@ function dateTime(value: string) {
 
 function ServiceDonut({ data }: { data: CostManagementData }) {
   const total = Math.max(1, data.usage_total_krw);
-  const radius = 72;
+  const radius = 66;
   const circumference = Math.PI * 2 * radius;
   let offset = 0;
+  let angleOffset = 0;
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <div className="relative mx-auto h-48 w-48 shrink-0">
-        <svg viewBox="0 0 180 180" className="h-full w-full -rotate-90">
-          <circle cx="90" cy="90" r={radius} fill="none" stroke="#f1f5f9" strokeWidth="24" />
+    <div className="grid min-w-0 gap-6 md:grid-cols-[minmax(230px,1fr)_minmax(145px,0.65fr)] md:items-center">
+      <div className="relative mx-auto h-60 w-60 shrink-0">
+        <svg viewBox="0 0 180 180" className="h-full w-full">
+          <circle cx="90" cy="90" r={radius} fill="none" stroke="#f1f5f9" strokeWidth="28" />
           {data.service_totals.map((service, index) => {
-            const length = (service.amount_krw / total) * circumference;
-            const node = <circle key={service.service_name} cx="90" cy="90" r={radius} fill="none" stroke={SERVICE_COLORS[index % SERVICE_COLORS.length]} strokeWidth="24" strokeDasharray={`${length} ${circumference - length}`} strokeDashoffset={-offset} />;
+            const ratio = service.amount_krw / total;
+            const length = ratio * circumference;
+            const node = <circle key={service.service_name} cx="90" cy="90" r={radius} fill="none" stroke={SERVICE_COLORS[index % SERVICE_COLORS.length]} strokeWidth="28" strokeDasharray={`${length} ${circumference - length}`} strokeDashoffset={-offset} transform="rotate(-90 90 90)" />;
             offset += length;
             return node;
           })}
+          {data.service_totals.map((service) => {
+            const ratio = service.amount_krw / total;
+            const midAngle = -90 + angleOffset + ratio * 180;
+            angleOffset += ratio * 360;
+            if (ratio < 0.035) return null;
+            const radians = (midAngle * Math.PI) / 180;
+            const x = 90 + Math.cos(radians) * radius;
+            const y = 90 + Math.sin(radians) * radius;
+            return <text key={`${service.service_name}-ratio`} x={x} y={y} textAnchor="middle" dominantBaseline="central" fill="white" fontSize="9" fontWeight="800">{(ratio * 100).toFixed(1)}%</text>;
+          })}
         </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="text-xs font-bold text-slate-400">사용 합계</span><strong className="mt-1 text-xl font-black text-slate-950">{krw(data.usage_total_krw)}</strong></div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="text-sm font-medium text-slate-500">Total</span><strong className="mt-1 text-2xl font-black tracking-tight text-red-500">{data.usage_total_krw.toLocaleString()}</strong><span className="mt-0.5 text-[11px] font-bold text-slate-400">KRW</span></div>
       </div>
-      <div className="grid min-w-0 gap-2">
+      <div className="grid min-w-0 content-center gap-2.5">
         {data.service_totals.map((service, index) => (
-          <div key={service.service_name} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 text-xs"><span className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} /><span className="min-w-0 break-words font-semibold leading-5 text-slate-600">{service.service_name}</span></span><span className="whitespace-nowrap font-black text-slate-900">{krw(service.amount_krw)}</span></div>
+          <div key={service.service_name} className="flex min-w-0 items-center gap-2 text-[11px] text-slate-600" title={`${service.service_name}: ${krw(service.amount_krw)}`}><span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} /><span className="min-w-0 break-words font-medium leading-4">{service.service_name}</span></div>
         ))}
         {data.service_totals.length === 0 && <p className="col-span-full py-10 text-center text-sm text-slate-400">업로드된 서비스 비용이 없습니다.</p>}
       </div>
@@ -58,22 +70,36 @@ function ServiceDonut({ data }: { data: CostManagementData }) {
 
 function DailyStackedChart({ data }: { data: CostManagementData }) {
   const maxValue = Math.max(1, ...data.daily_totals.map((item) => item.total_krw));
+  const scaleMax = Math.ceil(maxValue / 1000) * 1000 || 1000;
+  const ticks = Array.from({ length: 6 }, (_, index) => Math.round(scaleMax - (scaleMax / 5) * index));
   const services = data.service_totals.map((item) => item.service_name);
   return (
-    <div className="max-w-full overflow-x-auto pb-2">
-      <div className="flex h-64 min-w-[820px] items-end gap-1.5 border-b border-slate-200 px-2">
-        {data.daily_totals.map((day) => (
-          <div key={day.date} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
-            <div className="flex w-full flex-col-reverse overflow-hidden rounded-t" style={{ height: `${Math.max(day.total_krw ? 5 : 0, (day.total_krw / maxValue) * 205)}px` }} title={`${day.date} ${krw(day.total_krw)}`}>
-              {services.map((service, index) => {
-                const value = day.services[service] ?? 0;
-                if (!value || !day.total_krw) return null;
-                return <span key={service} style={{ height: `${(value / day.total_krw) * 100}%`, background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} />;
-              })}
-            </div>
-            <span className="text-[9px] text-slate-500">{String(day.day).padStart(2, '0')}</span>
+    <div className="max-w-full overflow-x-auto pb-1">
+      <div className="grid min-w-[760px] grid-cols-[44px_minmax(570px,1fr)_120px] gap-3">
+        <div className="flex h-56 flex-col justify-between pb-0 text-right text-[10px] tabular-nums text-slate-500">{ticks.map((tick) => <span key={tick}>{tick.toLocaleString()}</span>)}</div>
+        <div className="relative h-64">
+          <div className="absolute inset-x-0 top-0 h-56 border-b border-slate-300">
+            {ticks.map((tick, index) => <span key={tick} className="absolute inset-x-0 border-t border-slate-200" style={{ top: `${(index / (ticks.length - 1)) * 100}%` }} />)}
           </div>
-        ))}
+          <div className="absolute inset-0 flex items-end gap-1.5">
+            {data.daily_totals.map((day) => {
+              const weekday = new Intl.DateTimeFormat('ko-KR', { weekday: 'short' }).format(new Date(`${day.date}T00:00:00`));
+              return (
+                <div key={day.date} className="flex h-full min-w-4 flex-1 flex-col items-center justify-end">
+                  <div className="flex w-full max-w-7 flex-col-reverse overflow-hidden" style={{ height: `${Math.max(day.total_krw ? 4 : 0, (day.total_krw / scaleMax) * 224)}px` }} title={`${day.date} ${krw(day.total_krw)}`}>
+                    {services.map((service, index) => {
+                      const value = day.services[service] ?? 0;
+                      if (!value || !day.total_krw) return null;
+                      return <span key={service} style={{ height: `${(value / day.total_krw) * 100}%`, background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} />;
+                    })}
+                  </div>
+                  <span className="mt-2 h-6 -rotate-45 whitespace-nowrap text-[9px] text-slate-500">{String(day.day).padStart(2, '0')}({weekday.replace('요일', '')})</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="grid content-start gap-2.5 pt-1">{data.service_totals.map((service, index) => <div key={service.service_name} className="flex min-w-0 items-center gap-2 text-[10px] text-slate-600" title={`${service.service_name}: ${krw(service.amount_krw)}`}><span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} /><span className="break-words leading-4">{service.service_name}</span></div>)}</div>
       </div>
     </div>
   );
@@ -181,14 +207,14 @@ export default function CostManagement() {
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold text-slate-500">{isAllPeriod ? '월평균 사용 비용' : '비용 발생 일수'}</p><p className="mt-2 text-3xl font-black text-emerald-600">{isAllPeriod ? krw(monthlyAverage) : `${activeDays.toLocaleString()}일`}</p><p className="mt-3 text-xs text-slate-400">{isAllPeriod ? `비용 자료가 있는 ${history.length.toLocaleString()}개월 기준` : '0원 초과 사용일 기준'}</p></div>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-blue-600" /><div><h2 className="font-bold text-slate-950">월별 사용 비용</h2><p className="mt-1 text-xs text-slate-500">업로드한 일별 서비스 비용을 월별로 합산했습니다. 막대를 누르면 해당 월 상세로 이동합니다.</p></div></div>{history.length ? <div className="mt-5 overflow-x-auto"><div className="flex h-48 items-end gap-3 border-b border-slate-200 px-2" style={{ minWidth: `${Math.max(600, history.length * 76)}px` }}>{history.map((item) => <button type="button" key={item.billing_month} onClick={() => setBillingMonth(item.billing_month)} className="group flex h-full min-w-14 flex-1 flex-col items-center justify-end gap-1" title={`${item.billing_month} ${krw(item.amount_krw)}`}><span className="text-[10px] font-bold text-slate-500 opacity-0 transition group-hover:opacity-100">{item.amount_krw.toLocaleString()}</span><span className={`w-full max-w-16 rounded-t transition ${billingMonth === item.billing_month ? 'bg-blue-700' : 'bg-blue-400 group-hover:bg-blue-600'}`} style={{ height: `${Math.max(8, (item.amount_krw / monthlyMax) * 125)}px` }} /><span className="text-[10px] font-semibold text-slate-500">{item.billing_month}</span></button>)}</div></div> : <p className="py-14 text-center text-sm text-slate-400">업로드된 월별 비용 데이터가 없습니다.</p>}</section>
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-blue-600" /><div><h2 className="font-bold text-slate-950">월별 사용 비용</h2><p className="mt-1 text-xs text-slate-500">업로드한 일별 서비스 비용을 월별로 합산했습니다. 막대를 누르면 해당 월 상세로 이동합니다.</p></div></div>{history.length ? <div className="mt-5 overflow-x-auto"><div className="flex h-48 items-end gap-3 border-b border-slate-200 px-2" style={{ minWidth: `${Math.max(600, history.length * 86)}px` }}>{history.map((item) => <button type="button" key={item.billing_month} onClick={() => setBillingMonth(item.billing_month)} className="group flex h-full min-w-16 flex-1 flex-col items-center justify-end gap-1" title={`${item.billing_month} ${krw(item.amount_krw)}`}><span className="whitespace-nowrap text-[10px] font-bold tabular-nums text-slate-600">{item.amount_krw.toLocaleString()}원</span><span className={`w-full max-w-16 rounded-t transition ${billingMonth === item.billing_month ? 'bg-blue-700' : 'bg-blue-400 group-hover:bg-blue-600'}`} style={{ height: `${Math.max(8, (item.amount_krw / monthlyMax) * 120)}px` }} /><span className="text-[10px] font-semibold text-slate-500">{item.billing_month}</span></button>)}</div></div> : <p className="py-14 text-center text-sm text-slate-400">업로드된 월별 비용 데이터가 없습니다.</p>}</section>
 
-      <div className={`grid min-w-0 gap-5 ${isAllPeriod ? '' : 'xl:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]'}`}>
-        <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">서비스별 사용 금액</h2><p className="mt-1 text-xs leading-5 text-slate-500">{isAllPeriod ? '입력된 전체 기간의 서비스별 실제 원화 비중입니다.' : '선택한 월과 계정의 실제 원화 비중입니다.'}</p><div className="mt-4 min-w-0">{data && <ServiceDonut data={data} />}</div></section>
-        {!isAllPeriod && <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">일별 서비스 사용 금액</h2><p className="mt-1 text-xs leading-5 text-slate-500">막대 색상은 서비스별 금액을 나타냅니다. 화면이 좁으면 차트를 좌우로 이동할 수 있습니다.</p><div className="mt-4 min-w-0">{data && <DailyStackedChart data={data} />}</div></section>}
+      <div className={`grid min-w-0 gap-5 ${isAllPeriod ? '' : 'xl:grid-cols-[minmax(460px,0.85fr)_minmax(0,1.35fr)]'}`}>
+        <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">{isAllPeriod ? '전체 기간' : billingMonth} 서비스별 사용 금액</h2></div><div className="min-w-0 p-5">{data && <ServiceDonut data={data} />}</div></section>
+        {!isAllPeriod && <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">일자별 사용금액 그래프</h2></div><div className="min-w-0 p-5">{data && <DailyStackedChart data={data} />}</div></section>}
       </div>
 
-      {!isAllPeriod && <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4"><div><h2 className="font-bold text-slate-950">일별 서비스 사용 금액 리스트</h2><p className="mt-1 text-xs text-slate-500">서비스 행과 일자 열로 원화 금액을 비교합니다.</p></div></div><div className="overflow-x-auto"><table className="min-w-max text-xs"><thead><tr className="bg-slate-100 text-slate-600"><th className="sticky left-0 z-10 min-w-40 border-r border-slate-200 bg-slate-100 px-4 py-3 text-left">서비스</th><th className="min-w-24 px-3 py-3 text-right">합계</th>{data?.daily_totals.map((day) => <th key={day.date} className="min-w-20 px-3 py-3 text-right">{String(day.day).padStart(2, '0')}일</th>)}</tr></thead><tbody><tr className="bg-cyan-50 font-black text-cyan-900"><td className="sticky left-0 border-r border-cyan-100 bg-cyan-50 px-4 py-3">Total</td><td className="px-3 py-3 text-right">{data?.usage_total_krw.toLocaleString()}</td>{data?.daily_totals.map((day) => <td key={day.date} className="px-3 py-3 text-right">{day.total_krw.toLocaleString()}</td>)}</tr>{data?.service_daily_rows.map((row) => <tr key={row.service_name} className="border-t border-slate-100 hover:bg-slate-50"><td className="sticky left-0 border-r border-slate-100 bg-white px-4 py-3 font-semibold text-slate-700">{row.service_name}</td><td className="px-3 py-3 text-right font-bold">{row.total_krw.toLocaleString()}</td>{data.daily_totals.map((day) => <td key={day.date} className="px-3 py-3 text-right text-slate-600">{(row.daily[String(day.day).padStart(2, '0')] ?? 0).toLocaleString()}</td>)}</tr>)}</tbody></table></div></section>}
+      {!isAllPeriod && <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3"><div className="flex items-center gap-3"><h2 className="font-bold text-slate-950">서비스별 사용금액 리스트</h2><span className="rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-black text-white">KRW</span></div><p className="hidden text-xs text-slate-500 sm:block">{billingMonth} · {TARGET_ACCOUNT_NAME}</p></div><div className="overflow-x-auto p-4"><table className="min-w-max border-separate border-spacing-0 text-xs"><thead><tr className="text-slate-700"><th className="sticky left-0 z-10 min-w-44 border-y border-l border-slate-300 bg-slate-100 px-4 py-3 text-left">서비스</th><th className="min-w-24 border-y border-l border-slate-300 bg-slate-100 px-3 py-3 text-right">합계</th>{data?.daily_totals.map((day, index) => <th key={day.date} className={`min-w-20 border-y border-l border-slate-300 bg-slate-100 px-3 py-3 text-right ${index === data.daily_totals.length - 1 ? 'border-r' : ''}`}>{String(day.day).padStart(2, '0')}일</th>)}</tr></thead><tbody><tr className="font-black text-cyan-950"><td className="sticky left-0 border-b border-l border-cyan-200 bg-cyan-200 px-4 py-3">Total</td><td className="border-b border-l border-cyan-200 bg-cyan-200 px-3 py-3 text-right tabular-nums">{data?.usage_total_krw.toLocaleString()}</td>{data?.daily_totals.map((day, index) => <td key={day.date} className={`border-b border-l border-cyan-200 bg-cyan-200 px-3 py-3 text-right tabular-nums ${index === data.daily_totals.length - 1 ? 'border-r' : ''}`}>{day.total_krw.toLocaleString()}</td>)}</tr>{data?.service_daily_rows.map((row, rowIndex) => <tr key={row.service_name} className="hover:bg-blue-50"><td className={`sticky left-0 border-b border-l border-slate-200 px-4 py-3 font-semibold text-slate-700 ${rowIndex % 2 ? 'bg-slate-50' : 'bg-white'}`}>{row.service_name}</td><td className={`border-b border-l border-slate-200 px-3 py-3 text-right font-bold tabular-nums ${rowIndex % 2 ? 'bg-slate-50' : 'bg-white'}`}>{row.total_krw.toLocaleString()}</td>{data.daily_totals.map((day, index) => <td key={day.date} className={`border-b border-l border-slate-200 px-3 py-3 text-right tabular-nums text-slate-700 ${rowIndex % 2 ? 'bg-slate-50' : 'bg-white'} ${index === data.daily_totals.length - 1 ? 'border-r' : ''}`}>{(row.daily[String(day.day).padStart(2, '0')] ?? 0).toLocaleString()}</td>)}</tr>)}</tbody></table></div></section>}
 
       {!isAllPeriod && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex items-center gap-3"><FileSpreadsheet className="h-5 w-5 text-blue-600" /><div><h2 className="font-bold text-slate-950">{billingMonth} 반영 파일</h2>{data?.uploaded_file ? <p className="mt-1 text-xs text-slate-500">{data.uploaded_file.filename} · {data.uploaded_file.imported_rows.toLocaleString()}개 항목 · {fileSize(data.uploaded_file.size_bytes)} · {dateTime(data.uploaded_file.uploaded_at)} 업로드</p> : <p className="mt-1 text-xs text-slate-400">이 월에 업로드된 원본 파일이 없습니다.</p>}</div></div>{data?.uploaded_file && <button onClick={() => void downloadUploadedFile()} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-bold text-blue-700"><Download className="h-4 w-4" />원본 파일 보기</button>}</div></section>}
 
