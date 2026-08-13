@@ -12,6 +12,7 @@
 - 비용 관리에서 월별 실제 원화 비용 자료를 반영하고 원본 업로드 파일을 보관합니다.
 - 최상위 관리자용 보안 정보 금고에 운영 접속 정보를 암호화해 저장하며, 30분 자동 잠금·연장·비밀번호 재설정을 지원합니다.
 - 현재 프론트엔드 개발 서버의 고정 포트는 `5174`, 백엔드는 `8888`입니다.
+- Windows 로컬 백엔드는 Python 3.12.x와 SQLite를 기준으로 검증했으며, `.env.local`로 운영 RDS 설정을 보존한 채 로컬 값을 우선 적용할 수 있습니다.
 - 최신 저장 RAGAS 결과는 2026-06-01의 102문항 평가이며, 현재 라우팅 평가 세트는 기존 48건에서 51건으로 확장되어 재측정이 필요합니다.
 
 ---
@@ -950,7 +951,7 @@ encore-coa-counselor/
 
 ### 사전 요구사항
 
-- **Python 3.12+**
+- **Python 3.12.x** — Windows의 Python 3.14에서는 `scikit-network` wheel 부재로 의존성 설치가 중단될 수 있음
 - **Node.js 18+** (Vite 5 호환)
 - OpenAI API 키 (`OPENAI_API_KEY`)
 - AWS 자격증명 (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET`)
@@ -964,10 +965,11 @@ OPENAI_API_KEY=sk-...
 MODEL_NAME=gpt-5.4-mini                 # 생성 모델 (관리자 콘솔에서 런타임 교체 가능)
 INTENT_MODEL_NAME=gpt-5.4-nano         # 라우터/의도 분류 모델
 EMBEDDING_MODEL=text-embedding-3-large # 검색 임베딩 (3072차원)
+RAG_INDEX_ON_STARTUP=true              # 운영 시작 시 DB 기준 전체 FAISS 재구성 여부
 REJECT_THRESHOLD=1.0                    # (재설계 후 미사용 — 하드 거절 폐지, 호환 위해 유지)
 VERIFY_THRESHOLD=3.5                    # 이 미만이면 사실성 재검증
 
-# Database (Aurora RDS 또는 로컬 PostgreSQL)
+# Database (운영 Aurora RDS)
 DATABASE_URL=postgresql://user:password@host:5432/chatbot
 
 # AWS
@@ -1004,26 +1006,58 @@ LANGSMITH_TRACING=true
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-### 백엔드 실행
+#### 로컬 전용 override (`backend/.env.local`)
+
+`app/config.py`는 `.env`를 먼저 읽고, 파일이 있으면 `.env.local`을 `override=True`로 추가 로드합니다. 운영용 `.env`가 사설 Aurora endpoint를 포함하더라도 실제 값을 수정하지 않고 다음처럼 로컬 실행값만 분리할 수 있습니다. `.env.local`은 `.gitignore`의 `.env.*` 규칙으로 제외됩니다.
+
+```env
+DATABASE_URL=sqlite:///./local-dev.db
+WEBSITE_SYNC_ENABLED=false
+RAG_INDEX_ON_STARTUP=false
+```
+
+- SQLite에서는 SQLAlchemy에 `check_same_thread=False`를 자동 적용합니다.
+- `RAG_INDEX_ON_STARTUP=false`여도 기존 `data/faiss_index/`는 로드합니다. 시작 시 DB 전체를 OpenAI Embeddings로 다시 만드는 작업만 생략합니다.
+- 새 문서·FAQ를 실제 반영할 때는 관리자 재색인 기능을 사용하거나 일시적으로 값을 `true`로 바꿉니다.
+- 운영 EC2는 `.env.local`을 만들지 않고 기존 Aurora·홈페이지 동기화·시작 재색인 정책을 유지합니다.
+
+### 백엔드 실행 — Git Bash
 
 ```bash
-cd backend
+cd /c/Workspaces2/encore-coa-counselor/backend
+
+# 반드시 3.12.x인지 먼저 확인
+python --version
 
 # 가상환경 생성 (최초 1회)
 python -m venv venv
 
-# 활성화
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
+# Git Bash 활성화
+source venv/Scripts/activate
 
 # 의존성 설치
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 
 # 서버 시작 (포트 8888)
 python -m uvicorn app.main:app --reload --port 8888 --host 0.0.0.0
 ```
+
+Git Bash에서는 Windows 드라이브를 `/c/...` 형식으로 쓰며 PowerShell 전용 `Activate.ps1`을 실행하지 않습니다. 이미 backend 경로에 있다면 `cd`는 생략합니다.
+
+### 백엔드 실행 — PowerShell
+
+```powershell
+cd C:\Workspaces2\encore-coa-counselor\backend
+python --version                       # 반드시 3.12.x
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8888 --host 0.0.0.0
+```
+
+PowerShell 실행 정책이 활성화를 막으면 `.\venv\Scripts\python.exe -m uvicorn ...`처럼 가상환경 Python을 직접 호출합니다.
 
 → <http://localhost:8888>
 → API 문서: <http://localhost:8888/docs>
@@ -1072,7 +1106,12 @@ start_servers.bat
 ### 트러블슈팅
 
 - **포트 충돌**: 8888·5174가 이미 사용 중이면 `--port` 옵션 또는 `vite.config.ts`에서 변경
-- **DB 연결 실패**: `DATABASE_URL` 확인. RDS 사용 시 보안그룹에 로컬 IP 허용 필요
+- **`Failed to build installable wheels ... scikit-network`**: Windows Python 3.14 환경에서 호환 wheel을 받지 못한 경우입니다. 실패한 `venv`를 Python 3.12.x로 다시 만들고 requirements 전체 설치를 완료합니다.
+- **`No module named uvicorn`**: 앞선 패키지 빌드 실패로 설치가 중간 종료된 결과입니다. 현재 `python`이 `backend/venv`의 3.12인지 확인한 뒤 `python -m pip install -r requirements.txt`를 다시 실행합니다.
+- **Git Bash 경로·활성화 오류**: `C:\...`와 `.\venv\Scripts\Activate.ps1`은 PowerShell 문법입니다. Git Bash에서는 `/c/...`와 `source venv/Scripts/activate`를 사용합니다.
+- **DB 연결 timeout**: 운영 Aurora endpoint가 `172.31.x.x` 같은 사설 주소로 해석되면 일반 로컬 네트워크에서 직접 접근할 수 없습니다. `.env.local`의 SQLite를 사용하거나 승인된 VPN·VPC 경로를 확보합니다.
+- **시작 중 OpenAI Embeddings 연결 오류**: 로컬의 `RAG_INDEX_ON_STARTUP=false`를 확인합니다. 운영 재색인과 로컬 서버 기동을 분리해야 합니다.
+- **`frontend/dist/assets` 없음**: 현재 백엔드는 assets 디렉터리가 없어도 API를 시작합니다. 정적 프론트까지 제공하려면 `npm run build`로 `dist/assets`를 생성합니다.
 - **OpenAI 401**: API 키 만료 또는 사용량 초과
 - **FAISS 인덱스 없음**: 서버 첫 시작 시 S3에서 다운로드. S3 권한 또는 버킷명 확인
 - **관리자 로그인 실패**: `ADMIN_EMAIL`이 `.env`에 설정돼 있는지 + Google OAuth Client ID가 같은 도메인(localhost)에 등록돼 있는지

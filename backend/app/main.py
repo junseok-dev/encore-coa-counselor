@@ -49,7 +49,11 @@ async def lifespan(app: FastAPI):
         # 과거 여기서 update_counseling_prompt/update_handoff_prompts로 매 재시작마다 프롬프트를
         # 코드 기본값으로 강제 덮어써 관리자 편집분이 사라지는 버그가 있어 제거함.
         # 기본값은 seed_prompt_configs가 레코드가 없을 때만 시드한다.
-        get_rag_service().index_all(db)
+        if get_settings().rag_index_on_startup:
+            get_rag_service().index_all(db)
+        else:
+            # Still initialize any existing local index without rebuilding it.
+            get_rag_service()
     finally:
         db.close()
     website_sync_task = asyncio.create_task(
@@ -98,9 +102,12 @@ def health_check():
 
 STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
-if STATIC_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
+ASSETS_DIR = STATIC_DIR / "assets"
 
+if ASSETS_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+
+if (STATIC_DIR / "index.html").is_file():
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         return FileResponse(

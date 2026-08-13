@@ -369,7 +369,7 @@
       <h1>엔코아 AI 캠퍼스<br>상담 챗봇</h1>
       <p class="lead">서비스가 무엇을 제공하고, 어떻게 답변하며, 얼마나 사용됐고, 어떤 비용과 운영 절차가 필요한지를 한 문서에서 설명합니다.</p>
       <div class="meta">
-        <span>보고서 기준일 2026. 08. 09.</span>
+        <span>보고서 기준일 2026. 08. 13.</span>
         <span>이용 데이터 2026. 05. 14. ~ 08. 07.</span>
         <span>공개용 요약본</span>
       </div>
@@ -884,6 +884,29 @@
           <li>최종 종료 뒤 비용·DNS·인증서·GitHub·AWS·외부 서비스의 기존 권한을 정리합니다.</li>
         </ul>
 
+        <h3>Windows 로컬 개발 기준</h3>
+        <div class="grid-2">
+          <article class="card"><h4>실행 환경</h4><p>백엔드는 <strong>Python 3.12.x</strong>를 사용합니다. Python 3.14에서는 <code>scikit-network</code> wheel 문제로 전체 requirements 설치가 중단되고, 후속 패키지인 <code>uvicorn</code>도 설치되지 않을 수 있습니다.</p></article>
+          <article class="card"><h4>로컬 데이터·인덱스</h4><p><code>backend/.env.local</code>에서 SQLite와 <code>RAG_INDEX_ON_STARTUP=false</code>를 사용하면 사설 RDS 접속과 시작 시 전체 임베딩 재생성을 분리할 수 있습니다. 기존 FAISS 파일은 그대로 로드합니다.</p></article>
+        </div>
+
+        <pre class="tree"># Git Bash
+cd /c/Workspaces2/encore-coa-counselor/backend
+source venv/Scripts/activate
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8888
+
+# PowerShell
+cd C:\Workspaces2\encore-coa-counselor\backend
+.\venv\Scripts\Activate.ps1
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8888
+
+# 공통 확인
+GET /health  →  {"status":"healthy"}</pre>
+
+        <div class="callout warning">
+          <p><strong>쉘과 네트워크를 구분합니다:</strong> Git Bash에서는 <code>/c/...</code>와 <code>source</code>를 사용하고 PowerShell 명령을 섞지 않습니다. 또한 <code>172.31.x.x</code>로 해석되는 Aurora endpoint는 사설 VPC 주소이므로 일반 로컬 PC에서 직접 접근할 수 없습니다. 로컬은 SQLite, 운영 점검은 승인된 VPN·VPC 경로를 사용합니다.</p>
+        </div>
+
         <h3>데이터 로드·저장 장애 진단</h3>
         <div class="flow" aria-label="장애 진단 흐름">
           <div class="flow-step"><b>01</b><span>발생 시각·화면·작업 기록</span></div>
@@ -912,6 +935,8 @@ ls -l ~/document-chatbot_practice/data/faiss_index/</pre>
             <caption>증상별 원인 후보와 복구 순서</caption>
             <thead><tr><th>증상</th><th>주요 원인</th><th>확인</th><th>안전한 조치</th></tr></thead>
             <tbody>
+              <tr><td><code>scikit-network</code> wheel 빌드 실패 후 <code>uvicorn</code>을 찾지 못함</td><td>Python 3.14에서 호환 wheel을 받지 못해 requirements 설치가 중간 종료됨</td><td><code>python --version</code>과 활성 Python 경로를 확인합니다.</td><td>Python 3.12.x로 <code>venv</code>를 다시 만들고 requirements 전체 설치를 완료합니다. <code>uvicorn</code>만 따로 설치해 부분 복구하지 않습니다.</td></tr>
+              <tr><td>로컬 백엔드 시작 시 RDS timeout</td><td><code>.env</code>가 사설 Aurora endpoint를 가리키지만 PC에 VPC 접근 경로가 없음</td><td>DB host가 <code>172.31.x.x</code>인지, VPN·VPC 접속 여부와 <code>.env.local</code> 존재를 확인합니다.</td><td>운영 <code>.env</code>는 보존하고 <code>.env.local</code>에 SQLite와 로컬 시작 옵션을 둡니다. 실제 RDS 점검은 승인된 네트워크에서 수행합니다.</td></tr>
               <tr><td>관리자 전체 데이터가 로드되지 않음</td><td>세션 만료(401), 백엔드 중단, RDS 연결 실패, 다섯 병렬 API 중 하나의 500 오류</td><td>브라우저 Network에서 <code>/api/admin/sessions</code>, <code>documents</code>, <code>faqs</code>, <code>prompts</code>, <code>logs</code>를 개별 확인합니다.</td><td>401은 다시 로그인합니다. 500은 systemd 로그와 <code>DATABASE_URL</code>·RDS 상태·보안그룹을 확인하고 서비스 복구 후 새로고침합니다.</td></tr>
               <tr><td>저장 버튼을 눌러도 저장되지 않음</td><td>필수값·형식 오류(400), 권한 없음(403), 대상 없음(404), 중복 키(409), RDS 쓰기 실패(500)</td><td>Network의 응답 status와 detail, 관리자 감사 로그, RDS 여유 공간·연결 상태를 확인합니다.</td><td>검증 오류를 먼저 고칩니다. 시스템 테이블을 직접 SQL로 우회 수정하지 말고 해당 전용 메뉴에서 다시 저장합니다.</td></tr>
               <tr><td>PDF·MD 업로드 또는 승인 반영이 실패함</td><td>PDF 변환·UTF-8 오류, S3 권한·버킷, RDS 쓰기 오류. FAQ 변환·승인 재색인 단계라면 OpenAI 키·한도 오류</td><td>문서 상태가 <code>uploaded → parsing → embedding → review → ready</code> 중 어디에서 <code>failed</code>가 됐는지 processing log와 error message를 봅니다.</td><td>원인을 해결한 뒤 같은 파일을 다시 업로드합니다. PDF 변환 문제면 검토한 Markdown으로 등록하고, 승인 실패면 OpenAI·S3를 복구한 뒤 다시 승인하거나 재색인합니다.</td></tr>

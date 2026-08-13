@@ -14,6 +14,7 @@
 | 최신성 | 과정 상세·신청·소개 페이지를 주기적으로 검증하고 24시간 단위로 갱신 |
 | 안전 | 프롬프트 인젝션·개인정보 차단, 법률·범위 밖 질문 거절, 민감 상담의 담당자 연결 |
 | 운영 | KPI 분석, 시스템 상태, 비용, 긴급 확인 큐, 답변 재시험과 처리 이력 제공 |
+| 로컬 개발 | Python 3.12 + SQLite로 AWS VPC 연결 없이 실행하며, 시작 시 불필요한 전체 재인덱싱을 선택적으로 생략 |
 | 관리 | 문서 승인·재색인, FAQ·프롬프트·모델·권한·DB·암호화 설정을 관리자 화면에서 관리 |
 | 보안 | Google OAuth/JWT, Fernet 암호화, 감사 로그, 30분 자동 잠금 보안 정보 금고 |
 
@@ -63,7 +64,7 @@ flowchart LR
 
 ## 로컬 실행
 
-Python 3.12와 Node.js 18 이상을 권장합니다. Python 3.13·3.14는 일부 AI 패키지의 wheel 지원 여부를 먼저 확인해야 합니다. 전체 AI 기능에는 `OPENAI_API_KEY`가 필요합니다.
+Windows 백엔드는 **Python 3.12.x**를 사용합니다. Python 3.14에서는 전이 의존성인 `scikit-network`의 설치 가능한 wheel을 찾지 못해 전체 설치가 중단될 수 있고, 이 경우 뒤에 있는 `uvicorn`도 설치되지 않습니다. Node.js는 18 이상이 필요하며 전체 AI 기능에는 `OPENAI_API_KEY`가 필요합니다.
 
 ### 1. 환경변수
 
@@ -74,20 +75,31 @@ cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 ```
 
-`backend/.env`의 `OPENAI_API_KEY`를 설정하세요. 로컬 DB는 예시 파일의 `sqlite:///./chatbot.db`를 그대로 사용할 수 있습니다. 관리자 Google 로그인까지 확인하려면 양쪽 환경 파일에 같은 Google Client ID를 설정합니다. 실제 비밀값은 Git에 커밋하지 않습니다.
+`backend/.env`의 `OPENAI_API_KEY`를 설정하세요. 새 로컬 환경은 예시 파일의 `sqlite:///./chatbot.db`를 그대로 사용할 수 있습니다. 기존 `.env`가 사설 AWS RDS를 가리킨다면, 값을 덮어쓰지 말고 Git에서 제외되는 `backend/.env.local`을 만드세요.
+
+```env
+DATABASE_URL=sqlite:///./local-dev.db
+WEBSITE_SYNC_ENABLED=false
+RAG_INDEX_ON_STARTUP=false
+```
+
+`.env.local`은 `.env`보다 우선합니다. `RAG_INDEX_ON_STARTUP=false`는 기존 로컬 FAISS가 있으면 이를 불러오되 서버 시작 때 OpenAI 임베딩 전체 재생성을 하지 않습니다. 문서를 실제로 재색인할 때만 관리자 기능을 사용하거나 이 값을 `true`로 바꿉니다. 관리자 Google 로그인까지 확인하려면 백엔드와 프론트엔드 환경 파일에 같은 Google Client ID를 설정합니다. 실제 비밀값은 Git에 커밋하지 않습니다.
 
 ### 2. 백엔드 — Git Bash
 
 첫 번째 터미널에서 실행합니다.
 
 ```bash
-cd backend
+cd /c/Workspaces2/encore-coa-counselor/backend
+python --version                       # 반드시 3.12.x
 python -m venv venv
 source venv/Scripts/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8888
 ```
+
+Git Bash에서는 `C:\Workspaces2\...`와 `.\venv\Scripts\Activate.ps1` 같은 PowerShell 문법을 사용하지 않습니다. 프롬프트에 이미 `/c/Workspaces2/encore-coa-counselor/backend`가 보이면 `cd`는 생략합니다.
 
 이미 `(venv)`가 표시되고 의존성 설치까지 끝났다면 마지막 명령만 실행하면 됩니다.
 
@@ -98,7 +110,8 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8888
 ### 3. 백엔드 — PowerShell
 
 ```powershell
-cd backend
+cd C:\Workspaces2\encore-coa-counselor\backend
+python --version                       # 반드시 3.12.x
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -130,6 +143,24 @@ npm run dev
 | Swagger API 문서 | <http://localhost:8888/docs> |
 
 Windows에서 두 서버를 새 터미널로 한 번에 시작하려면 루트에서 `start_servers.bat` 또는 PowerShell의 `.\start_servers.ps1`을 실행합니다. 종료는 각 서버 터미널에서 `Ctrl+C`입니다.
+
+### 문제 해결
+
+| 증상 | 원인과 조치 |
+| --- | --- |
+| `Failed to build ... scikit-network` | `python --version`을 확인합니다. 3.14 환경을 계속 사용하지 말고 `venv`를 Python 3.12로 다시 만든 뒤 전체 requirements를 설치합니다. |
+| `No module named uvicorn` | `scikit-network` 단계에서 설치가 중단되어 `uvicorn`까지 도달하지 못한 상태입니다. 활성 Python이 `backend/venv`의 3.12인지 확인하고 `python -m pip install -r requirements.txt`를 다시 완료합니다. |
+| Git Bash에서 `C:Workspaces...` 또는 `Activate.ps1` 오류 | Git Bash 경로는 `/c/Workspaces2/...`, 활성화는 `source venv/Scripts/activate`입니다. PowerShell 명령과 섞지 않습니다. |
+| RDS 연결 timeout (`172.31.x.x`) | 사설 RDS는 로컬 PC에서 직접 접근할 수 없습니다. 로컬 개발은 `.env.local`의 SQLite를 사용하고, RDS가 꼭 필요하면 승인된 VPN·VPC 접속 경로를 사용합니다. |
+| 첫 시작이 오래 걸리거나 임베딩 연결 오류 | 로컬 `.env.local`에서 `RAG_INDEX_ON_STARTUP=false`인지 확인합니다. 이 설정에서도 기존 FAISS 인덱스는 로드됩니다. |
+| `frontend/dist/assets`가 없음 | 백엔드는 assets가 없어도 시작되도록 처리되어 있습니다. 완성된 화면이 필요하면 `frontend`에서 `npm run build`를 실행합니다. |
+
+정상 기동 확인:
+
+```bash
+curl http://localhost:8888/health
+# {"status":"healthy"}
+```
 
 ## 검증 명령
 

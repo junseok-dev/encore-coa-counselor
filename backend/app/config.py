@@ -10,11 +10,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 이전엔 env_file=".env" (상대경로)였는데, backend가 아닌 디렉터리에서 서버를 띄우면
 # pydantic_settings가 .env를 찾지 못해 admin이 변경해도 default만 반환되던 버그가 있었음.
 ENV_FILE_PATH = Path(__file__).resolve().parent.parent / ".env"
+LOCAL_ENV_FILE_PATH = ENV_FILE_PATH.with_name(".env.local")
 
 # pydantic-settings는 .env를 Settings 객체에만 로드하고 os.environ엔 넣지 않는다.
 # 그런데 langsmith SDK 등 외부 라이브러리는 os.environ에서 설정을 읽으므로, 여기서
 # .env를 os.environ에도 반영한다(이미 설정된 환경변수는 override하지 않음).
 load_dotenv(ENV_FILE_PATH)
+# Local-only overrides (for example, a SQLite development database) stay out of
+# the shared .env and are ignored by Git.
+if LOCAL_ENV_FILE_PATH.exists():
+    load_dotenv(LOCAL_ENV_FILE_PATH, override=True)
 
 # LangSmith 트레이싱 활성화 플래그를 표준 키(LANGSMITH_TRACING)로 보장한다.
 # SDK가 인식하는 키는 LANGSMITH_TRACING / LANGCHAIN_TRACING_V2이며, 과거 .env가 쓰던
@@ -33,6 +38,7 @@ class Settings(BaseSettings):
     model_name: str = "gpt-5.4-mini"  # 생성 모델: nano→mini (재설계 검증에서 품질·지시준수 점프 확인)
     intent_model_name: str = "gpt-5.4-nano"  # 라우터는 분류라 nano 유지(8갈래 오분류 보이면 mini로)
     embedding_model: str = "text-embedding-3-large"
+    rag_index_on_startup: bool = True
     # RAG 검색 점수 임계값 (임베딩 모델 교체 시 재튜닝 대상 → .env로 조정 가능)
     reject_threshold: float = 1.0   # 이 점수 미만이면 LLM 호출 없이 유도 응답
     verify_threshold: float = 3.5   # 이 점수 미만이면 verify_node가 사실성 재검증 (비스트리밍 경로)
