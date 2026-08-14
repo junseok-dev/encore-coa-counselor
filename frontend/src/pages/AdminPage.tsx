@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import {
   Bot,
-  BarChart3,
+  BellRing,
   HelpCircle,
   Database,
   FileCheck2,
@@ -21,8 +21,8 @@ import {
 } from 'lucide-react';
 import { adminApi, clearAdminToken, getAdminToken, saveAdminToken } from '../services/api';
 import InfoTooltip from '../components/admin/InfoTooltip';
-import OperationsDashboard from '../components/admin/OperationsDashboard';
-import OperationsAnalytics from '../components/admin/OperationsAnalytics';
+import AdminOperationsOverview from '../components/admin/AdminOperationsOverview';
+import OperationsReview from '../components/admin/OperationsReview';
 import CostManagement from '../components/admin/CostManagement';
 import SecurityVault from '../components/admin/SecurityVault';
 import {
@@ -38,6 +38,8 @@ import {
   DbTableMeta,
   EncryptionSettings,
   ModelSettings,
+  CostManagementData,
+  OpenAiCostData,
   OperationsDashboardData,
   OperationsAnalyticsData,
   PermissionsData,
@@ -47,14 +49,14 @@ import {
   SystemHealthData,
 } from '../types';
 
-type TabKey = 'dashboard' | 'analytics' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'security' | 'settings' | 'permissions';
+type TabKey = 'dashboard' | 'improvements' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'security' | 'settings' | 'permissions';
 
 const NAV_GROUPS: { label: string; items: { key: TabKey; label: string; icon: typeof LayoutDashboard }[] }[] = [
   {
     label: '운영',
     items: [
       { key: 'dashboard' as const, label: '대시보드', icon: LayoutDashboard },
-      { key: 'analytics' as const, label: '데이터 분석', icon: BarChart3 },
+      { key: 'improvements' as const, label: '개선 검토', icon: BellRing },
       { key: 'costs' as const, label: '비용 관리', icon: WalletCards },
     ],
   },
@@ -81,7 +83,7 @@ const NAV_GROUPS: { label: string; items: { key: TabKey; label: string; icon: ty
 
 const PAGE_META: Record<TabKey, { title: string; description: string }> = {
   dashboard: { title: '운영 대시보드', description: '방문과 대화 흐름, 상담 전환, 취소·안전 신호를 한눈에 확인합니다.' },
-  analytics: { title: '데이터 분석', description: '월별·시간대별 이용 패턴과 질문·답변 유형을 분석합니다.' },
+  improvements: { title: '개선 검토', description: '감지된 대화의 원인을 확인하고 수정한 답변을 다시 검증합니다.' },
   costs: { title: '비용 관리', description: '업로드한 원화 비용을 월·서비스·일자별로 관리하고 분석합니다.' },
   documents: { title: '문서 검토', description: '업로드 문서를 검토하고 승인된 지식만 운영 검색에 반영합니다.' },
   faqs: { title: 'FAQ 관리', description: '자주 묻는 질문과 답변, 검색 키워드를 관리합니다.' },
@@ -237,6 +239,8 @@ export default function AdminPage() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsYear, setAnalyticsYear] = useState('all');
   const [analyticsMonth, setAnalyticsMonth] = useState('all');
+  const [dashboardCostData, setDashboardCostData] = useState<CostManagementData | null>(null);
+  const [dashboardOpenAiCostData, setDashboardOpenAiCostData] = useState<OpenAiCostData | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
 
@@ -414,6 +418,21 @@ export default function AdminPage() {
     }
   };
 
+  const loadDashboardCosts = async () => {
+    const now = new Date();
+    const billingMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const [costResult, openAiResult] = await Promise.allSettled([
+      adminApi.getCostManagement(billingMonth, '249173798473'),
+      adminApi.getOpenAiCosts(billingMonth),
+    ]);
+    if (costResult.status === 'fulfilled') setDashboardCostData(costResult.value);
+    if (openAiResult.status === 'fulfilled') setDashboardOpenAiCostData(openAiResult.value);
+  };
+
+  const refreshOperationsDashboard = async () => {
+    await Promise.all([loadOperations(), loadSystemHealth(), loadAnalytics(), loadDashboardCosts()]);
+  };
+
   const handleAnalyticsYearChange = (selectedYear: string) => {
     setAnalyticsYear(selectedYear);
     if (selectedYear === 'all') {
@@ -484,13 +503,14 @@ export default function AdminPage() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab === 'analytics' && authenticated) {
+    if (activeTab === 'dashboard' && authenticated) {
       void loadAnalytics();
+      void loadDashboardCosts();
     }
   }, [activeTab, authenticated]);
 
   useEffect(() => {
-    if (!authenticated || activeTab !== 'dashboard') return;
+    if (!authenticated || (activeTab !== 'dashboard' && activeTab !== 'improvements')) return;
     const timer = window.setInterval(() => {
       void loadOperations();
       void loadSystemHealth();
@@ -1179,28 +1199,34 @@ export default function AdminPage() {
 
         {activeTab === 'dashboard' && (
           <div className="mt-5">
-            <OperationsDashboard
+            <AdminOperationsOverview
               data={operationsData}
               loading={loading || operationsLoading}
+              analyticsData={analyticsData}
+              analyticsLoading={analyticsLoading}
+              analyticsYear={analyticsYear}
+              analyticsMonth={analyticsMonth}
+              costData={dashboardCostData}
+              openAiCostData={dashboardOpenAiCostData}
               systemHealth={systemHealth}
               healthLoading={healthLoading}
-              onRefreshHealth={loadSystemHealth}
-              onRefreshOperations={loadOperations}
-              onOpenPrompts={() => setActiveTab('prompts')}
+              onRefresh={refreshOperationsDashboard}
+              onYearChange={handleAnalyticsYearChange}
+              onMonthChange={handleAnalyticsMonthChange}
+              onRefreshAnalytics={loadAnalytics}
+              onOpenReview={() => setActiveTab('improvements')}
+              onOpenCosts={() => setActiveTab('costs')}
             />
           </div>
         )}
 
-        {activeTab === 'analytics' && (
+        {activeTab === 'improvements' && (
           <div className="mt-5">
-            <OperationsAnalytics
-              data={analyticsData}
-              loading={analyticsLoading}
-              selectedYear={analyticsYear}
-              selectedMonth={analyticsMonth}
-              onYearChange={handleAnalyticsYearChange}
-              onMonthChange={handleAnalyticsMonthChange}
-              onRefresh={loadAnalytics}
+            <OperationsReview
+              data={operationsData}
+              loading={loading || operationsLoading}
+              onRefresh={loadOperations}
+              onOpenPrompts={() => setActiveTab('prompts')}
             />
           </div>
         )}

@@ -1,17 +1,4 @@
-import {
-  AlertTriangle,
-  BarChart3,
-  Bot,
-  CalendarDays,
-  Globe2,
-  Headphones,
-  HelpCircle,
-  MessageCircle,
-  RefreshCw,
-  CreditCard,
-  ShieldAlert,
-  Users,
-} from 'lucide-react';
+import { BarChart3, Bot, CalendarDays, Headphones, HelpCircle, RefreshCw } from 'lucide-react';
 import { OperationsAnalyticsData } from '../../types';
 
 interface OperationsAnalyticsProps {
@@ -28,16 +15,6 @@ function periodTitle(selectedYear: string, selectedMonth: string, fallback?: str
   if (selectedYear === 'all') return fallback ?? '전체 기간';
   if (selectedMonth === 'all') return `${selectedYear}년 전체`;
   return `${selectedYear}년 ${Number(selectedMonth)}월`;
-}
-
-function SummaryCard({ label, value, description, tone, icon: Icon }: { label: string; value: string; description: string; tone: string; icon: typeof Users }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-center gap-2 text-xs font-bold text-slate-500"><Icon className={`h-4 w-4 ${tone}`} />{label}</div>
-      <p className="mt-3 text-2xl font-black text-slate-950">{value}</p>
-      <p className="mt-1 text-[11px] leading-4 text-slate-400">{description}</p>
-    </div>
-  );
 }
 
 function OperationsSignalChart({ data, singleMonth }: { data: OperationsAnalyticsData; singleMonth: boolean }) {
@@ -95,27 +72,16 @@ export default function OperationsAnalytics({ data, loading, selectedYear, selec
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 rounded-2xl bg-[linear-gradient(120deg,#172554,#0e7490)] px-6 py-5 text-white shadow-lg sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15"><BarChart3 className="h-6 w-6 text-cyan-200" /></span><div><p className="text-sm font-semibold text-cyan-100">운영 데이터 분석</p><h1 className="mt-1 text-2xl font-black">운영 KPI와 신호 분석</h1><p className="mt-1 text-xs text-blue-100">{label}에 실제 저장된 데이터만 집계합니다. 전체를 선택하면 보유한 전체 기간이 합산됩니다.</p></div></div>
+      <section className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><BarChart3 className="h-5 w-5" /></span><div><h2 className="font-black text-slate-950">운영 데이터 분석</h2><p className="mt-1 text-xs text-slate-500">{label}에 실제 저장된 데이터만 집계합니다.</p></div></div>
         <div className="flex flex-wrap items-center gap-2">
-          <select aria-label="분석 연도 선택" value={selectedYear} onChange={(event) => onYearChange(event.target.value)} disabled={loading} className="min-w-32 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-bold text-white outline-none disabled:opacity-50 [&>option]:text-slate-900"><option value="all">전체 연도</option>{(data?.available_years ?? []).map((year) => <option key={year} value={year}>{year}년</option>)}</select>
-          <select aria-label="분석 월 선택" value={selectedMonth} onChange={(event) => onMonthChange(event.target.value)} disabled={loading || selectedYear === 'all'} className="min-w-28 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-bold text-white outline-none disabled:opacity-50 [&>option]:text-slate-900"><option value="all">전체 월</option>{Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0')).map((month) => <option key={month} value={month}>{Number(month)}월</option>)}</select>
-          <button onClick={() => void onRefresh()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-xs font-bold ring-1 ring-white/20 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />새로고침</button>
+          <select aria-label="분석 연도 선택" value={selectedYear} onChange={(event) => onYearChange(event.target.value)} disabled={loading} className="min-w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none disabled:opacity-50"><option value="all">전체 연도</option>{(data?.available_years ?? []).map((year) => <option key={year} value={year}>{year}년</option>)}</select>
+          <select aria-label="분석 월 선택" value={selectedMonth} onChange={(event) => onMonthChange(event.target.value)} disabled={loading || selectedYear === 'all'} className="min-w-28 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none disabled:opacity-50"><option value="all">전체 월</option>{Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0')).map((month) => <option key={month} value={month}>{Number(month)}월</option>)}</select>
+          <button onClick={() => void onRefresh()} disabled={loading} title="분석 데이터 새로고침" className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
         </div>
-      </div>
+      </section>
 
       {data && !hasData && <div className="flex items-start gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-4"><CalendarDays className="mt-0.5 h-5 w-5 text-slate-400" /><div><p className="text-sm font-bold text-slate-800">{label} 데이터가 없습니다.</p><p className="mt-1 text-xs leading-5 text-slate-500">선택한 기간에 저장된 방문·질문·상담 기록이 없습니다. 다른 연도·월 또는 전체 기간을 선택해 주세요.</p></div></div>}
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="방문자" value={`${summary.visitors.toLocaleString()}명`} description={`${label} 새 대화 세션`} icon={Users} tone="text-violet-600" />
-        <SummaryCard label="채팅" value={`${summary.chats.toLocaleString()}건`} description="실제 저장된 사용자 질문" icon={MessageCircle} tone="text-cyan-600" />
-        <SummaryCard label="상담 연결" value={`${summary.handoffs.toLocaleString()}건`} description="상담 연결 및 상담 권유" icon={Headphones} tone="text-violet-600" />
-        <SummaryCard label="취소 요청" value={`${summary.cancels.toLocaleString()}건`} description="취소 요청 접수 건수" icon={CalendarDays} tone="text-amber-600" />
-        <SummaryCard label="환불 요청" value={`${summary.refunds.toLocaleString()}건`} description="환불·환급 처리 요청" icon={CreditCard} tone="text-emerald-600" />
-        <SummaryCard label="홈페이지 요청" value={`${summary.homepage_requests.toLocaleString()}건`} description="공식 사이트·링크 요청" icon={Globe2} tone="text-cyan-600" />
-        <SummaryCard label="안전 위험" value={`${summary.safety.toLocaleString()}건`} description="안전 가드레일 감지" icon={ShieldAlert} tone="text-rose-600" />
-        <SummaryCard label="처리 오류" value={`${summary.failed.toLocaleString()}건`} description="응답 생성·저장 실패" icon={AlertTriangle} tone="text-slate-600" />
-      </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-950">{isSingleMonth ? '일별 운영 신호 발생 추이' : '월별 운영 신호 발생 추이'}</h2><p className="mt-1 text-xs text-slate-500">{label}의 주요 요청과 위험·오류 신호가 언제 증가했는지 확인합니다.</p></div><div className="flex flex-wrap gap-4 text-xs font-bold text-slate-500"><span className="flex items-center gap-1.5"><span className="h-2.5 w-4 rounded bg-violet-500" />상담 연결</span><span className="flex items-center gap-1.5"><span className="h-2.5 w-4 rounded bg-amber-500" />취소</span><span className="flex items-center gap-1.5"><span className="h-2.5 w-4 rounded bg-emerald-500" />환불</span><span className="flex items-center gap-1.5"><span className="h-2.5 w-4 rounded bg-cyan-500" />홈페이지</span><span className="flex items-center gap-1.5"><span className="h-2.5 w-4 rounded bg-rose-500" />안전</span><span className="flex items-center gap-1.5"><span className="h-2.5 w-4 rounded bg-slate-600" />오류</span></div></div><div className="mt-4">{data && hasData ? <OperationsSignalChart data={data} singleMonth={isSingleMonth} /> : <p className="py-20 text-center text-sm text-slate-400">{loading ? '분석 중입니다.' : `${label} 운영 신호 데이터가 없습니다.`}</p>}</div></section>
 

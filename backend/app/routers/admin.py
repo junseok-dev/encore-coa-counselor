@@ -8,7 +8,9 @@ import os
 import re
 import secrets
 from time import perf_counter
-from urllib.parse import quote
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 from datetime import date, datetime, time, timedelta
@@ -64,7 +66,7 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "documents": "문서 관리 — 업로드·파싱·임베딩·승인 상태 추적",
     "chunks": "문서 청크 — RAG 검색에 사용되는 텍스트 조각",
     "cancel_requests": "취소 요청 내역",
-    "operations_alerts": "긴급 운영 알림 — 확인 시작·처리 완료 상태 관리",
+    "operations_alerts": "답변 개선 검토 — 확인 시작·처리 완료 상태 관리",
     "system_health_probes": "시스템 상태 점검 — 데이터베이스 저장 가능 여부 확인",
     "billing_daily_cost_records": "계정·서비스·일자별 실제 원화 사용 금액",
     "billing_cost_upload_records": "월별 n·Xavis 원본 비용 파일 — 마지막 업로드 파일 보관",
@@ -476,10 +478,7 @@ def _operations_summary(
     logs: list[ChatLog],
     cancels: list[CancelRequest],
 ) -> dict:
-    handoffs = [
-        row for row in logs
-        if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff"
-    ]
+    handoffs = [row for row in logs if row.processing_status == "handoff" or row.source == "handoff"]
     safety = [row for row in logs if row.source == "guardrail"]
     failed = [row for row in logs if row.processing_status == "failed" or bool(row.error)]
     refund_count = sum(1 for row in cancels if _is_refund_request(decrypt_if_needed(row.message)))
@@ -495,6 +494,7 @@ def _operations_summary(
         "homepage_requests": homepage_request_count,
         "safety": len(safety),
         "failed": len(failed),
+        "avg_questions_per_session": round(len(logs) / len(sessions), 1) if sessions else 0,
     }
 
 
@@ -1104,7 +1104,7 @@ def get_operations_analytics(
         month_key = local_created_at.strftime("%Y-%m")
         if month_key in monthly_map:
             monthly_map[month_key]["chats"] += 1
-            if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff":
+            if row.processing_status == "handoff" or row.source == "handoff":
                 monthly_map[month_key]["handoffs"] += 1
             if row.source == "guardrail":
                 monthly_map[month_key]["safety"] += 1
@@ -1116,7 +1116,7 @@ def get_operations_analytics(
         day_key = local_created_at.date().isoformat()
         if day_key in daily_map:
             daily_map[day_key]["chats"] += 1
-            if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff":
+            if row.processing_status == "handoff" or row.source == "handoff":
                 daily_map[day_key]["handoffs"] += 1
             if row.source == "guardrail":
                 daily_map[day_key]["safety"] += 1
@@ -1453,7 +1453,7 @@ def get_operations_dashboard(
     for row in current_logs:
         bucket = daily_map[row.created_at.date().isoformat()]
         bucket["chats"] += 1
-        if row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff":
+        if row.processing_status == "handoff" or row.source == "handoff":
             bucket["handoffs"] += 1
         if row.source == "guardrail":
             bucket["safety"] += 1
@@ -1511,9 +1511,9 @@ def get_operations_dashboard(
         signal_type = None
         severity = "medium"
         if request_signal == "refund":
-            signal_type, severity, reason = "refund", "high", "환불 요청 접수"
+            signal_type, severity, reason = "refund", "medium", "환불 요청 접수"
         elif request_signal == "cancel":
-            signal_type, severity, reason = "cancel", "high", "취소 요청 접수"
+            signal_type, severity, reason = "cancel", "medium", "취소 요청 접수"
         elif row.source == "guardrail":
             signal_type, severity, reason = "safety", "high", "안전 가드레일 감지"
         elif row.processing_status == "failed" or error:
@@ -1622,6 +1622,119 @@ def get_operations_dashboard(
             }
             for row in recent_sessions
         ],
+    }
+
+
+@router.get("/operations/openai-costs")
+def get_openai_costs(
+    billing_month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    _: None = Depends(verify_admin),
+):
+    settings = get_settings()
+    fetched_at = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+    if not settings.openai_admin_key:
+        return {
+            "billing_month": billing_month,
+            "configured": False,
+            "status": "not_configured",
+            "message": "OPENAI_ADMIN_KEY를 설정하면 조직의 실제 청구 비용을 표시합니다.",
+            "currency": "usd",
+            "total_usd": 0,
+            "daily": [],
+            "line_items": [],
+            "fetched_at": fetched_at,
+        }
+
+    try:
+        month_start = datetime.strptime(billing_month, "%Y-%m").date().replace(day=1)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.") from exc
+    month_end = _shift_month(month_start, 1)
+    start_time = int(datetime.combine(month_start, time.min, tzinfo=ZoneInfo("UTC")).timestamp())
+    end_time = int(datetime.combine(month_end, time.min, tzinfo=ZoneInfo("UTC")).timestamp())
+
+    daily_map: dict[str, float] = {}
+    line_item_map: dict[str, float] = {}
+    currency = "usd"
+    page: str | None = None
+
+    try:
+        while True:
+            params: dict[str, object] = {
+                "start_time": start_time,
+                "end_time": end_time,
+                "bucket_width": "1d",
+                "limit": 31,
+                "group_by": ["line_item"],
+            }
+            if settings.openai_project_id:
+                params["project_ids"] = [settings.openai_project_id]
+            if page:
+                params["page"] = page
+            request = Request(
+                f"https://api.openai.com/v1/organization/costs?{urlencode(params, doseq=True)}",
+                headers={
+                    "Authorization": f"Bearer {settings.openai_admin_key}",
+                    "Accept": "application/json",
+                },
+            )
+            with urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+
+            for bucket in payload.get("data", []):
+                bucket_date = datetime.fromtimestamp(bucket["start_time"], tz=ZoneInfo("UTC")).date().isoformat()
+                for result in bucket.get("results", []):
+                    amount = result.get("amount") or {}
+                    value = float(amount.get("value") or 0)
+                    currency = str(amount.get("currency") or currency).lower()
+                    daily_map[bucket_date] = daily_map.get(bucket_date, 0) + value
+                    line_item = str(result.get("line_item") or "기타")
+                    line_item_map[line_item] = line_item_map.get(line_item, 0) + value
+
+            if not payload.get("has_more") or not payload.get("next_page"):
+                break
+            page = str(payload["next_page"])
+    except HTTPError as exc:
+        message = "OpenAI 비용 조회 권한을 확인해 주세요." if exc.code in (401, 403) else "OpenAI 비용 데이터를 불러오지 못했습니다."
+        return {
+            "billing_month": billing_month,
+            "configured": True,
+            "status": "error",
+            "message": message,
+            "currency": "usd",
+            "total_usd": 0,
+            "daily": [],
+            "line_items": [],
+            "fetched_at": fetched_at,
+        }
+    except (URLError, TimeoutError, ValueError, KeyError, json.JSONDecodeError):
+        return {
+            "billing_month": billing_month,
+            "configured": True,
+            "status": "error",
+            "message": "OpenAI 비용 데이터를 불러오지 못했습니다.",
+            "currency": "usd",
+            "total_usd": 0,
+            "daily": [],
+            "line_items": [],
+            "fetched_at": fetched_at,
+        }
+
+    daily = [{"date": key, "amount_usd": round(value, 6)} for key, value in sorted(daily_map.items())]
+    line_items = [
+        {"line_item": key, "amount_usd": round(value, 6)}
+        for key, value in sorted(line_item_map.items(), key=lambda item: item[1], reverse=True)
+    ]
+    return {
+        "billing_month": billing_month,
+        "configured": True,
+        "status": "available",
+        "message": "OpenAI 조직 청구 비용 기준입니다.",
+        "currency": currency,
+        "total_usd": round(sum(daily_map.values()), 6),
+        "daily": daily,
+        "line_items": line_items,
+        "fetched_at": fetched_at,
     }
 
 

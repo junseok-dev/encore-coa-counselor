@@ -173,7 +173,7 @@ export default function OperationsAlertDetailPanel({
         <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4 sm:px-7">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-xl font-black text-slate-950">긴급 확인 큐 상세</h2>
+              <h2 className="text-xl font-black text-slate-950">답변 개선 검토 상세</h2>
               <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${status === 'resolved' ? 'bg-emerald-100 text-emerald-700' : status === 'checking' ? 'bg-blue-100 text-blue-700' : 'bg-rose-100 text-rose-700'}`}>
                 {status === 'resolved' ? '처리 완료' : status === 'checking' ? '확인 중' : '미확인'}
               </span>
