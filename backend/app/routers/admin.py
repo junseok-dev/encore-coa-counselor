@@ -23,7 +23,8 @@ from fastapi.responses import Response
 from openai import AsyncOpenAI
 from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel
-from sqlalchemy import func, inspect as sa_inspect, or_, text
+from sqlalchemy import Column, DateTime, Integer, MetaData, Table, func, inspect as sa_inspect, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import ENV_FILE_PATH, get_settings
@@ -51,6 +52,7 @@ from app.services.prompt_service import PROMPT_DEFAULTS, seed_prompt_configs, se
 from app.services.question_category_service import categorize_question_rule, classify_questions_batch
 from app.services.storage_service import read_text_from_storage, storage_exists
 from app.utils.crypto import ENCRYPTED_PREFIX, decrypt_if_needed, encrypt, maybe_encrypt
+from app.utils.data_names import clean_data_name, data_name_key
 
 router = APIRouter()
 
@@ -2399,23 +2401,67 @@ def list_data_tables(db: Session = Depends(get_db), _: None = Depends(verify_adm
                 row_count = 0
         else:
             row_count = 0
-        result.append({"id": t.id, "name": t.name, "description": t.description, "row_count": row_count, "created_at": t.created_at})
+        result.append({
+            "id": t.id,
+            "name": t.name,
+            "description": t.description,
+            "physical_name": real_table,
+            "row_count": row_count,
+            "created_at": t.created_at,
+        })
     return {"tables": result}
 
 
 @router.post("/data-tables", status_code=201)
 def create_data_table(body: CreateTableRequest, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
-    if not body.name.strip():
+    table_name = clean_data_name(body.name)
+    if not table_name:
         raise HTTPException(status_code=400, detail="테이블 이름을 입력해주세요.")
-    table = CustomTable(name=body.name.strip(), description=body.description.strip())
+    if len(table_name) > 100:
+        raise HTTPException(status_code=400, detail="테이블 이름은 100자 이하여야 합니다.")
+
+    name_key = data_name_key(table_name)
+    if db.query(CustomTable).filter(CustomTable.name_key == name_key).first():
+        raise HTTPException(status_code=409, detail="같은 이름의 데이터 테이블이 이미 있습니다.")
+
+    table = CustomTable(
+        name=table_name,
+        name_key=name_key,
+        description=body.description.strip(),
+    )
     db.add(table)
-    db.commit()
-    db.refresh(table)
-    real_table = f"cdata_{table.id}"
-    db.execute(text(f'CREATE TABLE IF NOT EXISTS "{real_table}" (id SERIAL PRIMARY KEY, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())'))  # noqa: S608
-    db.commit()
-    create_audit_log(db, "data_table_created", "custom_table", str(table.id), body.name)
-    return {"id": table.id, "name": table.name, "description": table.description}
+    physical_table = None
+    try:
+        db.flush()
+        real_table = f"cdata_{table.id}"
+        physical_table = Table(
+            real_table,
+            MetaData(),
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("created_at", DateTime(timezone=True), server_default=func.now()),
+            Column("updated_at", DateTime(timezone=True), server_default=func.now()),
+        )
+        physical_table.create(bind=db.connection(), checkfirst=False)
+        db.commit()
+        db.refresh(table)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="같은 이름의 데이터 테이블이 이미 있습니다.") from exc
+    except Exception as exc:
+        db.rollback()
+        if physical_table is not None:
+            physical_table.drop(bind=db.bind, checkfirst=True)
+        raise HTTPException(status_code=500, detail="데이터 테이블을 생성하지 못했습니다.") from exc
+
+    create_audit_log(db, "data_table_created", "custom_table", str(table.id), table.name)
+    return {
+        "id": table.id,
+        "name": table.name,
+        "description": table.description,
+        "physical_name": f"cdata_{table.id}",
+        "row_count": 0,
+        "created_at": table.created_at,
+    }
 
 
 @router.get("/data-tables/export-all")
@@ -2541,20 +2587,37 @@ def _validate_row_keys(db: Session, table_id: int, data: dict) -> None:
 def add_column(table_id: int, body: CreateColumnRequest, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
     if not db.query(CustomTable).filter(CustomTable.id == table_id).first():
         raise HTTPException(status_code=404, detail="테이블을 찾을 수 없습니다.")
-    if not body.column_name.strip():
-        raise HTTPException(status_code=400, detail="컬럼 이름을 입력해주세요.")
     if body.column_type not in ("text", "number", "date"):
         raise HTTPException(status_code=400, detail="컬럼 타입은 text, number, date 중 하나여야 합니다.")
-    max_order = db.query(CustomColumn).filter(CustomColumn.table_id == table_id).count()
     col_name = _validate_col_name(body.column_name)
-    col = CustomColumn(table_id=table_id, column_name=col_name, column_type=body.column_type, sort_order=max_order)
+    column_name_key = data_name_key(col_name)
+    if db.query(CustomColumn).filter(
+        CustomColumn.table_id == table_id,
+        CustomColumn.column_name_key == column_name_key,
+    ).first():
+        raise HTTPException(status_code=409, detail="같은 이름의 컬럼이 이미 있습니다.")
+    max_order = db.query(CustomColumn).filter(CustomColumn.table_id == table_id).count()
+    col = CustomColumn(
+        table_id=table_id,
+        column_name=col_name,
+        column_name_key=column_name_key,
+        column_type=body.column_type,
+        sort_order=max_order,
+    )
     db.add(col)
-    db.commit()
-    db.refresh(col)
-    sql_type = _COL_TYPE_MAP.get(body.column_type, "TEXT")
-    real_table = f"cdata_{table_id}"
-    db.execute(text(f'ALTER TABLE "{real_table}" ADD COLUMN IF NOT EXISTS {_qi(col_name)} {sql_type}'))  # noqa: S608
-    db.commit()
+    try:
+        db.flush()
+        sql_type = _COL_TYPE_MAP.get(body.column_type, "TEXT")
+        real_table = f"cdata_{table_id}"
+        db.execute(text(f'ALTER TABLE "{real_table}" ADD COLUMN {_qi(col_name)} {sql_type}'))  # noqa: S608
+        db.commit()
+        db.refresh(col)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="같은 이름의 컬럼이 이미 있습니다.") from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="컬럼을 추가하지 못했습니다.") from exc
     return {"id": col.id, "column_name": col.column_name, "column_type": col.column_type, "sort_order": col.sort_order}
 
 
@@ -2578,11 +2641,27 @@ def rename_column(table_id: int, column_id: int, body: UpdateColumnRequest, db: 
     if not col:
         raise HTTPException(status_code=404, detail="컬럼을 찾을 수 없습니다.")
     new_name = _validate_col_name(body.column_name)
+    new_name_key = data_name_key(new_name)
+    duplicate = db.query(CustomColumn).filter(
+        CustomColumn.table_id == table_id,
+        CustomColumn.column_name_key == new_name_key,
+        CustomColumn.id != column_id,
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="같은 이름의 컬럼이 이미 있습니다.")
     old_name = col.column_name
     real_table = f"cdata_{table_id}"
-    db.execute(text(f'ALTER TABLE "{real_table}" RENAME COLUMN {_qi(old_name)} TO {_qi(new_name)}'))  # noqa: S608
-    col.column_name = new_name
-    db.commit()
+    try:
+        db.execute(text(f'ALTER TABLE "{real_table}" RENAME COLUMN {_qi(old_name)} TO {_qi(new_name)}'))  # noqa: S608
+        col.column_name = new_name
+        col.column_name_key = new_name_key
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="같은 이름의 컬럼이 이미 있습니다.") from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="컬럼 이름을 변경하지 못했습니다.") from exc
     return {"id": col.id, "column_name": col.column_name, "column_type": col.column_type, "sort_order": col.sort_order}
 
 
@@ -2731,9 +2810,9 @@ async def import_table_data(table_id: int, file: UploadFile = File(...), db: Ses
 def list_db_tables(db: Session = Depends(get_db), _: None = Depends(verify_admin)):
     inspector = sa_inspect(db.bind)
     tables = sorted(inspector.get_table_names())
-    custom_meta: dict[str, tuple[str, str]] = {}
+    custom_meta: dict[str, tuple[int, str, str]] = {}
     for ct in db.query(CustomTable).all():
-        custom_meta[f"cdata_{ct.id}"] = (ct.name, ct.description or "")
+        custom_meta[f"cdata_{ct.id}"] = (ct.id, ct.name, ct.description or "")
     result = []
     for table_name in tables:
         try:
@@ -2742,12 +2821,23 @@ def list_db_tables(db: Session = Depends(get_db), _: None = Depends(verify_admin
             count = -1
         columns = [col["name"] for col in inspector.get_columns(table_name)]
         if table_name in custom_meta:
-            display_name, description = custom_meta[table_name]
+            custom_table_id, display_name, description = custom_meta[table_name]
             display_name = f"[데이터] {display_name}"
+            table_kind = "custom"
         else:
+            custom_table_id = None
             display_name = table_name
             description = TABLE_DESCRIPTIONS.get(table_name, "")
-        result.append({"name": table_name, "display_name": display_name, "description": description, "row_count": count, "columns": columns})
+            table_kind = "system"
+        result.append({
+            "name": table_name,
+            "display_name": display_name,
+            "description": description,
+            "row_count": count,
+            "columns": columns,
+            "table_kind": table_kind,
+            "custom_table_id": custom_table_id,
+        })
     return {"tables": result}
 
 

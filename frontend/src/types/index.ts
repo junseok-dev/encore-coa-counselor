@@ -515,6 +515,7 @@ export interface CustomTableSummary {
   id: number;
   name: string;
   description: string | null;
+  physical_name: string;
   row_count: number;
   created_at: string;
 }
@@ -546,6 +547,8 @@ export interface DbTableMeta {
   description: string;
   row_count: number;
   columns: string[];
+  table_kind: 'system' | 'custom';
+  custom_table_id: number | null;
 }
 
 export interface DbTableData {

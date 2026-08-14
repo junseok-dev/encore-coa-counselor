@@ -3,6 +3,8 @@ from __future__ import annotations
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
+from app.utils.data_names import data_name_key
+
 
 def _column_sql(table_name: str, column_name: str) -> str | None:
     if table_name == "documents":
@@ -71,6 +73,71 @@ def _drop_legacy_tables(engine: Engine) -> None:
             connection.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
 
 
+def _legacy_unique_key(base_key: str, row_id: int, used: set[str]) -> str:
+    candidate = base_key or f"unnamed-{row_id}"
+    if candidate not in used:
+        used.add(candidate)
+        return candidate
+    suffix = f"~legacy-{row_id}"
+    candidate = f"{candidate[:120 - len(suffix)]}{suffix}"
+    used.add(candidate)
+    return candidate
+
+
+def _ensure_custom_data_name_keys(engine: Engine) -> None:
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "custom_tables" not in tables or "custom_columns" not in tables:
+        return
+
+    table_columns = {column["name"] for column in inspector.get_columns("custom_tables")}
+    column_columns = {column["name"] for column in inspector.get_columns("custom_columns")}
+
+    with engine.begin() as connection:
+        if "name_key" not in table_columns:
+            connection.execute(text("ALTER TABLE custom_tables ADD COLUMN name_key VARCHAR(120)"))
+        if "column_name_key" not in column_columns:
+            connection.execute(text("ALTER TABLE custom_columns ADD COLUMN column_name_key VARCHAR(120)"))
+
+        used_table_keys: set[str] = set()
+        for row in connection.execute(text("SELECT id, name FROM custom_tables ORDER BY id")):
+            key = _legacy_unique_key(data_name_key(row.name), row.id, used_table_keys)
+            connection.execute(
+                text("UPDATE custom_tables SET name_key = :key WHERE id = :id"),
+                {"key": key, "id": row.id},
+            )
+
+        used_column_keys: dict[int, set[str]] = {}
+        for row in connection.execute(
+            text("SELECT id, table_id, column_name FROM custom_columns ORDER BY table_id, id")
+        ):
+            used = used_column_keys.setdefault(row.table_id, set())
+            key = _legacy_unique_key(data_name_key(row.column_name), row.id, used)
+            connection.execute(
+                text("UPDATE custom_columns SET column_name_key = :key WHERE id = :id"),
+                {"key": key, "id": row.id},
+            )
+
+        existing_table_uniques = {
+            tuple(constraint["column_names"])
+            for constraint in inspect(connection).get_unique_constraints("custom_tables")
+        }
+        existing_column_uniques = {
+            tuple(constraint["column_names"])
+            for constraint in inspect(connection).get_unique_constraints("custom_columns")
+        }
+        if ("name_key",) not in existing_table_uniques:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_custom_tables_name_key "
+                "ON custom_tables (name_key)"
+            ))
+        if ("table_id", "column_name_key") not in existing_column_uniques:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_custom_columns_table_name_key "
+                "ON custom_columns (table_id, column_name_key)"
+            ))
+
+
 def migrate_database(engine: Engine) -> None:
     inspector = inspect(engine)
 
@@ -118,4 +185,5 @@ def migrate_database(engine: Engine) -> None:
                 ))
 
     _ensure_text_columns(engine)
+    _ensure_custom_data_name_keys(engine)
     _drop_legacy_tables(engine)
