@@ -3000,8 +3000,14 @@ def change_model(body: ModelChangeRequest, db: Session = Depends(get_db), _: Non
     if not _is_chat_model(model_name):
         raise HTTPException(status_code=400, detail="유효한 채팅 모델 ID가 아닙니다.")
     set_active_model(db, model_name)
+    applied_model = get_active_model()
+    if applied_model != model_name:
+        raise HTTPException(status_code=500, detail="모델 설정이 저장되지 않았습니다. 다시 시도해주세요.")
     create_audit_log(db, "model_changed", "system", "model_name", model_name)
-    return {"message": f"모델을 {model_name}으로 변경했습니다.", "model_name": model_name}
+    return {
+        "message": f"모델을 {model_name}으로 변경했습니다. 다음 새 답변부터 적용됩니다.",
+        "model_name": applied_model,
+    }
 
 
 @router.get("/security-vault/status")

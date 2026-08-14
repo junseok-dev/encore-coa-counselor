@@ -2249,8 +2249,8 @@ export default function AdminPage() {
             <section className="rounded-3xl bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">LLM 모델 설정</h2>
-                  <p className="mt-1 text-sm text-slate-500">변경 즉시 모든 답변에 적용됩니다. 목록은 OpenAI API에서 실시간 조회합니다.</p>
+                  <h2 className="text-lg font-semibold text-slate-900">답변 생성 모델</h2>
+                  <p className="mt-1 text-sm text-slate-500">변경하면 다음 새 답변 생성부터 즉시 적용됩니다. 진행 중인 답변과 분류·검증 모델은 변경되지 않습니다.</p>
                 </div>
                 <button onClick={() => { setModelSettings(null); void loadModelSettings(); }} className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600">새로고침</button>
               </div>
