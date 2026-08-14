@@ -44,7 +44,7 @@ class CustomDataCatalogTest(unittest.TestCase):
 
         self.assertEqual("custom", item["table_kind"])
         self.assertEqual(created["id"], item["custom_table_id"])
-        self.assertEqual("[데이터] 상담 신청", item["display_name"])
+        self.assertEqual("상담 신청", item["display_name"])
 
     def test_normalized_duplicate_table_name_is_rejected(self):
         self.create_table("상담   신청")

@@ -554,10 +554,7 @@ export interface DbTableMeta {
 export interface DbTableData {
   columns: string[];
   rows: Record<string, unknown>[];
-  editable?: boolean;
-  droppable?: boolean;
-  restriction_reason?: string | null;
-  protected_columns?: string[];
+  read_only: boolean;
   total: number;
   page: number;
   limit: number;

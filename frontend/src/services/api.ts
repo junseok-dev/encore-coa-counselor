@@ -491,21 +491,6 @@ export const adminApi = {
     return response.data;
   },
 
-  updateDbRow: async (tableName: string, rowId: number, values: Record<string, unknown>): Promise<{ message: string }> => {
-    const response = await adminApiClient.put(`/admin/db/tables/${tableName}/rows/${rowId}`, { values });
-    return response.data;
-  },
-
-  deleteDbRow: async (tableName: string, rowId: number): Promise<{ message: string }> => {
-    const response = await adminApiClient.delete(`/admin/db/tables/${tableName}/rows/${rowId}`);
-    return response.data;
-  },
-
-  dropDbTable: async (tableName: string): Promise<{ message: string }> => {
-    const response = await adminApiClient.delete(`/admin/db/tables/${tableName}`);
-    return response.data;
-  },
-
   exportDataTable: async (tableId: number, tableName: string): Promise<void> => {
     const response = await adminApiClient.get(`/admin/data-tables/${tableId}/export`, { responseType: 'blob' });
     const url = window.URL.createObjectURL(response.data);
