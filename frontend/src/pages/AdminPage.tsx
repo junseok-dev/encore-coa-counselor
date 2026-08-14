@@ -465,7 +465,6 @@ export default function AdminPage() {
       void loadDashboard();
       void loadSystemHealth();
       void loadDataTables();
-      void loadDbTables();
       void loadPermissionAccess();
     } else {
       setPermissionsData(null);
@@ -485,6 +484,12 @@ export default function AdminPage() {
       void loadTableDetail(dataTables[0].id);
     }
   }, [activeTab, dataTables]);
+
+  useEffect(() => {
+    if (activeTab === 'db' && authenticated) {
+      void loadDbTables();
+    }
+  }, [activeTab, authenticated]);
 
   useEffect(() => {
     if (activeTab === 'db' && dbTables.length > 0 && !selectedDbTable) {
@@ -842,8 +847,7 @@ export default function AdminPage() {
     try {
       const result = await adminApi.importTableData(selectedTable.id, file);
       setNotice(result.message);
-      await loadTableDetail(selectedTable.id);
-      await loadDataTables();
+      await Promise.all([loadTableDetail(selectedTable.id), loadDataTables(), loadDbTables()]);
     } catch {
       setNotice('가져오기에 실패했습니다. 파일 형식과 컬럼명을 확인해주세요.');
     } finally {
@@ -858,9 +862,10 @@ export default function AdminPage() {
     if (!col || col.column_name === editingColNameVal.trim()) { setEditingColId(null); return; }
     try {
       await adminApi.renameColumn(selectedTable.id, colId, editingColNameVal.trim());
-      await loadTableDetail(selectedTable.id);
-    } catch {
-      setNotice('컬럼 이름 변경에 실패했습니다.');
+      await Promise.all([loadTableDetail(selectedTable.id), loadDbTables()]);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(msg ?? '컬럼 이름 변경에 실패했습니다.');
     } finally {
       setEditingColId(null);
     }
@@ -879,14 +884,15 @@ export default function AdminPage() {
   const handleCreateTable = async () => {
     if (!newTableName.trim()) return;
     try {
-      await adminApi.createDataTable(newTableName.trim(), newTableDesc.trim());
+      const created = await adminApi.createDataTable(newTableName.trim(), newTableDesc.trim());
       setNewTableName('');
       setNewTableDesc('');
       setShowNewTableForm(false);
-      await loadDataTables();
-      setNotice('테이블이 생성되었습니다.');
-    } catch {
-      setNotice('테이블 생성에 실패했습니다.');
+      await Promise.all([loadDataTables(), loadDbTables(), loadTableDetail(created.id)]);
+      setNotice('테이블이 생성되었습니다. DB 브라우저에도 반영했습니다.');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(msg ?? '테이블 생성에 실패했습니다.');
     }
   };
 
@@ -895,7 +901,11 @@ export default function AdminPage() {
     try {
       await adminApi.deleteDataTable(tableId);
       if (selectedTable?.id === tableId) setSelectedTable(null);
-      await loadDataTables();
+      if (selectedDbTable === `cdata_${tableId}`) {
+        setSelectedDbTable(null);
+        setDbTableData(null);
+      }
+      await Promise.all([loadDataTables(), loadDbTables()]);
       setNotice('테이블이 삭제되었습니다.');
     } catch {
       setNotice('테이블 삭제에 실패했습니다.');
@@ -908,9 +918,10 @@ export default function AdminPage() {
       await adminApi.addColumn(selectedTable.id, newColName.trim(), newColType);
       setNewColName('');
       setNewColType('text');
-      await loadTableDetail(selectedTable.id);
-    } catch {
-      setNotice('컬럼 추가에 실패했습니다.');
+      await Promise.all([loadTableDetail(selectedTable.id), loadDbTables()]);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(msg ?? '컬럼 추가에 실패했습니다.');
     }
   };
 
@@ -919,7 +930,7 @@ export default function AdminPage() {
     if (!confirm('이 컬럼과 해당 데이터가 삭제됩니다.')) return;
     try {
       await adminApi.deleteColumn(selectedTable.id, colId);
-      await loadTableDetail(selectedTable.id);
+      await Promise.all([loadTableDetail(selectedTable.id), loadDbTables()]);
     } catch {
       setNotice('컬럼 삭제에 실패했습니다.');
     }
@@ -934,8 +945,7 @@ export default function AdminPage() {
         await adminApi.updateRow(selectedTable.id, editingRow.id, editingRow.data);
       }
       setEditingRow(null);
-      await loadTableDetail(selectedTable.id);
-      await loadDataTables();
+      await Promise.all([loadTableDetail(selectedTable.id), loadDataTables(), loadDbTables()]);
     } catch {
       setNotice('저장에 실패했습니다.');
     }
@@ -945,8 +955,7 @@ export default function AdminPage() {
     if (!selectedTable) return;
     try {
       await adminApi.deleteRow(selectedTable.id, rowId);
-      await loadTableDetail(selectedTable.id);
-      await loadDataTables();
+      await Promise.all([loadTableDetail(selectedTable.id), loadDataTables(), loadDbTables()]);
     } catch {
       setNotice('행 삭제에 실패했습니다.');
     }
@@ -992,6 +1001,11 @@ export default function AdminPage() {
     setSelectedDbTable(tableName);
     setDbPage(1);
     await loadDbTableData(tableName, 1);
+  };
+
+  const handleOpenCustomTableFromDb = async (tableId: number) => {
+    setActiveTab('data');
+    await loadTableDetail(tableId);
   };
 
   const openEditDbRow = (row: Record<string, unknown>) => {
@@ -1872,6 +1886,18 @@ export default function AdminPage() {
                       })()}
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      {(() => {
+                        const customTableId = dbTables.find((table) => table.name === selectedDbTable)?.custom_table_id;
+                        return customTableId ? (
+                          <button
+                            onClick={() => void handleOpenCustomTableFromDb(customTableId)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-sm font-medium text-cyan-700 hover:bg-cyan-100"
+                          >
+                            <Table2 className="h-4 w-4" />
+                            데이터 관리에서 편집
+                          </button>
+                        ) : null;
+                      })()}
                       <button onClick={() => void loadDbTableData(selectedDbTable, dbPage - 1)} disabled={dbPage <= 1} className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm disabled:opacity-30">← 이전</button>
                       <button onClick={() => void loadDbTableData(selectedDbTable, dbPage + 1)} disabled={dbPage * dbTableData.limit >= dbTableData.total} className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm disabled:opacity-30">다음 →</button>
                       {dbTableData.droppable && (

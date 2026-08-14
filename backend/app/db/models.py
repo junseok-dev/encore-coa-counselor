@@ -270,19 +270,25 @@ class AdminAuditLog(Base):
 
 class CustomTable(Base):
     __tablename__ = "custom_tables"
+    __table_args__ = (UniqueConstraint("name_key", name="uq_custom_tables_name_key"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
+    name_key = Column(String(120), nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class CustomColumn(Base):
     __tablename__ = "custom_columns"
+    __table_args__ = (
+        UniqueConstraint("table_id", "column_name_key", name="uq_custom_columns_table_name_key"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     table_id = Column(Integer, ForeignKey("custom_tables.id"), nullable=False, index=True)
     column_name = Column(String(100), nullable=False)
+    column_name_key = Column(String(120), nullable=False)
     column_type = Column(String(20), nullable=False, default="text")  # text | number | date
     sort_order = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
