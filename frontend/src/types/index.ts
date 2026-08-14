@@ -62,6 +62,11 @@ export interface PermissionsData {
   admins: AdminInfo[];
 }
 
+export interface PermissionAccess {
+  current_user: string;
+  is_superadmin: boolean;
+}
+
 export interface Conversation {
   id: string;
   title: string;

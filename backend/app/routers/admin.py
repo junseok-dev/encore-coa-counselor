@@ -95,7 +95,7 @@ def verify_admin(authorization: str = Header(None)) -> str:
 
 def verify_superadmin(current_user: str = Depends(verify_admin)) -> str:
     if current_user != get_settings().admin_email:
-        raise HTTPException(status_code=403, detail="최상위 관리자만 보안 정보에 접근할 수 있습니다.")
+        raise HTTPException(status_code=403, detail="최상위 관리자만 접근할 수 있습니다.")
     return current_user
 
 
@@ -3192,10 +3192,8 @@ class ChangeSuperadminRequest(BaseModel):
 def change_superadmin(
     body: ChangeSuperadminRequest,
     db: Session = Depends(get_db),
-    current_user: str = Depends(verify_admin),
+    current_user: str = Depends(verify_superadmin),
 ):
-    if current_user != get_settings().admin_email:
-        raise HTTPException(status_code=403, detail="최상위 관리자만 이 작업을 수행할 수 있습니다.")
     new_email = body.new_email.strip().lower()
     if not new_email or "@" not in new_email:
         raise HTTPException(status_code=400, detail="유효한 이메일을 입력해주세요.")
@@ -3214,8 +3212,16 @@ class AddPermissionRequest(BaseModel):
     email: str
 
 
+@router.get("/permissions/access")
+def get_permission_access(current_user: str = Depends(verify_admin)):
+    return {
+        "current_user": current_user,
+        "is_superadmin": current_user == get_settings().admin_email,
+    }
+
+
 @router.get("/permissions")
-def list_permissions(db: Session = Depends(get_db), current_user: str = Depends(verify_admin)):
+def list_permissions(db: Session = Depends(get_db), current_user: str = Depends(verify_superadmin)):
     users = db.query(AdminUser).order_by(AdminUser.created_at).all()
     return {
         "superadmin": get_settings().admin_email,
@@ -3232,7 +3238,7 @@ def list_permissions(db: Session = Depends(get_db), current_user: str = Depends(
 
 
 @router.post("/permissions", status_code=201)
-def add_permission(body: AddPermissionRequest, db: Session = Depends(get_db), current_user: str = Depends(verify_admin)):
+def add_permission(body: AddPermissionRequest, db: Session = Depends(get_db), current_user: str = Depends(verify_superadmin)):
     if not body.email or "@" not in body.email:
         raise HTTPException(status_code=400, detail="유효한 이메일을 입력해주세요.")
     if db.query(AdminUser).filter(AdminUser.email == body.email).first():
@@ -3245,7 +3251,7 @@ def add_permission(body: AddPermissionRequest, db: Session = Depends(get_db), cu
 
 
 @router.delete("/permissions/{email}")
-def remove_permission(email: str, db: Session = Depends(get_db), current_user: str = Depends(verify_admin)):
+def remove_permission(email: str, db: Session = Depends(get_db), current_user: str = Depends(verify_superadmin)):
     if email == get_settings().admin_email:
         raise HTTPException(status_code=400, detail="기본 관리자 이메일은 제거할 수 없습니다.")
     if email == current_user:

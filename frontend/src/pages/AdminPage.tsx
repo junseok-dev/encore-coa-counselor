@@ -42,6 +42,7 @@ import {
   OpenAiCostData,
   OperationsDashboardData,
   OperationsAnalyticsData,
+  PermissionAccess,
   PermissionsData,
   ProcessingLog,
   PromptConfig,
@@ -292,16 +293,17 @@ export default function AdminPage() {
 
   // 권한 관리
   const [permissionsData, setPermissionsData] = useState<PermissionsData | null>(null);
+  const [permissionAccess, setPermissionAccess] = useState<PermissionAccess | null>(null);
   const [permLoading, setPermLoading] = useState(false);
   const [newPermEmail, setNewPermEmail] = useState('');
   const [permSaving, setPermSaving] = useState(false);
   const [newSuperadminEmail, setNewSuperadminEmail] = useState('');
   const [superadminSaving, setSuperadminSaving] = useState(false);
-  const isSuperadmin = permissionsData?.superadmin === permissionsData?.current_user;
+  const isSuperadmin = permissionAccess?.is_superadmin ?? false;
   const visibleNavGroups = useMemo(
     () => NAV_GROUPS.map((group) => ({
       ...group,
-      items: group.items.filter((item) => item.key !== 'security' || isSuperadmin),
+      items: group.items.filter((item) => !['security', 'permissions'].includes(item.key) || isSuperadmin),
     })),
     [isSuperadmin],
   );
@@ -464,18 +466,19 @@ export default function AdminPage() {
       void loadSystemHealth();
       void loadDataTables();
       void loadDbTables();
-      void loadPermissions();
+      void loadPermissionAccess();
     } else {
       setPermissionsData(null);
+      setPermissionAccess(null);
       setActiveTab('dashboard');
     }
   }, [authenticated]);
 
   useEffect(() => {
-    if (permissionsData && !isSuperadmin && activeTab === 'security') {
+    if (permissionAccess && !isSuperadmin && ['security', 'permissions'].includes(activeTab)) {
       setActiveTab('dashboard');
     }
-  }, [activeTab, isSuperadmin, permissionsData]);
+  }, [activeTab, isSuperadmin, permissionAccess]);
 
   useEffect(() => {
     if (activeTab === 'data' && dataTables.length > 0 && !selectedTable) {
@@ -497,10 +500,10 @@ export default function AdminPage() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab === 'permissions' && authenticated) {
+    if (activeTab === 'permissions' && authenticated && isSuperadmin) {
       void loadPermissions();
     }
-  }, [activeTab]);
+  }, [activeTab, authenticated, isSuperadmin]);
 
   useEffect(() => {
     if (activeTab === 'dashboard' && authenticated) {
@@ -565,6 +568,15 @@ export default function AdminPage() {
       setNotice('권한 목록을 불러오지 못했습니다.');
     } finally {
       setPermLoading(false);
+    }
+  };
+
+  const loadPermissionAccess = async () => {
+    try {
+      const result = await adminApi.getPermissionAccess();
+      setPermissionAccess(result);
+    } catch {
+      setPermissionAccess(null);
     }
   };
 
@@ -1937,7 +1949,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {activeTab === 'permissions' && (
+        {activeTab === 'permissions' && isSuperadmin && (
           <div className="mt-6 space-y-6">
             {/* 최상위 관리자 */}
             <section className="rounded-3xl bg-white p-6 shadow-sm">
