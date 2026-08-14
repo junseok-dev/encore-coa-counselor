@@ -214,6 +214,7 @@ export interface OperationsMetricSummary {
   homepage_requests: number;
   safety: number;
   failed: number;
+  avg_questions_per_session: number;
 }
 
 export interface OperationsDailyMetric {
@@ -358,6 +359,28 @@ export interface CostManagementData {
   service_daily_rows: CostServiceDailyRow[];
   monthly_history: CostMonthlyTotal[];
   uploaded_file: CostUploadedFile | null;
+}
+
+export interface OpenAiDailyCost {
+  date: string;
+  amount_usd: number;
+}
+
+export interface OpenAiCostLineItem {
+  line_item: string;
+  amount_usd: number;
+}
+
+export interface OpenAiCostData {
+  billing_month: string;
+  configured: boolean;
+  status: 'available' | 'not_configured' | 'error';
+  message: string;
+  currency: string;
+  total_usd: number;
+  daily: OpenAiDailyCost[];
+  line_items: OpenAiCostLineItem[];
+  fetched_at: string;
 }
 
 export type SystemHealthStatus = 'healthy' | 'degraded' | 'critical' | 'unknown' | 'not_configured';

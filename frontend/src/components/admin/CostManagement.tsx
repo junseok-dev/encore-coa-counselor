@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Download, ExternalLink, FileSpreadsheet, Info, RefreshCw, Upload, WalletCards } from 'lucide-react';
+import { Bot, CalendarDays, Download, ExternalLink, FileSpreadsheet, Info, RefreshCw, Upload, WalletCards } from 'lucide-react';
 import { adminApi } from '../../services/api';
-import { CostManagementData } from '../../types';
+import { CostManagementData, OpenAiCostData } from '../../types';
 
 const SERVICE_COLORS = ['#7dd3fc', '#2563eb', '#06b6d4', '#10b981', '#f59e0b', '#94a3b8', '#f43f5e', '#6366f1', '#8b5cf6', '#14b8a6'];
 const TARGET_ACCOUNT_ID = '249173798473';
@@ -14,6 +14,12 @@ function currentMonth() {
 
 function krw(value: number | null | undefined) {
   return value === null || value === undefined ? '-' : `${new Intl.NumberFormat('ko-KR').format(value)}원`;
+}
+
+function usd(value: number | null | undefined) {
+  return value === null || value === undefined
+    ? '-'
+    : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value);
 }
 
 function fileSize(value: number) {
@@ -107,6 +113,7 @@ function DailyStackedChart({ data }: { data: CostManagementData }) {
 export default function CostManagement() {
   const [billingMonth, setBillingMonth] = useState(currentMonth);
   const [data, setData] = useState<CostManagementData | null>(null);
+  const [openAiData, setOpenAiData] = useState<OpenAiCostData | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -120,15 +127,19 @@ export default function CostManagement() {
 
   const load = async (month = billingMonth) => {
     setLoading(true);
-    try {
-      const result = await adminApi.getCostManagement(month, TARGET_ACCOUNT_ID);
-      setData(result);
+    const openAiMonth = month === 'all' ? currentMonth() : month;
+    const [costResult, openAiResult] = await Promise.allSettled([
+      adminApi.getCostManagement(month, TARGET_ACCOUNT_ID),
+      adminApi.getOpenAiCosts(openAiMonth),
+    ]);
+    if (costResult.status === 'fulfilled') {
+      setData(costResult.value);
       setMessage('');
-    } catch {
+    } else {
       setMessage('비용 데이터를 불러오지 못했습니다.');
-    } finally {
-      setLoading(false);
     }
+    setOpenAiData(openAiResult.status === 'fulfilled' ? openAiResult.value : null);
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -204,6 +215,23 @@ export default function CostManagement() {
       </section>
 
       {message && <div className="rounded-xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">{message}</div>}
+
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Bot className="h-5 w-5" /></span>
+            <div><h2 className="font-black text-slate-950">OpenAI API 비용</h2><p className="mt-0.5 text-xs text-slate-500">{isAllPeriod ? `${currentMonth()} 청구 비용` : `${billingMonth} 청구 비용`} · OpenAI 조직 비용 기준</p></div>
+          </div>
+          <span className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${openAiData?.status === 'available' ? 'bg-emerald-100 text-emerald-700' : openAiData?.status === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'}`}>
+            {openAiData?.status === 'available' ? '연동됨' : openAiData?.status === 'error' ? '조회 오류' : '설정 필요'}
+          </span>
+        </div>
+        <div className="grid gap-px bg-slate-200 lg:grid-cols-[0.7fr_1fr_1.3fr]">
+          <div className="bg-white p-5"><p className="text-xs font-bold text-slate-500">월 누적 청구 비용</p><p className="mt-2 text-3xl font-black text-emerald-700">{usd(openAiData?.total_usd)}</p><p className="mt-3 text-xs leading-5 text-slate-400">{openAiData?.message ?? 'OpenAI 비용 상태를 확인하는 중입니다.'}</p></div>
+          <div className="bg-white p-5"><p className="text-xs font-bold text-slate-500">비용 항목</p><div className="mt-3 space-y-2">{openAiData?.line_items.length ? openAiData.line_items.slice(0, 5).map((item) => <div key={item.line_item} className="flex items-center justify-between gap-3 text-sm"><span className="truncate text-slate-600">{item.line_item}</span><b className="shrink-0 text-slate-900">{usd(item.amount_usd)}</b></div>) : <p className="py-5 text-sm text-slate-400">표시할 비용 항목이 없습니다.</p>}</div></div>
+          <div className="bg-white p-5"><p className="text-xs font-bold text-slate-500">일별 비용 추이</p><div className="mt-4 flex h-28 items-end gap-1">{openAiData?.daily.length ? openAiData.daily.map((item) => { const max = Math.max(...openAiData.daily.map((day) => day.amount_usd), 0.000001); return <div key={item.date} className="group flex h-full min-w-1 flex-1 items-end" title={`${item.date} ${usd(item.amount_usd)}`}><span className="block w-full rounded-t bg-emerald-400 transition group-hover:bg-emerald-600" style={{ height: `${Math.max(4, item.amount_usd / max * 100)}%` }} /></div>; }) : <p className="m-auto text-sm text-slate-400">표시할 일별 비용이 없습니다.</p>}</div></div>
+        </div>
+      </section>
 
       <div className="grid gap-4 md:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold text-slate-500">{isAllPeriod ? '전체 사용 비용' : `${billingMonth} 사용 비용`}</p><p className="mt-2 text-3xl font-black text-slate-950">{krw(data?.usage_total_krw)}</p><p className="mt-3 text-xs text-slate-400">업로드된 원화 비용 자료 기준</p></div>

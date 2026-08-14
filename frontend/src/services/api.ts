@@ -18,6 +18,7 @@ import {
   EncryptionSettings,
   ModelSettings,
   OperationsDashboardData,
+  OpenAiCostData,
   OperationsAnalyticsData,
   OperationsAlertDetail,
   OperationsAlertTestResult,
@@ -180,6 +181,13 @@ export const adminApi = {
   getCostManagement: async (billingMonth: string, accountId = 'all'): Promise<CostManagementData> => {
     const response = await adminApiClient.get<CostManagementData>('/admin/operations/cost-management', {
       params: { billing_month: billingMonth, account_id: accountId },
+    });
+    return response.data;
+  },
+
+  getOpenAiCosts: async (billingMonth: string): Promise<OpenAiCostData> => {
+    const response = await adminApiClient.get<OpenAiCostData>('/admin/operations/openai-costs', {
+      params: { billing_month: billingMonth },
     });
     return response.data;
   },
