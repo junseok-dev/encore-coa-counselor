@@ -81,6 +81,91 @@ class CustomDataCatalogTest(unittest.TestCase):
         self.assertEqual(500, context.exception.status_code)
         self.assertEqual(0, self.db.query(CustomTable).count())
 
+    def test_table_rows_support_column_search_and_pagination(self):
+        created = self.create_table()
+        for column_name in ("이름", "지역"):
+            admin.add_column(
+                created["id"],
+                admin.CreateColumnRequest(column_name=column_name, column_type="text"),
+                self.db,
+                None,
+            )
+        for name, region in (("김민수", "서울"), ("이서연", "부산"), ("박지훈", "서울")):
+            admin.add_row(
+                created["id"],
+                admin.UpsertRowRequest(data={"이름": name, "지역": region}),
+                self.db,
+                None,
+            )
+
+        first_page = admin.get_data_table(
+            created["id"],
+            query="서울",
+            search_column="지역",
+            page=1,
+            limit=1,
+            db=self.db,
+            _=None,
+        )
+        second_page = admin.get_data_table(
+            created["id"],
+            query="서울",
+            search_column="지역",
+            page=2,
+            limit=1,
+            db=self.db,
+            _=None,
+        )
+
+        self.assertEqual(2, first_page["total"])
+        self.assertEqual(2, first_page["total_pages"])
+        self.assertEqual("박지훈", first_page["rows"][0]["data"]["이름"])
+        self.assertEqual("김민수", second_page["rows"][0]["data"]["이름"])
+
+    def test_table_rows_search_all_columns_case_insensitively(self):
+        created = self.create_table()
+        admin.add_column(
+            created["id"],
+            admin.CreateColumnRequest(column_name="메모", column_type="text"),
+            self.db,
+            None,
+        )
+        admin.add_row(
+            created["id"],
+            admin.UpsertRowRequest(data={"메모": "Follow UP"}),
+            self.db,
+            None,
+        )
+
+        result = admin.get_data_table(
+            created["id"],
+            query="follow up",
+            search_column="",
+            page=1,
+            limit=50,
+            db=self.db,
+            _=None,
+        )
+
+        self.assertEqual(1, result["total"])
+        self.assertEqual("Follow UP", result["rows"][0]["data"]["메모"])
+
+    def test_unknown_search_column_is_rejected(self):
+        created = self.create_table()
+
+        with self.assertRaises(HTTPException) as context:
+            admin.get_data_table(
+                created["id"],
+                query="검색어",
+                search_column="없는 컬럼",
+                page=1,
+                limit=50,
+                db=self.db,
+                _=None,
+            )
+
+        self.assertEqual(400, context.exception.status_code)
+
 
 class CustomDataMigrationTest(unittest.TestCase):
     def test_existing_database_gets_unique_normalized_name_keys(self):

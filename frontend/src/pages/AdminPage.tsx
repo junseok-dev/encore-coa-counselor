@@ -317,6 +317,12 @@ export default function AdminPage() {
   const [dataTables, setDataTables] = useState<CustomTableSummary[]>([]);
   const [selectedTable, setSelectedTable] = useState<CustomTableDetail | null>(null);
   const [dataLoading, setDataLoading] = useState(false);
+  const [dataTableQuery, setDataTableQuery] = useState('');
+  const [dataRowQueryInput, setDataRowQueryInput] = useState('');
+  const [dataRowQuery, setDataRowQuery] = useState('');
+  const [dataSearchColumn, setDataSearchColumn] = useState('');
+  const [dataAppliedSearchColumn, setDataAppliedSearchColumn] = useState('');
+  const [dataPage, setDataPage] = useState(1);
   const [showNewTableForm, setShowNewTableForm] = useState(false);
   const [newTableName, setNewTableName] = useState('');
   const [newTableDesc, setNewTableDesc] = useState('');
@@ -481,7 +487,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (activeTab === 'data' && dataTables.length > 0 && !selectedTable) {
-      void loadTableDetail(dataTables[0].id);
+      void handleSelectDataTable(dataTables[0].id);
     }
   }, [activeTab, dataTables]);
 
@@ -815,17 +821,56 @@ export default function AdminPage() {
     }
   };
 
-  const loadTableDetail = async (tableId: number) => {
+  const loadTableDetail = async (tableId: number, page = 1, query = '', searchColumn = '') => {
     setDataLoading(true);
     try {
-      const detail = await adminApi.getDataTable(tableId);
+      const detail = await adminApi.getDataTable(tableId, {
+        page,
+        limit: 50,
+        query: query || undefined,
+        search_column: searchColumn || undefined,
+      });
       setSelectedTable(detail);
+      setDataPage(detail.page);
       setEditingRow(null);
     } catch {
       setNotice('테이블 데이터를 불러오지 못했습니다.');
     } finally {
       setDataLoading(false);
     }
+  };
+
+  const handleSelectDataTable = async (tableId: number) => {
+    setDataRowQueryInput('');
+    setDataRowQuery('');
+    setDataSearchColumn('');
+    setDataAppliedSearchColumn('');
+    setDataPage(1);
+    await loadTableDetail(tableId);
+  };
+
+  const handleFilterDataRows = async () => {
+    if (!selectedTable) return;
+    const query = dataRowQueryInput.trim();
+    setDataRowQuery(query);
+    setDataAppliedSearchColumn(dataSearchColumn);
+    setDataPage(1);
+    await loadTableDetail(selectedTable.id, 1, query, dataSearchColumn);
+  };
+
+  const handleResetDataRows = async () => {
+    if (!selectedTable) return;
+    setDataRowQueryInput('');
+    setDataRowQuery('');
+    setDataSearchColumn('');
+    setDataAppliedSearchColumn('');
+    setDataPage(1);
+    await loadTableDetail(selectedTable.id);
+  };
+
+  const handleDataPageChange = async (nextPage: number) => {
+    if (!selectedTable || nextPage < 1 || nextPage > selectedTable.total_pages) return;
+    await loadTableDetail(selectedTable.id, nextPage, dataRowQuery, dataAppliedSearchColumn);
   };
 
   const handleExportAll = async () => {
@@ -847,7 +892,7 @@ export default function AdminPage() {
     try {
       const result = await adminApi.importTableData(selectedTable.id, file);
       setNotice(result.message);
-      await Promise.all([loadTableDetail(selectedTable.id), loadDataTables(), loadDbTables()]);
+      await Promise.all([handleSelectDataTable(selectedTable.id), loadDataTables(), loadDbTables()]);
     } catch {
       setNotice('가져오기에 실패했습니다. 파일 형식과 컬럼명을 확인해주세요.');
     } finally {
@@ -862,7 +907,7 @@ export default function AdminPage() {
     if (!col || col.column_name === editingColNameVal.trim()) { setEditingColId(null); return; }
     try {
       await adminApi.renameColumn(selectedTable.id, colId, editingColNameVal.trim());
-      await Promise.all([loadTableDetail(selectedTable.id), loadDbTables()]);
+      await Promise.all([handleSelectDataTable(selectedTable.id), loadDbTables()]);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setNotice(msg ?? '컬럼 이름 변경에 실패했습니다.');
@@ -875,7 +920,7 @@ export default function AdminPage() {
     if (!selectedTable) return;
     try {
       await adminApi.reorderColumn(selectedTable.id, colId, direction);
-      await loadTableDetail(selectedTable.id);
+      await handleSelectDataTable(selectedTable.id);
     } catch {
       setNotice('컬럼 순서 변경에 실패했습니다.');
     }
@@ -888,7 +933,7 @@ export default function AdminPage() {
       setNewTableName('');
       setNewTableDesc('');
       setShowNewTableForm(false);
-      await Promise.all([loadDataTables(), loadDbTables(), loadTableDetail(created.id)]);
+      await Promise.all([loadDataTables(), loadDbTables(), handleSelectDataTable(created.id)]);
       setNotice('테이블이 생성되었습니다. DB 브라우저에도 반영했습니다.');
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
@@ -918,7 +963,7 @@ export default function AdminPage() {
       await adminApi.addColumn(selectedTable.id, newColName.trim(), newColType);
       setNewColName('');
       setNewColType('text');
-      await Promise.all([loadTableDetail(selectedTable.id), loadDbTables()]);
+      await Promise.all([handleSelectDataTable(selectedTable.id), loadDbTables()]);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setNotice(msg ?? '컬럼 추가에 실패했습니다.');
@@ -930,7 +975,7 @@ export default function AdminPage() {
     if (!confirm('이 컬럼과 해당 데이터가 삭제됩니다.')) return;
     try {
       await adminApi.deleteColumn(selectedTable.id, colId);
-      await Promise.all([loadTableDetail(selectedTable.id), loadDbTables()]);
+      await Promise.all([handleSelectDataTable(selectedTable.id), loadDbTables()]);
     } catch {
       setNotice('컬럼 삭제에 실패했습니다.');
     }
@@ -945,7 +990,11 @@ export default function AdminPage() {
         await adminApi.updateRow(selectedTable.id, editingRow.id, editingRow.data);
       }
       setEditingRow(null);
-      await Promise.all([loadTableDetail(selectedTable.id), loadDataTables(), loadDbTables()]);
+      await Promise.all([
+        loadTableDetail(selectedTable.id, dataPage, dataRowQuery, dataAppliedSearchColumn),
+        loadDataTables(),
+        loadDbTables(),
+      ]);
     } catch {
       setNotice('저장에 실패했습니다.');
     }
@@ -955,7 +1004,11 @@ export default function AdminPage() {
     if (!selectedTable) return;
     try {
       await adminApi.deleteRow(selectedTable.id, rowId);
-      await Promise.all([loadTableDetail(selectedTable.id), loadDataTables(), loadDbTables()]);
+      await Promise.all([
+        loadTableDetail(selectedTable.id, dataPage, dataRowQuery, dataAppliedSearchColumn),
+        loadDataTables(),
+        loadDbTables(),
+      ]);
     } catch {
       setNotice('행 삭제에 실패했습니다.');
     }
@@ -1005,13 +1058,19 @@ export default function AdminPage() {
 
   const handleOpenCustomTableFromDb = async (tableId: number) => {
     setActiveTab('data');
-    await loadTableDetail(tableId);
+    await handleSelectDataTable(tableId);
   };
 
   const documentRows = useMemo(
     () => [...documents].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
     [documents],
   );
+
+  const visibleDataTables = useMemo(() => {
+    const query = dataTableQuery.trim().toLocaleLowerCase('ko-KR');
+    return dataTables.filter((table) => !query || [table.name, table.description ?? '']
+      .some((value) => value.toLocaleLowerCase('ko-KR').includes(query)));
+  }, [dataTableQuery, dataTables]);
 
   const visibleDbTables = useMemo(() => {
     const query = dbTableQuery.trim().toLocaleLowerCase('ko-KR');
@@ -1510,9 +1569,9 @@ export default function AdminPage() {
         )}
 
         {activeTab === 'data' && (
-          <div className="mt-6 flex gap-6">
+          <div className="mt-6 grid gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
             {/* 왼쪽: 테이블 목록 */}
-            <div className="w-64 shrink-0">
+            <div className="min-w-0">
               <div className="rounded-3xl bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-1">
                   <h2 className="text-sm font-semibold text-slate-900">테이블 목록</h2>
@@ -1538,18 +1597,30 @@ export default function AdminPage() {
                     </div>
                   </div>
                 )}
+                <div className="relative mt-3">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={dataTableQuery}
+                    onChange={(event) => setDataTableQuery(event.target.value)}
+                    placeholder="테이블 검색"
+                    className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-cyan-400"
+                  />
+                </div>
                 <div className="mt-3 space-y-1">
                   {dataTables.length === 0 && <p className="text-xs text-slate-400">테이블이 없습니다.</p>}
-                  {dataTables.map((t) => (
+                  {visibleDataTables.map((t) => (
                     <button
                       key={t.id}
-                      onClick={() => void loadTableDetail(t.id)}
+                      onClick={() => void handleSelectDataTable(t.id)}
                       className={`w-full rounded-xl px-3 py-2 text-left text-sm ${selectedTable?.id === t.id ? 'bg-slate-900 text-white' : 'hover:bg-slate-100 text-slate-700'}`}
                     >
                       <div className="font-medium">{t.name}</div>
                       <div className={`text-xs ${selectedTable?.id === t.id ? 'text-slate-300' : 'text-slate-400'}`}>{t.row_count}행</div>
                     </button>
                   ))}
+                  {dataTables.length > 0 && visibleDataTables.length === 0 && (
+                    <p className="px-2 py-5 text-center text-xs text-slate-400">검색 결과가 없습니다.</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -1662,8 +1733,15 @@ export default function AdminPage() {
 
                   {/* 데이터 테이블 */}
                   <div className="rounded-3xl bg-white p-5 shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-medium text-slate-700">데이터 ({selectedTable.rows.length}행)</h3>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-medium text-slate-700">데이터 {selectedTable.total.toLocaleString()}건</h3>
+                        {dataRowQuery && (
+                          <p className="mt-0.5 text-xs text-slate-400">
+                            {dataAppliedSearchColumn || '전체 컬럼'} · {dataRowQuery}
+                          </p>
+                        )}
+                      </div>
                       <button
                         onClick={() => setEditingRow({ id: null, data: Object.fromEntries(selectedTable.columns.map((c) => [c.column_name, ''])) })}
                         className="rounded-xl bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
@@ -1673,8 +1751,43 @@ export default function AdminPage() {
                     {selectedTable.columns.length === 0 ? (
                       <p className="mt-4 text-sm text-slate-400">먼저 컬럼을 추가해 주세요.</p>
                     ) : (
-                      <div className="mt-3 overflow-x-auto">
-                        <table className="w-full text-sm">
+                      <>
+                        <form
+                          className="mt-4 flex flex-wrap items-center gap-2 border-y border-slate-100 py-3"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void handleFilterDataRows();
+                          }}
+                        >
+                          <select
+                            value={dataSearchColumn}
+                            onChange={(event) => setDataSearchColumn(event.target.value)}
+                            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-cyan-400"
+                            aria-label="검색 컬럼"
+                          >
+                            <option value="">전체 컬럼</option>
+                            {selectedTable.columns.map((column) => (
+                              <option key={column.id} value={column.column_name}>{column.column_name}</option>
+                            ))}
+                          </select>
+                          <div className="relative min-w-48 flex-1">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            <input
+                              value={dataRowQueryInput}
+                              onChange={(event) => setDataRowQueryInput(event.target.value)}
+                              placeholder="데이터 검색"
+                              maxLength={100}
+                              className="h-9 w-full rounded-xl border border-slate-200 pl-9 pr-3 text-sm outline-none focus:border-cyan-400"
+                            />
+                          </div>
+                          <button type="submit" className="h-9 rounded-xl bg-slate-900 px-4 text-sm font-medium text-white">검색</button>
+                          {(dataRowQuery || dataRowQueryInput || dataSearchColumn) && (
+                            <button type="button" onClick={() => void handleResetDataRows()} className="h-9 rounded-xl border border-slate-200 px-3 text-sm text-slate-600 hover:bg-slate-50">초기화</button>
+                          )}
+                        </form>
+
+                        <div className="mt-3 overflow-x-auto">
+                          <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
                               {selectedTable.columns.map((col) => (
@@ -1737,11 +1850,37 @@ export default function AdminPage() {
                               </tr>
                             ))}
                             {selectedTable.rows.length === 0 && !editingRow && (
-                              <tr><td colSpan={selectedTable.columns.length + 1} className="py-6 text-center text-sm text-slate-400">데이터가 없습니다. 행을 추가해 주세요.</td></tr>
+                              <tr>
+                                <td colSpan={selectedTable.columns.length + 1} className="py-6 text-center text-sm text-slate-400">
+                                  {dataRowQuery ? '검색 결과가 없습니다.' : '데이터가 없습니다. 행을 추가해 주세요.'}
+                                </td>
+                              </tr>
                             )}
                           </tbody>
-                        </table>
-                      </div>
+                          </table>
+                        </div>
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 text-xs text-slate-500">
+                          <span>
+                            {selectedTable.total === 0 ? 0 : (selectedTable.page - 1) * selectedTable.limit + 1}
+                            -{Math.min(selectedTable.page * selectedTable.limit, selectedTable.total)} / {selectedTable.total.toLocaleString()}건
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void handleDataPageChange(dataPage - 1)}
+                              disabled={dataPage <= 1}
+                              className="h-8 min-w-16 rounded-lg border border-slate-200 px-3 disabled:opacity-30"
+                            >이전</button>
+                            <span className="min-w-14 text-center">{selectedTable.page} / {selectedTable.total_pages}</span>
+                            <button
+                              type="button"
+                              onClick={() => void handleDataPageChange(dataPage + 1)}
+                              disabled={dataPage >= selectedTable.total_pages}
+                              className="h-8 min-w-16 rounded-lg border border-slate-200 px-3 disabled:opacity-30"
+                            >다음</button>
+                          </div>
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>

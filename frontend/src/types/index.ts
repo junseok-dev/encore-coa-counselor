@@ -539,6 +539,12 @@ export interface CustomTableDetail {
   description: string | null;
   columns: CustomColumnDef[];
   rows: CustomRowData[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+  query: string;
+  search_column: string;
 }
 
 export interface DbTableMeta {

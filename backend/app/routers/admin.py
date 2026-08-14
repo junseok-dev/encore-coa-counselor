@@ -23,7 +23,7 @@ from fastapi.responses import Response
 from openai import AsyncOpenAI
 from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel
-from sqlalchemy import Column, DateTime, Integer, MetaData, Table, func, inspect as sa_inspect, or_, text
+from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, cast, false, func, inspect as sa_inspect, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -2533,27 +2533,82 @@ def delete_data_table(table_id: int, db: Session = Depends(get_db), _: None = De
 
 
 @router.get("/data-tables/{table_id}")
-def get_data_table(table_id: int, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+def get_data_table(
+    table_id: int,
+    query: str = Query("", max_length=100),
+    search_column: str = Query("", max_length=63),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
     table = db.query(CustomTable).filter(CustomTable.id == table_id).first()
     if not table:
         raise HTTPException(status_code=404, detail="테이블을 찾을 수 없습니다.")
     columns = db.query(CustomColumn).filter(CustomColumn.table_id == table_id).order_by(CustomColumn.sort_order, CustomColumn.id).all()
     col_names = [c.column_name for c in columns]
+    normalized_query = query.strip()
+    normalized_search_column = search_column.strip()
+    if normalized_search_column and normalized_search_column not in col_names:
+        raise HTTPException(status_code=400, detail="검색할 컬럼을 찾을 수 없습니다.")
+
     real_table = f"cdata_{table_id}"
     rows: list[dict] = []
+    total = 0
     inspector = sa_inspect(db.bind)
     if real_table in inspector.get_table_names():
-        select_cols = ", ".join([_qi(cn) for cn in col_names]) if col_names else "1 as _empty"
-        raw_rows = db.execute(text(f'SELECT id, {select_cols}, created_at FROM "{real_table}" ORDER BY id DESC')).fetchall()  # noqa: S608
-        for r in raw_rows:
-            row_data = dict(zip(col_names, list(r)[1:-1]))
-            rows.append({"id": r[0], "data": row_data, "created_at": r[-1]})
+        physical_table = Table(real_table, MetaData(), autoload_with=db.bind)
+        condition = None
+        if normalized_query:
+            target_columns = [normalized_search_column] if normalized_search_column else col_names
+            search_conditions = [
+                func.lower(cast(physical_table.c[column_name], String)).contains(
+                    normalized_query.lower(),
+                    autoescape=True,
+                )
+                for column_name in target_columns
+            ]
+            condition = or_(*search_conditions) if search_conditions else false()
+
+        count_statement = select(func.count()).select_from(physical_table)
+        if condition is not None:
+            count_statement = count_statement.where(condition)
+        total = db.execute(count_statement).scalar() or 0
+
+        total_pages = max(1, (total + limit - 1) // limit)
+        page = min(page, total_pages)
+        selected_columns = [physical_table.c.id]
+        selected_columns.extend(physical_table.c[column_name] for column_name in col_names)
+        selected_columns.append(physical_table.c.created_at)
+        rows_statement = (
+            select(*selected_columns)
+            .order_by(physical_table.c.id.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+        if condition is not None:
+            rows_statement = rows_statement.where(condition)
+
+        for row in db.execute(rows_statement).mappings():
+            rows.append({
+                "id": row["id"],
+                "data": {column_name: row[column_name] for column_name in col_names},
+                "created_at": row["created_at"],
+            })
+
+    total_pages = max(1, (total + limit - 1) // limit)
     return {
         "id": table.id,
         "name": table.name,
         "description": table.description,
         "columns": [{"id": c.id, "column_name": c.column_name, "column_type": c.column_type, "sort_order": c.sort_order} for c in columns],
         "rows": rows,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "query": normalized_query,
+        "search_column": normalized_search_column,
     }
 
 

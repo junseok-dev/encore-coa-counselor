@@ -452,8 +452,11 @@ export const adminApi = {
     await adminApiClient.delete(`/admin/data-tables/${tableId}`);
   },
 
-  getDataTable: async (tableId: number): Promise<CustomTableDetail> => {
-    const response = await adminApiClient.get(`/admin/data-tables/${tableId}`);
+  getDataTable: async (
+    tableId: number,
+    params?: { query?: string; search_column?: string; page?: number; limit?: number },
+  ): Promise<CustomTableDetail> => {
+    const response = await adminApiClient.get(`/admin/data-tables/${tableId}`, { params });
     return response.data;
   },
 
