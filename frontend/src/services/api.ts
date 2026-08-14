@@ -26,6 +26,7 @@ import {
   OperationsAlertWorkflowPayload,
   SystemHealthData,
   PermissionsData,
+  PermissionAccess,
   ProcessingLog,
   PromptConfig,
   PromptPayload,
@@ -549,6 +550,11 @@ export const adminApi = {
 
   getPermissions: async (): Promise<PermissionsData> => {
     const response = await adminApiClient.get<PermissionsData>('/admin/permissions');
+    return response.data;
+  },
+
+  getPermissionAccess: async (): Promise<PermissionAccess> => {
+    const response = await adminApiClient.get<PermissionAccess>('/admin/permissions/access');
     return response.data;
   },
 
