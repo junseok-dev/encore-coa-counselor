@@ -220,7 +220,7 @@ export default function CostManagement() {
         <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Bot className="h-5 w-5" /></span>
-            <div><h2 className="font-black text-slate-950">OpenAI API 비용</h2><p className="mt-0.5 text-xs text-slate-500">{isAllPeriod ? `${currentMonth()} 청구 비용` : `${billingMonth} 청구 비용`} · OpenAI 조직 비용 기준</p></div>
+            <div><h2 className="font-black text-slate-950">OpenAI API 비용</h2><p className="mt-0.5 text-xs text-slate-500">{isAllPeriod ? `${currentMonth()} 청구 비용` : `${billingMonth} 청구 비용`} · {openAiData?.project_name ?? 'AIcampus_Chatbot'}</p></div>
           </div>
           <span className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${openAiData?.status === 'available' ? 'bg-emerald-100 text-emerald-700' : openAiData?.status === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'}`}>
             {openAiData?.status === 'available' ? '연동됨' : openAiData?.status === 'error' ? '조회 오류' : '설정 필요'}
@@ -231,6 +231,15 @@ export default function CostManagement() {
           <div className="bg-white p-5"><p className="text-xs font-bold text-slate-500">비용 항목</p><div className="mt-3 space-y-2">{openAiData?.line_items.length ? openAiData.line_items.slice(0, 5).map((item) => <div key={item.line_item} className="flex items-center justify-between gap-3 text-sm"><span className="truncate text-slate-600">{item.line_item}</span><b className="shrink-0 text-slate-900">{usd(item.amount_usd)}</b></div>) : <p className="py-5 text-sm text-slate-400">표시할 비용 항목이 없습니다.</p>}</div></div>
           <div className="bg-white p-5"><p className="text-xs font-bold text-slate-500">일별 비용 추이</p><div className="mt-4 flex h-28 items-end gap-1">{openAiData?.daily.length ? openAiData.daily.map((item) => { const max = Math.max(...openAiData.daily.map((day) => day.amount_usd), 0.000001); return <div key={item.date} className="group flex h-full min-w-1 flex-1 items-end" title={`${item.date} ${usd(item.amount_usd)}`}><span className="block w-full rounded-t bg-emerald-400 transition group-hover:bg-emerald-600" style={{ height: `${Math.max(4, item.amount_usd / max * 100)}%` }} /></div>; }) : <p className="m-auto text-sm text-slate-400">표시할 일별 비용이 없습니다.</p>}</div></div>
         </div>
+        {openAiData?.status !== 'available' && (
+          <div className="flex flex-col gap-3 border-t border-amber-200 bg-amber-50 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+            <p className="text-xs leading-5 text-amber-900"><strong>playdata@playdata.io 계정으로 로그인</strong>하면 OpenAI Platform에서 API 키를 확인할 수 있습니다. 비용 자동 연동에는 일반 프로젝트 키가 아닌 조직 Admin Key가 필요합니다.</p>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-black text-amber-900">API 키 확인<ExternalLink className="h-3.5 w-3.5" /></a>
+              <a href="https://platform.openai.com/settings/organization/admin-keys" target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-800 px-3 py-2 text-xs font-black text-white">Admin Key 발급<ExternalLink className="h-3.5 w-3.5" /></a>
+            </div>
+          </div>
+        )}
       </section>
 
       <div className="grid gap-4 md:grid-cols-3">

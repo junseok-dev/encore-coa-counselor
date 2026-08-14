@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_admin_key: str = ""
     openai_project_id: str = ""
+    openai_project_name: str = "AIcampus_Chatbot"
     model_name: str = "gpt-5.4-mini"  # 생성 모델: nano→mini (재설계 검증에서 품질·지시준수 점프 확인)
     intent_model_name: str = "gpt-5.4-nano"  # 라우터는 분류라 nano 유지(8갈래 오분류 보이면 mini로)
     embedding_model: str = "text-embedding-3-large"

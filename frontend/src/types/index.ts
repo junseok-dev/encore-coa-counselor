@@ -373,6 +373,8 @@ export interface OpenAiCostLineItem {
 
 export interface OpenAiCostData {
   billing_month: string;
+  project_id: string | null;
+  project_name: string;
   configured: boolean;
   status: 'available' | 'not_configured' | 'error';
   message: string;

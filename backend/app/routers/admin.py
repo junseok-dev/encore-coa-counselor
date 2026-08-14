@@ -1625,6 +1625,37 @@ def get_operations_dashboard(
     }
 
 
+def _find_openai_project_id(admin_key: str, project_name: str) -> str:
+    after: str | None = None
+    matches: list[str] = []
+    while True:
+        params: dict[str, object] = {"limit": 100, "include_archived": "false"}
+        if after:
+            params["after"] = after
+        request = Request(
+            f"https://api.openai.com/v1/organization/projects?{urlencode(params)}",
+            headers={"Authorization": f"Bearer {admin_key}", "Accept": "application/json"},
+        )
+        with urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        matches.extend(
+            str(project["id"])
+            for project in payload.get("data", [])
+            if str(project.get("name") or "").strip().casefold() == project_name.casefold()
+            and project.get("status") == "active"
+        )
+        if not payload.get("has_more"):
+            break
+        after = str(payload.get("last_id") or "")
+        if not after:
+            break
+    if not matches:
+        raise LookupError(f"OpenAI 프로젝트 '{project_name}'을 찾지 못했습니다.")
+    if len(matches) > 1:
+        raise LookupError(f"이름이 같은 OpenAI 프로젝트가 여러 개입니다. OPENAI_PROJECT_ID를 설정해 주세요.")
+    return matches[0]
+
+
 @router.get("/operations/openai-costs")
 def get_openai_costs(
     billing_month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
@@ -1632,12 +1663,15 @@ def get_openai_costs(
 ):
     settings = get_settings()
     fetched_at = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+    project_name = settings.openai_project_name.strip() or "AIcampus_Chatbot"
     if not settings.openai_admin_key:
         return {
             "billing_month": billing_month,
+            "project_id": None,
+            "project_name": project_name,
             "configured": False,
             "status": "not_configured",
-            "message": "OPENAI_ADMIN_KEY를 설정하면 조직의 실제 청구 비용을 표시합니다.",
+            "message": f"OPENAI_ADMIN_KEY를 설정하면 {project_name} 프로젝트 비용을 자동으로 가져옵니다.",
             "currency": "usd",
             "total_usd": 0,
             "daily": [],
@@ -1659,6 +1693,10 @@ def get_openai_costs(
     page: str | None = None
 
     try:
+        project_id = settings.openai_project_id.strip() or _find_openai_project_id(
+            settings.openai_admin_key,
+            project_name,
+        )
         while True:
             params: dict[str, object] = {
                 "start_time": start_time,
@@ -1667,8 +1705,7 @@ def get_openai_costs(
                 "limit": 31,
                 "group_by": ["line_item"],
             }
-            if settings.openai_project_id:
-                params["project_ids"] = [settings.openai_project_id]
+            params["project_ids"] = [project_id]
             if page:
                 params["page"] = page
             request = Request(
@@ -1694,10 +1731,26 @@ def get_openai_costs(
             if not payload.get("has_more") or not payload.get("next_page"):
                 break
             page = str(payload["next_page"])
+    except LookupError as exc:
+        return {
+            "billing_month": billing_month,
+            "project_id": None,
+            "project_name": project_name,
+            "configured": True,
+            "status": "error",
+            "message": str(exc),
+            "currency": "usd",
+            "total_usd": 0,
+            "daily": [],
+            "line_items": [],
+            "fetched_at": fetched_at,
+        }
     except HTTPError as exc:
         message = "OpenAI 비용 조회 권한을 확인해 주세요." if exc.code in (401, 403) else "OpenAI 비용 데이터를 불러오지 못했습니다."
         return {
             "billing_month": billing_month,
+            "project_id": None,
+            "project_name": project_name,
             "configured": True,
             "status": "error",
             "message": message,
@@ -1710,6 +1763,8 @@ def get_openai_costs(
     except (URLError, TimeoutError, ValueError, KeyError, json.JSONDecodeError):
         return {
             "billing_month": billing_month,
+            "project_id": None,
+            "project_name": project_name,
             "configured": True,
             "status": "error",
             "message": "OpenAI 비용 데이터를 불러오지 못했습니다.",
@@ -1727,9 +1782,11 @@ def get_openai_costs(
     ]
     return {
         "billing_month": billing_month,
+        "project_id": project_id,
+        "project_name": project_name,
         "configured": True,
         "status": "available",
-        "message": "OpenAI 조직 청구 비용 기준입니다.",
+        "message": f"{project_name} 프로젝트 청구 비용 기준입니다.",
         "currency": currency,
         "total_usd": round(sum(daily_map.values()), 6),
         "daily": daily,
