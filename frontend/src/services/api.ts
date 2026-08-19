@@ -651,13 +651,8 @@ export const adminApi = {
     return response.data;
   },
 
-  toggleEncryption: async (category: string, encrypt_enabled: boolean): Promise<{ message: string }> => {
-    const response = await adminApiClient.put(`/admin/settings/encryption/${category}`, { encrypt_enabled });
-    return response.data;
-  },
-
-  migrateEncryption: async (category: string, direction: 'encrypt' | 'decrypt'): Promise<{ message: string; count: number }> => {
-    const response = await adminApiClient.post('/admin/settings/encryption/migrate', { category, direction });
+  migrateEncryption: async (category: 'conversation'): Promise<{ message: string; count: number }> => {
+    const response = await adminApiClient.post('/admin/settings/encryption/migrate', { category, direction: 'encrypt' });
     return response.data;
   },
 };

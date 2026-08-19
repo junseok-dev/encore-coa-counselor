@@ -664,29 +664,16 @@ def _ec2_health_check() -> dict:
         }
 
 
-def _crypt_value(value: str | None, should_encrypt: bool) -> str | None:
-    if value is None:
-        return None
-    if not value:
-        return value
-    if should_encrypt:
-        return maybe_encrypt(value)
-    if value.startswith(ENCRYPTED_PREFIX):
-        return decrypt_if_needed(value)
-    return value
-
-
 def _upsert_faq_row(db: Session, payload: FaqItemPayload) -> FaqRecord:
     row = db.query(FaqRecord).filter(FaqRecord.faq_key == payload.id).first()
-    enc = get_settings().encrypt_faq
     values = {
-        "category": _crypt_value(payload.category, enc),
-        "question": _crypt_value(payload.question, enc),
-        "answer": _crypt_value(payload.answer, enc),
-        "keywords_json": _crypt_value(json.dumps(payload.keywords, ensure_ascii=False), enc),
-        "aliases_json": _crypt_value(json.dumps(payload.aliases, ensure_ascii=False), enc),
-        "search_hints_json": _crypt_value(json.dumps(payload.search_hints, ensure_ascii=False), enc),
-        "source_files_json": _crypt_value(json.dumps(payload.source_files, ensure_ascii=False), enc),
+        "category": payload.category,
+        "question": payload.question,
+        "answer": payload.answer,
+        "keywords_json": json.dumps(payload.keywords, ensure_ascii=False),
+        "aliases_json": json.dumps(payload.aliases, ensure_ascii=False),
+        "search_hints_json": json.dumps(payload.search_hints, ensure_ascii=False),
+        "source_files_json": json.dumps(payload.source_files, ensure_ascii=False),
         "direct_answer": payload.direct_answer,
         "top_k": payload.top_k,
         "is_active": True,
@@ -1095,9 +1082,7 @@ def create_prompt(body: PromptPayload, db: Session = Depends(get_db), _: None = 
     existing = db.query(PromptConfig).filter(PromptConfig.prompt_key == body.prompt_key).first()
     if existing:
         raise HTTPException(status_code=409, detail="같은 키의 프롬프트가 이미 있습니다.")
-    enc = get_settings().encrypt_prompt
-    stored_content = encrypt(body.content) if enc else body.content
-    row = PromptConfig(prompt_key=body.prompt_key, label=body.label, content=stored_content)
+    row = PromptConfig(prompt_key=body.prompt_key, label=body.label, content=body.content)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -1112,9 +1097,8 @@ def update_prompt(prompt_key: str, body: PromptPayload, db: Session = Depends(ge
     row = db.query(PromptConfig).filter(PromptConfig.prompt_key == prompt_key).first()
     if not row:
         raise HTTPException(status_code=404, detail="프롬프트를 찾을 수 없습니다.")
-    enc = get_settings().encrypt_prompt
     row.label = body.label
-    row.content = encrypt(body.content) if enc else body.content
+    row.content = body.content
     db.commit()
     db.refresh(row)
     create_audit_log(db, "prompt_updated", "prompt", body.prompt_key, body.label)
@@ -2463,8 +2447,8 @@ async def test_operations_alert_answer(
         db.commit()
 
     alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
-    alert.test_question = maybe_encrypt(question)
-    alert.test_answer = maybe_encrypt(test_answer)
+    alert.test_question = question
+    alert.test_answer = test_answer
     alert.test_source = test_source
     alert.test_passed = False
     alert.tested_by = current_user
@@ -2508,13 +2492,13 @@ def update_operations_alert(
             alert.test_passed = False
             alert.tested_by = None
             alert.tested_at = None
-        alert.test_question = maybe_encrypt(next_question) if next_question else None
+        alert.test_question = next_question or None
 
     for field_name in ("note",):
         value = getattr(body, field_name)
         if value is not None:
             stripped = value.strip()
-            setattr(alert, field_name, maybe_encrypt(stripped) if stripped else None)
+            setattr(alert, field_name, stripped or None)
     if body.test_passed is not None:
         if body.test_passed and not alert.test_answer:
             raise HTTPException(status_code=400, detail="먼저 수정 후 답변 테스트를 실행해 주세요.")
@@ -3493,142 +3477,85 @@ def remove_permission(email: str, db: Session = Depends(get_db), current_user: s
 # ── 암호화 설정 ─────────────────────────────────────────────────
 
 
-class EncryptionToggleRequest(BaseModel):
-    encrypt_enabled: bool
-
-
 class EncryptionMigrateRequest(BaseModel):
     category: str
-    direction: str  # "encrypt" | "decrypt"
+    direction: str
 
 
-def _count_encrypted(values: list[str | None]) -> int:
-    return sum(1 for v in values if v and v.startswith(ENCRYPTED_PREFIX))
+def _is_encrypted_value(value: str | None) -> bool:
+    return bool(value and (value.startswith(ENCRYPTED_PREFIX) or value.startswith("gAAA")))
+
+
+def _conversation_encryption_counts(db: Session) -> tuple[int, int]:
+    """민감한 본문을 애플리케이션 메모리에 싣지 않고 필드 수만 집계한다."""
+    columns = (
+        ChatSession.encrypted_user_name,
+        ChatMessage.content,
+        ChatLog.question,
+        ChatLog.answer,
+        CancelRequest.message,
+    )
+    total = 0
+    encrypted = 0
+    for column in columns:
+        present = (column.is_not(None), column != "")
+        total += db.query(func.count(column)).filter(*present).scalar() or 0
+        encrypted += (
+            db.query(func.count(column))
+            .filter(
+                *present,
+                or_(column.like(f"{ENCRYPTED_PREFIX}%"), column.like("gAAA%")),
+            )
+            .scalar()
+            or 0
+        )
+    return total, encrypted
 
 
 @router.get("/settings/encryption")
 def get_encryption_settings(db: Session = Depends(get_db), _: None = Depends(verify_admin)):
-    settings = get_settings()
-
-    faq_rows = db.query(FaqRecord).filter(FaqRecord.is_active.is_(True)).all()
-    faq_enc = _count_encrypted([r.answer for r in faq_rows])
-
-    prompt_rows = db.query(PromptConfig).all()
-    prompt_enc = _count_encrypted([r.content for r in prompt_rows])
-
-    doc_rows = db.query(DocumentRecord).filter(DocumentRecord.is_deleted.is_(False)).all()
-    doc_enc = _count_encrypted([r.original_filename for r in doc_rows])
-
+    total, encrypted_count = _conversation_encryption_counts(db)
     return {
         "categories": [
             {
-                "key": "faq",
-                "label": "FAQ 내용",
-                "encrypt_enabled": settings.encrypt_faq,
-                "encrypted_count": faq_enc,
-                "plain_count": len(faq_rows) - faq_enc,
-                "total": len(faq_rows),
-            },
-            {
-                "key": "prompt",
-                "label": "프롬프트 내용",
-                "encrypt_enabled": settings.encrypt_prompt,
-                "encrypted_count": prompt_enc,
-                "plain_count": len(prompt_rows) - prompt_enc,
-                "total": len(prompt_rows),
-            },
-            {
-                "key": "document",
-                "label": "문서 파일명·검토내용",
-                "encrypt_enabled": settings.encrypt_document,
-                "encrypted_count": doc_enc,
-                "plain_count": len(doc_rows) - doc_enc,
-                "total": len(doc_rows),
+                "key": "conversation",
+                "label": "대화 내용",
+                "encrypt_enabled": True,
+                "encrypted_count": encrypted_count,
+                "plain_count": total - encrypted_count,
+                "total": total,
             },
         ]
     }
 
 
-@router.put("/settings/encryption/{category}")
-def toggle_encryption(category: str, body: EncryptionToggleRequest, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
-    if category not in {"faq", "prompt", "document"}:
-        raise HTTPException(status_code=400, detail="유효하지 않은 카테고리입니다.")
-    env_key = f"ENCRYPT_{category.upper()}"
-    env_value = "true" if body.encrypt_enabled else "false"
-    lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
-    updated = [line for line in lines if not line.startswith(f"{env_key}=")]
-    updated.append(f"{env_key}={env_value}")
-    ENV_PATH.write_text("\n".join(updated) + "\n", encoding="utf-8")
-    get_settings.cache_clear()
-    create_audit_log(db, "encryption_toggled", "system", category, f"{env_key}={env_value}")
-    label = "활성화" if body.encrypt_enabled else "비활성화"
-    return {"message": f"{category} 암호화가 {label}되었습니다.", "category": category, "encrypt_enabled": body.encrypt_enabled}
-
-
 @router.post("/settings/encryption/migrate")
 def migrate_encryption(body: EncryptionMigrateRequest, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
-    if body.category not in {"faq", "prompt", "document"}:
-        raise HTTPException(status_code=400, detail="유효하지 않은 카테고리입니다.")
-    if body.direction not in {"encrypt", "decrypt"}:
-        raise HTTPException(status_code=400, detail="direction은 encrypt 또는 decrypt여야 합니다.")
-
+    if body.category != "conversation":
+        raise HTTPException(status_code=400, detail="대화 데이터만 암호화할 수 있습니다.")
+    if body.direction != "encrypt":
+        raise HTTPException(status_code=400, detail="대화 데이터 암호화는 해제할 수 없습니다.")
     count = 0
-
-    if body.category == "faq":
-        rows = db.query(FaqRecord).filter(FaqRecord.is_active.is_(True)).all()
-        fields = ["category", "question", "answer", "keywords_json", "aliases_json", "search_hints_json", "source_files_json"]
+    targets = (
+        (db.query(ChatSession).all(), ("encrypted_user_name",)),
+        (db.query(ChatMessage).all(), ("content",)),
+        (db.query(ChatLog).all(), ("question", "answer")),
+        (db.query(CancelRequest).all(), ("message",)),
+    )
+    for rows, fields in targets:
         for row in rows:
-            changed = False
             for field in fields:
                 value = getattr(row, field)
-                if not value:
+                if not value or _is_encrypted_value(value):
                     continue
-                if body.direction == "decrypt" and value.startswith(ENCRYPTED_PREFIX):
-                    decrypted = decrypt_if_needed(value)
-                    if decrypted:  # 복호화 실패(키 불일치 등) 시 ""로 덮어쓰지 않고 원본 유지 → 데이터 손실 방지
-                        setattr(row, field, decrypted)
-                        changed = True
-                elif body.direction == "encrypt" and not value.startswith(ENCRYPTED_PREFIX):
-                    setattr(row, field, encrypt(value))
-                    changed = True
-            if changed:
+                setattr(row, field, encrypt(value))
                 count += 1
-        db.commit()
+    db.commit()
 
-    elif body.category == "prompt":
-        rows = db.query(PromptConfig).all()
-        for row in rows:
-            value = row.content
-            if not value:
-                continue
-            if body.direction == "decrypt" and value.startswith(ENCRYPTED_PREFIX):
-                row.content = decrypt_if_needed(value) or value
-                count += 1
-            elif body.direction == "encrypt" and not value.startswith(ENCRYPTED_PREFIX):
-                row.content = encrypt(value)
-                count += 1
-        db.commit()
-
-    elif body.category == "document":
-        rows = db.query(DocumentRecord).filter(DocumentRecord.is_deleted.is_(False)).all()
-        for row in rows:
-            changed = False
-            for field in ["original_filename", "review_note", "error_message"]:
-                value = getattr(row, field)
-                if not value:
-                    continue
-                if body.direction == "decrypt" and value.startswith(ENCRYPTED_PREFIX):
-                    decrypted = decrypt_if_needed(value)
-                    if decrypted:  # 복호화 실패(키 불일치 등) 시 ""로 덮어쓰지 않고 원본 유지 → 데이터 손실 방지
-                        setattr(row, field, decrypted)
-                        changed = True
-                elif body.direction == "encrypt" and not value.startswith(ENCRYPTED_PREFIX):
-                    setattr(row, field, encrypt(value))
-                    changed = True
-            if changed:
-                count += 1
-        db.commit()
-
-    action = "암호화" if body.direction == "encrypt" else "복호화"
-    create_audit_log(db, f"encryption_migrated_{body.direction}", "system", body.category, f"{count}개 처리")
-    return {"message": f"{count}개 레코드를 {action}했습니다.", "count": count, "category": body.category, "direction": body.direction}
+    create_audit_log(db, "conversation_encryption_migrated", "system", body.category, f"{count}개 필드 처리")
+    return {
+        "message": f"기존 평문 대화 데이터 {count}개 필드를 암호화했습니다.",
+        "count": count,
+        "category": body.category,
+        "direction": body.direction,
+    }

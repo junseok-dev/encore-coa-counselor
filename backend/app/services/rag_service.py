@@ -29,7 +29,7 @@ from app.services.storage_service import (
     read_text_from_storage,
     upload_faiss_to_s3,
 )
-from app.utils.crypto import decrypt_if_needed, maybe_encrypt
+from app.utils.crypto import decrypt_if_needed
 
 INDEX_SCHEMA_VERSION = 2
 REINDEX_LOCK_STALE_SECONDS = 6 * 60 * 60
@@ -675,8 +675,8 @@ class RAGService:
                     ChunkRecord(
                         document_id=document_id,
                         chunk_index=index,
-                        content=maybe_encrypt(chunk.page_content),
-                        metadata_json=maybe_encrypt(json.dumps(chunk.metadata, ensure_ascii=False)),
+                        content=chunk.page_content,
+                        metadata_json=json.dumps(chunk.metadata, ensure_ascii=False),
                     )
                 )
         db.commit()

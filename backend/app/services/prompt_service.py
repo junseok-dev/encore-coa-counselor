@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.database import SessionLocal
 from app.db.models import PromptConfig
-from app.utils.crypto import decrypt_if_needed, maybe_encrypt
+from app.utils.crypto import decrypt_if_needed
 
 
 PROMPT_DEFAULTS = {
@@ -24,7 +24,7 @@ def seed_prompt_configs(db: Session) -> None:
             PromptConfig(
                 prompt_key=prompt_key,
                 label=label,
-                content=maybe_encrypt(getattr(settings, attr_name)),
+                content=getattr(settings, attr_name),
             )
         )
     db.commit()
@@ -34,13 +34,13 @@ def update_counseling_prompt(db: Session) -> None:
     settings = get_settings()
     record = db.query(PromptConfig).filter(PromptConfig.prompt_key == "counseling_prompt").first()
     if record:
-        record.content = maybe_encrypt(settings.default_counseling_prompt)
+        record.content = settings.default_counseling_prompt
     else:
         db.add(
             PromptConfig(
                 prompt_key="counseling_prompt",
                 label=PROMPT_DEFAULTS["counseling_prompt"][0],
-                content=maybe_encrypt(settings.default_counseling_prompt),
+                content=settings.default_counseling_prompt,
             )
         )
     db.commit()
@@ -55,13 +55,13 @@ def update_handoff_prompts(db: Session) -> None:
     ):
         record = db.query(PromptConfig).filter(PromptConfig.prompt_key == key).first()
         if record:
-            record.content = maybe_encrypt(default_value)
+            record.content = default_value
         else:
             db.add(
                 PromptConfig(
                     prompt_key=key,
                     label=PROMPT_DEFAULTS[key][0],
-                    content=maybe_encrypt(default_value),
+                    content=default_value,
                 )
             )
     db.commit()

@@ -271,7 +271,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         answer = get_prompt_value("cancel_prompt")
         source = "handoff"
         processing_status = "handoff"
-        db.add(CancelRequest(session_id=request.session_id, message=request.message, status="requested"))
+        db.add(CancelRequest(session_id=request.session_id, message=maybe_encrypt(request.message), status="requested"))
         db.commit()
 
     def _set_handoff() -> None:
@@ -352,10 +352,10 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         ChatLog(
             session_id=request.session_id,
             question=maybe_encrypt(request.message),
-            retrieval_chunks=maybe_encrypt(json.dumps(retrieval_chunks, ensure_ascii=False)),
+            retrieval_chunks=json.dumps(retrieval_chunks, ensure_ascii=False),
             answer=maybe_encrypt(answer),
             source=source,
-            error=maybe_encrypt(error_message),
+            error=error_message,
             processing_status=processing_status,
             question_category=question_category.key,
             question_category_label=question_category.label,
@@ -449,7 +449,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     yield chunk
 
         def _set_cancel_db() -> None:
-            db.add(CancelRequest(session_id=request.session_id, message=request.message, status="requested"))
+            db.add(CancelRequest(session_id=request.session_id, message=maybe_encrypt(request.message), status="requested"))
             db.commit()
 
         responsibility_complaint = should_handoff_after_employment_responsibility(
@@ -560,10 +560,10 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
             ChatLog(
                 session_id=request.session_id,
                 question=maybe_encrypt(request.message),
-                retrieval_chunks=maybe_encrypt(json.dumps(retrieval_chunks, ensure_ascii=False)),
+                retrieval_chunks=json.dumps(retrieval_chunks, ensure_ascii=False),
                 answer=maybe_encrypt(full_answer),
                 source=source,
-                error=maybe_encrypt(error_message),
+                error=error_message,
                 processing_status=processing_status,
                 question_category=question_category.key,
                 question_category_label=question_category.label,

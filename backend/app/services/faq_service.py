@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.db.database import SessionLocal
 from app.db.models import FaqRecord
 from app.services.storage_service import build_s3_key, read_text_from_storage, upload_text_to_s3
-from app.utils.crypto import decrypt_if_needed, maybe_encrypt
+from app.utils.crypto import decrypt_if_needed
 
 FAQ_PATH = Path(__file__).parent.parent.parent.parent / "data" / "faq" / "faq.json"
 FAQ_STORAGE_KEY = build_s3_key("faq", "faq.json")
@@ -86,13 +86,13 @@ def seed_faqs(db: Session) -> None:
             continue
         existing = db.query(FaqRecord).filter(FaqRecord.faq_key == faq_key).first()
         if existing:
-            existing.category = maybe_encrypt(faq.get("category", ""))
-            existing.question = maybe_encrypt(faq.get("question", ""))
-            existing.answer = maybe_encrypt(faq.get("answer", ""))
-            existing.keywords_json = maybe_encrypt(json.dumps(faq.get("keywords", []), ensure_ascii=False))
-            existing.aliases_json = maybe_encrypt(json.dumps(faq.get("aliases", []), ensure_ascii=False))
-            existing.search_hints_json = maybe_encrypt(json.dumps(faq.get("search_hints", []), ensure_ascii=False))
-            existing.source_files_json = maybe_encrypt(json.dumps(faq.get("source_files", []), ensure_ascii=False))
+            existing.category = faq.get("category", "")
+            existing.question = faq.get("question", "")
+            existing.answer = faq.get("answer", "")
+            existing.keywords_json = json.dumps(faq.get("keywords", []), ensure_ascii=False)
+            existing.aliases_json = json.dumps(faq.get("aliases", []), ensure_ascii=False)
+            existing.search_hints_json = json.dumps(faq.get("search_hints", []), ensure_ascii=False)
+            existing.source_files_json = json.dumps(faq.get("source_files", []), ensure_ascii=False)
             existing.direct_answer = bool(faq.get("direct_answer", False))
             existing.top_k = int(faq.get("top_k", 4) or 4)
             existing.is_active = True
@@ -100,13 +100,13 @@ def seed_faqs(db: Session) -> None:
             db.add(
                 FaqRecord(
                     faq_key=faq_key,
-                    category=maybe_encrypt(faq.get("category", "")),
-                    question=maybe_encrypt(faq.get("question", "")),
-                    answer=maybe_encrypt(faq.get("answer", "")),
-                    keywords_json=maybe_encrypt(json.dumps(faq.get("keywords", []), ensure_ascii=False)),
-                    aliases_json=maybe_encrypt(json.dumps(faq.get("aliases", []), ensure_ascii=False)),
-                    search_hints_json=maybe_encrypt(json.dumps(faq.get("search_hints", []), ensure_ascii=False)),
-                    source_files_json=maybe_encrypt(json.dumps(faq.get("source_files", []), ensure_ascii=False)),
+                    category=faq.get("category", ""),
+                    question=faq.get("question", ""),
+                    answer=faq.get("answer", ""),
+                    keywords_json=json.dumps(faq.get("keywords", []), ensure_ascii=False),
+                    aliases_json=json.dumps(faq.get("aliases", []), ensure_ascii=False),
+                    search_hints_json=json.dumps(faq.get("search_hints", []), ensure_ascii=False),
+                    source_files_json=json.dumps(faq.get("source_files", []), ensure_ascii=False),
                     direct_answer=bool(faq.get("direct_answer", False)),
                     top_k=int(faq.get("top_k", 4) or 4),
                     is_active=True,

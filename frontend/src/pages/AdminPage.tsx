@@ -309,7 +309,7 @@ export default function AdminPage() {
   const [mdCategory, setMdCategory] = useState('');
   const [faqMdFile, setFaqMdFile] = useState<File | null>(null);
   const [faqMdCategory, setFaqMdCategory] = useState('');
-  const [documentWorkspaceTab, setDocumentWorkspaceTab] = useState<'upload' | 'list' | 'review'>('upload');
+  const [documentUploadMode, setDocumentUploadMode] = useState<'pdf' | 'md' | 'faq' | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [reindexBusy, setReindexBusy] = useState(false);
 
@@ -395,6 +395,7 @@ export default function AdminPage() {
   const faqMdInputRef = useRef<HTMLInputElement>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
   const documentRequestIdRef = useRef(0);
+  const reviewPanelRef = useRef<HTMLElement>(null);
   const navigate = useNavigate();
 
   const setActiveTab = (tab: TabKey) => {
@@ -643,27 +644,16 @@ export default function AdminPage() {
     }
   };
 
-  const handleToggleEncryption = async (category: string, enabled: boolean) => {
+  const handleMigrateConversationEncryption = async () => {
+    const plainCount = encryptionSettings?.categories[0]?.plain_count ?? 0;
+    if (!window.confirm(`기존 평문 대화 데이터 ${plainCount}개 필드를 암호화할까요?\n대화 암호화는 해제할 수 없습니다.`)) return;
+    setMigrating('conversation_encrypt');
     try {
-      const result = await adminApi.toggleEncryption(category, enabled);
+      const result = await adminApi.migrateEncryption('conversation');
       setNotice(result.message);
       await loadEncryptionSettings();
     } catch {
-      setNotice('암호화 설정 변경에 실패했습니다.');
-    }
-  };
-
-  const handleMigrateEncryption = async (category: string, direction: 'encrypt' | 'decrypt') => {
-    const action = direction === 'decrypt' ? '복호화' : '암호화';
-    const label = encryptionSettings?.categories.find((c) => c.key === category)?.label ?? category;
-    if (!window.confirm(`[${label}] 전체 레코드를 ${action}할까요?\n이 작업은 되돌리기 어렵습니다.`)) return;
-    setMigrating(`${category}_${direction}`);
-    try {
-      const result = await adminApi.migrateEncryption(category, direction);
-      setNotice(result.message);
-      await loadEncryptionSettings();
-    } catch {
-      setNotice('일괄 마이그레이션에 실패했습니다.');
+      setNotice('기존 대화 데이터 암호화에 실패했습니다.');
     } finally {
       setMigrating(null);
     }
@@ -690,8 +680,7 @@ export default function AdminPage() {
     }
   };
 
-  const openDocument = async (documentId: number) => {
-    setDocumentWorkspaceTab('review');
+  const openDocument = async (documentId: number, focusReview = false) => {
     const requestId = ++documentRequestIdRef.current;
     setDocumentLoading(true);
     setPdfPreviewLoading(false);
@@ -703,6 +692,11 @@ export default function AdminPage() {
       setReviewNote(detail.document.review_note ?? '');
       setDocumentMdDraft(detail.md_content ?? '');
       setDocumentJsonDraft(detail.json_content ?? '');
+      if (focusReview || window.matchMedia('(max-width: 1279px)').matches) {
+        window.requestAnimationFrame(() => {
+          reviewPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
       if (detail.document.has_pdf) {
         setPdfPreviewLoading(true);
         try {
@@ -722,9 +716,9 @@ export default function AdminPage() {
     }
   };
 
-  const reloadAndOpenDocument = async (documentId: number) => {
+  const reloadAndOpenDocument = async (documentId: number, focusReview = false) => {
     await loadDashboard();
-    await openDocument(documentId);
+    await openDocument(documentId, focusReview);
   };
 
   const handleReindex = async () => {
@@ -765,8 +759,9 @@ export default function AdminPage() {
       const result = await adminApi.uploadPdf(pdfFile);
       setNotice(result.message);
       setPdfFile(null);
+      setDocumentUploadMode(null);
       if (pdfInputRef.current) pdfInputRef.current.value = '';
-      await reloadAndOpenDocument(result.document.id);
+      await reloadAndOpenDocument(result.document.id, true);
     } catch {
       setNotice('PDF 업로드에 실패했습니다.');
     } finally {
@@ -783,8 +778,9 @@ export default function AdminPage() {
       setMdFile(null);
       setMdTitle('');
       setMdCategory('');
+      setDocumentUploadMode(null);
       if (mdInputRef.current) mdInputRef.current.value = '';
-      await reloadAndOpenDocument(result.document.id);
+      await reloadAndOpenDocument(result.document.id, true);
     } catch {
       setNotice('MD 업로드에 실패했습니다.');
     } finally {
@@ -802,8 +798,9 @@ export default function AdminPage() {
       setNotice(`${result.message} (${methodLabel} ${result.faqs.length}건)${warning}`);
       setFaqMdFile(null);
       setFaqMdCategory('');
+      setDocumentUploadMode(null);
       if (faqMdInputRef.current) faqMdInputRef.current.value = '';
-      await reloadAndOpenDocument(result.document.id);
+      await reloadAndOpenDocument(result.document.id, true);
     } catch {
       setNotice('FAQ용 MD 변환에 실패했습니다.');
     } finally {
@@ -1478,134 +1475,145 @@ export default function AdminPage() {
 
         {activeTab === 'documents' && (
           <div className="mt-6 space-y-6">
-            <div className="grid gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-3" role="tablist" aria-label="문서 관리 구분">
-              {([
-                ['upload', '업로드와 변환'],
-                ['list', '문서 목록'],
-                ['review', '검토 패널'],
-              ] as const).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  role="tab"
-                  aria-selected={documentWorkspaceTab === key}
-                  onClick={() => setDocumentWorkspaceTab(key)}
-                  className={`min-h-12 whitespace-normal break-keep rounded-xl px-4 py-3 text-center text-sm font-semibold leading-5 transition ${documentWorkspaceTab === key ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {documentWorkspaceTab === 'upload' && (
-            <div className="space-y-6">
-              <section className="rounded-3xl bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-slate-900">업로드와 변환</h2>
-                <div className="mt-5 grid gap-5 xl:grid-cols-3">
-                  <div className="min-w-0 rounded-2xl border border-slate-200 p-5 sm:p-6">
-                    <h3 className="break-keep text-base font-semibold leading-6 text-slate-900">PDF → MD</h3>
-                    <p className="mt-2 break-keep text-sm leading-6 text-slate-500">변환 결과를 만든 뒤 검토 대기 상태로 저장합니다.</p>
-                    <label className="mt-5 block min-w-0 cursor-pointer">
-                      <input ref={pdfInputRef} type="file" accept=".pdf" className="sr-only" onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)} />
-                      <span className="inline-flex min-h-10 items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">PDF 파일 선택</span>
-                      <span className="mt-2 block break-all text-xs leading-5 text-slate-500">{pdfFile?.name ?? '선택된 파일 없음'}</span>
-                    </label>
-                    <button onClick={handlePdfUpload} disabled={!pdfFile || uploadBusy} className="mt-5 min-h-11 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50">업로드</button>
-                  </div>
-                  <div className="min-w-0 rounded-2xl border border-slate-200 p-5 sm:p-6">
-                    <h3 className="break-keep text-base font-semibold leading-6 text-slate-900">일반 MD 등록</h3>
-                    <p className="mt-2 break-keep text-sm leading-6 text-slate-500">문서형 데이터는 승인 후에만 검색에 반영됩니다.</p>
-                    <label className="mt-5 block min-w-0 cursor-pointer">
-                      <input ref={mdInputRef} type="file" accept=".md" className="sr-only" onChange={(e) => setMdFile(e.target.files?.[0] ?? null)} />
-                      <span className="inline-flex min-h-10 items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">MD 파일 선택</span>
-                      <span className="mt-2 block break-all text-xs leading-5 text-slate-500">{mdFile?.name ?? '선택된 파일 없음'}</span>
-                    </label>
-                    <input value={mdTitle} onChange={(e) => setMdTitle(e.target.value)} placeholder="문서 제목" className={`${INPUT_CLASS} mt-4 min-w-0`} />
-                    <input value={mdCategory} onChange={(e) => setMdCategory(e.target.value)} placeholder="카테고리" className={`${INPUT_CLASS} mt-3 min-w-0`} />
-                    <button onClick={handleMdUpload} disabled={!mdFile || uploadBusy} className="mt-5 min-h-11 w-full rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50">등록</button>
-                  </div>
-                  <div className="min-w-0 rounded-2xl border border-slate-200 p-5 sm:p-6">
-                    <h3 className="break-keep text-base font-semibold leading-6 text-slate-900">MD → FAQ JSON</h3>
-                    <p className="mt-2 break-keep text-sm leading-6 text-slate-500">변환된 FAQ는 승인 전까지 실제 FAQ DB에 반영되지 않습니다.</p>
-                    <label className="mt-5 block min-w-0 cursor-pointer">
-                      <input ref={faqMdInputRef} type="file" accept=".md" className="sr-only" onChange={(e) => setFaqMdFile(e.target.files?.[0] ?? null)} />
-                      <span className="inline-flex min-h-10 items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">FAQ용 MD 선택</span>
-                      <span className="mt-2 block break-all text-xs leading-5 text-slate-500">{faqMdFile?.name ?? '선택된 파일 없음'}</span>
-                    </label>
-                    <input value={faqMdCategory} onChange={(e) => setFaqMdCategory(e.target.value)} placeholder="FAQ 카테고리" className={`${INPUT_CLASS} mt-4 min-w-0`} />
-                    <button onClick={handleFaqMdUpload} disabled={!faqMdFile || uploadBusy} className="mt-5 min-h-11 w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50">변환 생성</button>
-                  </div>
+            <section className="rounded-3xl bg-white p-5 shadow-sm sm:p-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold text-slate-900">업로드와 변환</h2>
+                  <p className="mt-1 break-keep text-sm leading-6 text-slate-500">작업을 선택하면 필요한 입력 항목만 펼쳐집니다.</p>
                 </div>
-              </section>
-
-              <section className="rounded-3xl border border-amber-200 bg-amber-50/40 p-5 shadow-sm sm:p-6">
-                <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="min-w-0">
-                    <h2 className="break-keep text-lg font-semibold leading-7 text-slate-900">FAISS 인덱스 관리</h2>
-                    <p className="mt-2 break-keep text-sm leading-6 text-slate-600">먼저 승인 데이터와 현재 인덱스를 비교합니다. 변경이 없으면 임베딩을 실행하지 않아 비용이 발생하지 않습니다.</p>
-                    <p className="mt-2 break-keep text-xs leading-5 text-amber-700">변경이 있을 때만 건수를 확인하고 재구성하며, 중복 실행은 서버에서 차단합니다.</p>
+                <div className="flex min-w-0 flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-3 sm:flex-row sm:items-center">
+                  <div className="min-w-0 sm:max-w-md">
+                    <div className="text-sm font-semibold text-slate-900">FAISS 인덱스</div>
+                    <p className="mt-0.5 break-keep text-xs leading-5 text-slate-600">승인 데이터 변경분을 먼저 확인한 뒤 필요할 때만 재구성합니다.</p>
                   </div>
-                  <button onClick={handleReindex} disabled={reindexBusy} className="min-h-11 w-full shrink-0 whitespace-normal break-keep rounded-xl bg-amber-600 px-5 py-2.5 text-center text-sm font-medium leading-5 text-white hover:bg-amber-700 disabled:opacity-50 lg:w-auto lg:min-w-52">
-                    {reindexBusy ? '확인/재구성 처리 중...' : '변경 확인 후 재구성'}
+                  <button onClick={handleReindex} disabled={reindexBusy} className="min-h-10 w-full shrink-0 whitespace-normal break-keep rounded-xl bg-amber-600 px-4 py-2 text-center text-xs font-medium leading-5 text-white hover:bg-amber-700 disabled:opacity-50 sm:w-auto">
+                    {reindexBusy ? '확인 중...' : '변경 확인·재구성'}
                   </button>
                 </div>
-              </section>
-            </div>
-            )}
+              </div>
 
-            {documentWorkspaceTab === 'list' && (
-              <section className="rounded-3xl bg-white p-6 shadow-sm">
+              <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                {([
+                  ['pdf', 'PDF → MD', 'PDF를 변환해 검토 대기로 저장'],
+                  ['md', '일반 MD 등록', '문서형 MD를 검토 대기로 등록'],
+                  ['faq', 'MD → FAQ JSON', 'FAQ JSON을 생성해 검토'],
+                ] as const).map(([mode, title, description]) => {
+                  const selected = documentUploadMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-expanded={selected}
+                      onClick={() => setDocumentUploadMode(selected ? null : mode)}
+                      className={`min-w-0 rounded-xl border px-4 py-3 text-left transition ${selected ? 'border-cyan-500 bg-cyan-50 ring-2 ring-cyan-100' : 'border-slate-200 bg-slate-50 hover:border-cyan-300 hover:bg-white'}`}
+                    >
+                      <div className="break-keep text-sm font-semibold leading-5 text-slate-900">{title}</div>
+                      <div className="mt-1 break-keep text-xs leading-5 text-slate-500">{description}</div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {documentUploadMode && (
+                <div className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50/40 p-4">
+                  {documentUploadMode === 'pdf' && (
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                      <label className="min-w-0 flex-1 cursor-pointer">
+                        <input ref={pdfInputRef} type="file" accept=".pdf" className="sr-only" onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)} />
+                        <span className="inline-flex min-h-10 items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">PDF 파일 선택</span>
+                        <span className="ml-0 mt-2 block break-all text-xs leading-5 text-slate-500 sm:ml-3 sm:mt-0 sm:inline">{pdfFile?.name ?? '선택된 파일 없음'}</span>
+                      </label>
+                      <button onClick={handlePdfUpload} disabled={!pdfFile || uploadBusy} className="min-h-10 w-full shrink-0 rounded-xl bg-slate-900 px-5 py-2 text-sm font-medium text-white disabled:opacity-50 lg:w-auto">변환 시작</button>
+                    </div>
+                  )}
+                  {documentUploadMode === 'md' && (
+                    <div className="grid gap-3 lg:grid-cols-[minmax(14rem,1.3fr)_minmax(10rem,1fr)_minmax(10rem,1fr)_auto] lg:items-center">
+                      <label className="min-w-0 cursor-pointer">
+                        <input ref={mdInputRef} type="file" accept=".md" className="sr-only" onChange={(e) => setMdFile(e.target.files?.[0] ?? null)} />
+                        <span className="inline-flex min-h-10 items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">MD 파일 선택</span>
+                        <span className="mt-1 block break-all text-xs leading-5 text-slate-500">{mdFile?.name ?? '선택된 파일 없음'}</span>
+                      </label>
+                      <input value={mdTitle} onChange={(e) => setMdTitle(e.target.value)} placeholder="문서 제목" className={`${INPUT_CLASS} min-w-0`} />
+                      <input value={mdCategory} onChange={(e) => setMdCategory(e.target.value)} placeholder="카테고리" className={`${INPUT_CLASS} min-w-0`} />
+                      <button onClick={handleMdUpload} disabled={!mdFile || uploadBusy} className="min-h-10 w-full shrink-0 rounded-xl bg-cyan-700 px-5 py-2 text-sm font-medium text-white disabled:opacity-50 lg:w-auto">등록</button>
+                    </div>
+                  )}
+                  {documentUploadMode === 'faq' && (
+                    <div className="grid gap-3 lg:grid-cols-[minmax(14rem,1.4fr)_minmax(12rem,1fr)_auto] lg:items-center">
+                      <label className="min-w-0 cursor-pointer">
+                        <input ref={faqMdInputRef} type="file" accept=".md" className="sr-only" onChange={(e) => setFaqMdFile(e.target.files?.[0] ?? null)} />
+                        <span className="inline-flex min-h-10 items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">FAQ용 MD 선택</span>
+                        <span className="mt-1 block break-all text-xs leading-5 text-slate-500">{faqMdFile?.name ?? '선택된 파일 없음'}</span>
+                      </label>
+                      <input value={faqMdCategory} onChange={(e) => setFaqMdCategory(e.target.value)} placeholder="FAQ 카테고리" className={`${INPUT_CLASS} min-w-0`} />
+                      <button onClick={handleFaqMdUpload} disabled={!faqMdFile || uploadBusy} className="min-h-10 w-full shrink-0 rounded-xl bg-emerald-600 px-5 py-2 text-sm font-medium text-white disabled:opacity-50 lg:w-auto">변환 생성</button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
+              <section className="min-w-0 rounded-3xl bg-white p-5 shadow-sm sm:p-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <h2 className="text-lg font-semibold text-slate-900">문서 목록</h2>
-                    <p className="mt-1 break-keep text-sm leading-6 text-slate-500">삭제된 문서도 표시됩니다. 문서를 조회하면 검토 패널에서 복구할 수 있습니다.</p>
+                    <p className="mt-1 break-keep text-sm leading-6 text-slate-500">전체 문서의 상태와 버전을 비교하고 검토할 문서를 선택합니다. 삭제된 문서도 이 목록에서 복구할 수 있습니다.</p>
                   </div>
                   <span className="text-sm text-slate-500">{loading ? '불러오는 중...' : `${documentRows.length}건`}</span>
                 </div>
-                <div className="mt-4 overflow-x-auto">
-                  <table className="min-w-[880px] w-full text-sm">
+                <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
+                  <table className="w-full min-w-[760px] text-sm">
                     <thead className="whitespace-nowrap bg-slate-50 text-left text-slate-500">
                       <tr>
-                        <th className="px-3 py-3">파일명</th>
-                        <th className="px-3 py-3">타입</th>
-                        <th className="px-3 py-3">상태</th>
-                        <th className="px-3 py-3">버전</th>
-                        <th className="px-3 py-3">생성일</th>
-                        <th className="px-3 py-3">작업</th>
+                        <th className="px-4 py-3 font-medium">파일명</th>
+                        <th className="px-4 py-3 font-medium">타입</th>
+                        <th className="px-4 py-3 font-medium">상태</th>
+                        <th className="px-4 py-3 font-medium">버전</th>
+                        <th className="px-4 py-3 font-medium">생성일</th>
+                        <th className="px-4 py-3 text-right font-medium">작업</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {documentRows.map((doc) => (
-                        <tr key={doc.id} className={doc.is_deleted ? 'bg-rose-50/40' : ''}>
-                          <td className="px-3 py-3">
-                            <div className="break-all font-medium text-slate-900">{doc.logical_name}</div>
-                            <div className="break-all text-xs leading-5 text-slate-500">{doc.original_filename}</div>
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-3">{doc.parser_type ?? '-'}</td>
-                          <td className="whitespace-nowrap px-3 py-3">{doc.is_deleted ? '삭제됨' : doc.status}</td>
-                          <td className="whitespace-nowrap px-3 py-3">v{doc.version}</td>
-                          <td className="whitespace-nowrap px-3 py-3">{formatDate(doc.created_at)}</td>
-                          <td className="px-3 py-3">
-                            <button onClick={() => void openDocument(doc.id)} className="whitespace-nowrap rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white">조회</button>
-                          </td>
-                        </tr>
-                      ))}
+                      {documentRows.length === 0 && !loading && (
+                        <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">등록된 문서가 없습니다.</td></tr>
+                      )}
+                      {documentRows.map((doc) => {
+                        const selected = selectedDocument?.document.id === doc.id;
+                        return (
+                          <tr key={doc.id} className={selected ? 'bg-cyan-50' : doc.is_deleted ? 'bg-rose-50/40' : 'bg-white'}>
+                            <td className="min-w-64 px-4 py-3">
+                              <div className="break-all font-medium leading-6 text-slate-900">{doc.logical_name}</div>
+                              <div className="break-all text-xs leading-5 text-slate-500">{doc.original_filename}</div>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-slate-600">{doc.parser_type ?? '-'}</td>
+                            <td className="whitespace-nowrap px-4 py-3">
+                              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${doc.is_deleted ? 'bg-rose-100 text-rose-700' : doc.status === 'ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {doc.is_deleted ? '삭제됨' : doc.status}
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-slate-600">v{doc.version}</td>
+                            <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatDate(doc.created_at)}</td>
+                            <td className="px-4 py-3 text-right">
+                              <button onClick={() => void openDocument(doc.id, true)} className={`min-h-9 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium ${selected ? 'bg-cyan-700 text-white' : 'bg-slate-900 text-white'}`}>
+                                {selected ? '검토 중' : '검토'}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </section>
-            )}
 
-            {documentWorkspaceTab === 'review' && (
-            <section className="min-w-0 rounded-3xl bg-white p-5 shadow-sm sm:p-6">
+            <section ref={reviewPanelRef} className="min-w-0 scroll-mt-4 rounded-3xl bg-white p-5 shadow-sm sm:p-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <h2 className="text-lg font-semibold text-slate-900">검토 패널</h2>
                 {documentLoading && <span className="text-sm text-slate-500">불러오는 중...</span>}
               </div>
               {!selectedDocument ? (
                 <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                  <p className="break-keep text-sm leading-6 text-slate-600">문서 목록에서 조회할 문서를 선택하면 변환 결과와 승인·삭제·복구 작업이 표시됩니다.</p>
-                  <button type="button" onClick={() => setDocumentWorkspaceTab('list')} className="mt-3 min-h-10 whitespace-nowrap rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">문서 목록으로 이동</button>
+                  <p className="break-keep text-sm leading-6 text-slate-600">위 문서 목록에서 검토할 문서를 선택하면 변환 결과와 승인·삭제·복구 작업이 이곳에 표시됩니다.</p>
                 </div>
               ) : (
                 <div className="mt-4 space-y-5">
@@ -1645,7 +1653,7 @@ export default function AdminPage() {
                       저장하지 않은 수정 내용이 있습니다. 저장이 끝날 때까지 승인할 수 없습니다.
                     </p>
                   )}
-                  <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="grid gap-4 xl:grid-cols-2">
                     <div>
                       <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                         <h3 className="text-sm font-semibold text-slate-900">원본 PDF</h3>
@@ -1716,7 +1724,6 @@ export default function AdminPage() {
                 </div>
               )}
             </section>
-            )}
           </div>
         )}
 
@@ -2579,139 +2586,58 @@ export default function AdminPage() {
                     <InfoTooltip
                       align="left"
                       text={
-                        '데이터베이스의 민감 필드를 Fernet(AES-128-CBC + HMAC-SHA256) 대칭 암호화로 보호합니다.\n' +
-                        '저장 형식: `enc::<base64>` — 접두사로 평문/암호문을 자동 구분.\n' +
-                        'DB가 외부로 유출되어도 평문 정보가 노출되지 않습니다.'
+                        '사용자 이름과 상담 대화, 질문·답변 로그를 Fernet 대칭 암호화로 보호합니다.\n\n' +
+                        'FAQ, 프롬프트, 문서 파일명·검토 메모·청크는 운영자가 DB에서 바로 관리할 수 있도록 평문으로 저장합니다.'
                       }
                     />
                   </div>
-                  <p className="mt-1 text-sm text-slate-500">카테고리별 암호화 ON/OFF와 기존 데이터 일괄 변환을 관리합니다.</p>
+                  <p className="mt-1 break-keep text-sm leading-6 text-slate-500">대화 데이터의 암호화 상태를 확인하고 기존 평문 대화만 일괄 암호화합니다.</p>
                 </div>
                 <button onClick={() => { setEncryptionSettings(null); void loadEncryptionSettings(); }} className="min-h-10 shrink-0 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600">새로고침</button>
               </div>
 
               {encryptionLoading && <p className="mt-4 text-sm text-slate-400">불러오는 중...</p>}
 
-              {encryptionSettings && (
-                <div className="mt-5 space-y-4">
-                  {/* 항상 암호화 카테고리 안내 */}
-                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-slate-700">채팅 내용 (메시지·세션)</p>
-                          <InfoTooltip
-                            align="left"
-                            text={
-                              '보호 대상 테이블·필드:\n' +
-                              '• chat_messages.content (대화 본문)\n' +
-                              '• chat_logs.question / answer / retrieval_chunks (분석 로그)\n' +
-                              '• chat_sessions.encrypted_user_name (사용자 이름)\n\n' +
-                              '사용자 개인정보 보호법상 가장 민감한 데이터이므로 코드 차원에서 항상 ON으로 고정되어 있습니다.'
-                            }
-                          />
-                        </div>
-                        <p className="mt-0.5 text-xs text-slate-400">개인정보 보호를 위해 항상 암호화됩니다. 관리자가 변경할 수 없습니다.</p>
-                      </div>
-                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">항상 ON</span>
-                    </div>
-                  </div>
-
-                  {/* 설정 가능한 카테고리 */}
-                  {encryptionSettings.categories.map((cat) => {
-                    const categoryHint =
-                      cat.key === 'faq'
-                        ? '보호 대상: faqs 테이블의 question / answer / category / keywords_json / aliases_json / search_hints_json / source_files_json\n\nFAQ 콘텐츠는 운영 노하우이자 학습 안내의 핵심 자산입니다. DB 유출 시 외부에서 답변 패턴을 그대로 가져갈 수 있어 보호 권장.'
-                        : cat.key === 'prompt'
-                          ? '보호 대상: prompt_configs.content (상담·취소·핸드오프·fallback 시스템 프롬프트)\n\n프롬프트는 챗봇 동작의 핵심 비밀입니다. 거절 규칙, 표현 가이드, 거버넌스 정책이 모두 담겨 있어 유출되면 우회 시도가 쉬워집니다.'
-                          : '보호 대상: documents.original_filename, documents.error_message, chunks.content\n\n원본 파일명에는 내부 자료 명명 규칙이, 청크 본문에는 미공개 문서 내용이 들어 있을 수 있습니다.';
-
-                    return (
-                    <div key={cat.key} className="rounded-2xl border border-slate-200 p-4">
+              {encryptionSettings && (() => {
+                const conversation = encryptionSettings.categories[0];
+                if (!conversation) return null;
+                const completionRate = conversation.total > 0
+                  ? Math.round((conversation.encrypted_count / conversation.total) * 100)
+                  : 100;
+                return (
+                  <div className="mt-5 space-y-4">
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
                       <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium text-slate-900">{cat.label}</p>
-                            <InfoTooltip align="left" text={categoryHint} />
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-base font-semibold text-slate-900">대화 내용 암호화</h3>
+                            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">항상 ON</span>
                           </div>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                            <span>전체 {cat.total}건</span>
-                            <span className="text-amber-600">암호화 {cat.encrypted_count}건</span>
-                            <span className="text-emerald-600">평문 {cat.plain_count}건</span>
-                            <InfoTooltip
-                              align="left"
-                              width="w-64"
-                              text={
-                                '전체: 카테고리 활성 레코드 총 수\n' +
-                                '암호화: `enc::` 접두사로 저장된 레코드\n' +
-                                '평문: 그대로 저장된 레코드\n\n' +
-                                '두 값이 섞여 있어도 읽을 때 자동 구분됩니다.'
-                              }
-                            />
-                          </div>
+                          <p className="mt-2 break-keep text-sm leading-6 text-slate-600">사용자 이름, 상담 메시지, 질문·답변 로그와 취소 요청 메시지를 보호합니다.</p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <label className="flex cursor-pointer items-center gap-2">
-                            <div className="relative">
-                              <input
-                                type="checkbox"
-                                className="sr-only"
-                                checked={cat.encrypt_enabled}
-                                onChange={(e) => void handleToggleEncryption(cat.key, e.target.checked)}
-                              />
-                              <div className={`h-6 w-11 rounded-full transition-colors ${cat.encrypt_enabled ? 'bg-cyan-600' : 'bg-slate-300'}`} />
-                              <div className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${cat.encrypt_enabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                            </div>
-                            <span className="text-sm font-medium text-slate-700">{cat.encrypt_enabled ? '암호화 ON' : '암호화 OFF'}</span>
-                          </label>
-                          <InfoTooltip
-                            align="right"
-                            text={
-                              'ON: 앞으로 새로 저장·수정되는 레코드를 암호화합니다.\n' +
-                              'OFF: 평문으로 저장합니다.\n\n' +
-                              '⚠️ 토글은 "앞으로의 저장"만 결정합니다. 기존 레코드는 그대로 남으니 아래 마이그레이션 버튼으로 일괄 변환하세요.'
-                            }
-                          />
+                        <div className="shrink-0 text-right">
+                          <div className="text-2xl font-bold text-emerald-700">{completionRate}%</div>
+                          <div className="text-xs text-slate-500">암호화 완료</div>
                         </div>
                       </div>
-                      {cat.total > 0 && (
-                        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                          <button
-                            disabled={migrating !== null || cat.plain_count === 0}
-                            onClick={() => void handleMigrateEncryption(cat.key, 'encrypt')}
-                            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
-                          >
-                            {migrating === `${cat.key}_encrypt` ? '처리 중...' : `평문 → 암호화 (${cat.plain_count}건)`}
-                          </button>
-                          <InfoTooltip
-                            align="left"
-                            text={
-                              '현재 평문 상태인 모든 레코드를 한 번에 Fernet 암호화로 변환합니다.\n\n' +
-                              '버튼이 비활성화돼 있으면 평문 레코드가 0건이라는 뜻입니다.'
-                            }
-                          />
-                          <button
-                            disabled={migrating !== null || cat.encrypted_count === 0}
-                            onClick={() => void handleMigrateEncryption(cat.key, 'decrypt')}
-                            className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
-                          >
-                            {migrating === `${cat.key}_decrypt` ? '처리 중...' : `암호화 → 평문 (${cat.encrypted_count}건)`}
-                          </button>
-                          <InfoTooltip
-                            align="left"
-                            text={
-                              '현재 암호화 상태인 모든 레코드를 한 번에 복호화합니다.\n\n' +
-                              'SQL 직접 조회, 외부 분석 도구 연결, DB 백업 반출 시 평문화가 필요할 때 사용합니다.\n\n' +
-                              '⚠️ 평문화 후에는 DB가 노출되면 그대로 읽히니 분석이 끝난 뒤 다시 암호화 마이그레이션 권장.'
-                            }
-                          />
-                        </div>
-                      )}
+                      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-xl bg-white px-4 py-3"><div className="text-xs text-slate-500">전체 필드</div><div className="mt-1 text-lg font-semibold text-slate-900">{conversation.total}</div></div>
+                        <div className="rounded-xl bg-white px-4 py-3"><div className="text-xs text-slate-500">암호화</div><div className="mt-1 text-lg font-semibold text-emerald-700">{conversation.encrypted_count}</div></div>
+                        <div className="rounded-xl bg-white px-4 py-3"><div className="text-xs text-slate-500">기존 평문</div><div className="mt-1 text-lg font-semibold text-amber-700">{conversation.plain_count}</div></div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={migrating !== null || conversation.plain_count === 0}
+                        onClick={() => void handleMigrateConversationEncryption()}
+                        className="mt-5 min-h-11 w-full whitespace-normal break-keep rounded-xl bg-slate-900 px-5 py-2.5 text-center text-sm font-medium leading-5 text-white disabled:opacity-40 sm:w-auto"
+                      >
+                        {migrating === 'conversation_encrypt' ? '암호화 처리 중...' : conversation.plain_count > 0 ? `기존 평문 암호화 (${conversation.plain_count}개)` : '모든 대화 데이터 암호화 완료'}
+                      </button>
                     </div>
-                  );
-                  })}
-                </div>
-              )}
+
+                  </div>
+                );
+              })()}
             </section>
             )}
 

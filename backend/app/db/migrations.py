@@ -3,6 +3,8 @@ from __future__ import annotations
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
+from app.config import get_settings
+from app.utils.crypto import ENCRYPTED_PREFIX, decrypt
 from app.utils.data_names import data_name_key
 
 
@@ -138,6 +140,59 @@ def _ensure_custom_data_name_keys(engine: Engine) -> None:
             ))
 
 
+def _decrypt_non_conversation_content(engine: Engine) -> None:
+    """대화·보안금고 외 필드에 남은 과거 암호문을 안전하게 평문화한다."""
+    if not get_settings().encryption_key:
+        return
+
+    targets = {
+        "faqs": (
+            "category", "question", "answer", "keywords_json", "aliases_json",
+            "search_hints_json", "source_files_json",
+        ),
+        "prompt_configs": ("content",),
+        "documents": ("original_filename", "review_note", "error_message"),
+        "chunks": ("content", "metadata_json"),
+        "processing_logs": ("message", "detail"),
+        "admin_audit_logs": ("detail",),
+        "chat_logs": ("retrieval_chunks", "error"),
+        "operations_alerts": ("note", "test_question", "test_answer"),
+        "operations_alert_histories": ("test_question", "test_answer"),
+    }
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        existing_tables = set(inspector.get_table_names())
+        for table_name, configured_fields in targets.items():
+            if table_name not in existing_tables:
+                continue
+            existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+            fields = [field for field in configured_fields if field in existing_columns]
+            if "id" not in existing_columns or not fields:
+                continue
+            selected_columns = ", ".join(["id", *fields])
+            rows = connection.execute(text(f"SELECT {selected_columns} FROM {table_name}"))
+            for row in rows.mappings():
+                updates: dict[str, str] = {}
+                for field in fields:
+                    value = row[field]
+                    if not isinstance(value, str) or not (
+                        value.startswith(ENCRYPTED_PREFIX) or value.startswith("gAAA")
+                    ):
+                        continue
+                    try:
+                        updates[field] = decrypt(value)
+                    except Exception:
+                        # 키 불일치나 손상된 값은 원본을 보존한다.
+                        continue
+                if not updates:
+                    continue
+                assignments = ", ".join(f"{field} = :{field}" for field in updates)
+                connection.execute(
+                    text(f"UPDATE {table_name} SET {assignments} WHERE id = :row_id"),
+                    {**updates, "row_id": row["id"]},
+                )
+
+
 def migrate_database(engine: Engine) -> None:
     inspector = inspect(engine)
 
@@ -187,3 +242,4 @@ def migrate_database(engine: Engine) -> None:
     _ensure_text_columns(engine)
     _ensure_custom_data_name_keys(engine)
     _drop_legacy_tables(engine)
+    _decrypt_non_conversation_content(engine)

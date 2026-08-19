@@ -53,10 +53,6 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-this-secret-in-production"
     admin_email: str = ""  # 최초 부트스트랩 관리자 이메일
 
-    encrypt_faq: bool = True
-    encrypt_prompt: bool = True
-    encrypt_document: bool = True
-
     aws_region: str = "ap-northeast-2"
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""

@@ -34,7 +34,7 @@ from app.services.transformation_service import (
     convert_markdown_to_faq_items_with_report,
     validate_faq_items,
 )
-from app.utils.crypto import decrypt_if_needed, maybe_encrypt
+from app.utils.crypto import decrypt_if_needed
 from app.utils.pdf_converter import convert_pdf_to_md
 
 
@@ -109,8 +109,8 @@ def create_processing_log(
             document_id=document_id,
             log_type=log_type,
             status=status,
-            message=maybe_encrypt(message),
-            detail=maybe_encrypt(detail),
+            message=message,
+            detail=detail,
         )
     )
     db.commit()
@@ -130,7 +130,7 @@ def create_audit_log(
             action=action,
             target_type=target_type,
             target_id=target_id,
-            detail=maybe_encrypt(detail),
+            detail=detail,
         )
     )
     db.commit()
@@ -159,13 +159,13 @@ def _upsert_faq_from_payload(db: Session, payload: dict) -> None:
         return
     row = db.query(FaqRecord).filter(FaqRecord.faq_key == faq_key).first()
     values = {
-        "category": maybe_encrypt(payload.get("category", "")),
-        "question": maybe_encrypt(payload.get("question", "")),
-        "answer": maybe_encrypt(payload.get("answer", "")),
-        "keywords_json": maybe_encrypt(json.dumps(payload.get("keywords", []), ensure_ascii=False)),
-        "aliases_json": maybe_encrypt(json.dumps(payload.get("aliases", []), ensure_ascii=False)),
-        "search_hints_json": maybe_encrypt(json.dumps(payload.get("search_hints", []), ensure_ascii=False)),
-        "source_files_json": maybe_encrypt(json.dumps(payload.get("source_files", []), ensure_ascii=False)),
+        "category": payload.get("category", ""),
+        "question": payload.get("question", ""),
+        "answer": payload.get("answer", ""),
+        "keywords_json": json.dumps(payload.get("keywords", []), ensure_ascii=False),
+        "aliases_json": json.dumps(payload.get("aliases", []), ensure_ascii=False),
+        "search_hints_json": json.dumps(payload.get("search_hints", []), ensure_ascii=False),
+        "source_files_json": json.dumps(payload.get("source_files", []), ensure_ascii=False),
         "direct_answer": bool(payload.get("direct_answer", False)),
         "top_k": int(payload.get("top_k", 4) or 4),
         "is_active": True,
@@ -197,7 +197,7 @@ async def _process_md_content(
     record = DocumentRecord(
         logical_name=logical_name,
         version=version,
-        original_filename=maybe_encrypt(filename),
+        original_filename=filename,
         storage_key=None,
         md_path=md_storage or str(managed_md_path),
         parser_type="markdown",
@@ -271,7 +271,7 @@ async def _process_md_content(
         return record
     except Exception as exc:
         record.status = "failed"
-        record.error_message = maybe_encrypt(str(exc))
+        record.error_message = str(exc)
         db.commit()
         create_processing_log(db, "document", "failed", "문서 처리 실패", document_id=record.id, detail=str(exc))
         raise
@@ -322,7 +322,7 @@ async def process_uploaded_faq_md(
     record = DocumentRecord(
         logical_name=logical_name,
         version=version,
-        original_filename=maybe_encrypt(filename),
+        original_filename=filename,
         storage_key=None,
         md_path=md_storage or str(managed_md_path),
         json_path=faq_json_storage or str(managed_json_path),
@@ -389,7 +389,7 @@ async def process_uploaded_pdf(db: Session, filename: str, content: bytes) -> Do
     record = DocumentRecord(
         logical_name=logical_name,
         version=version,
-        original_filename=maybe_encrypt(filename),
+        original_filename=filename,
         storage_key=storage_key,
         pdf_path=uploaded_pdf_uri or str(pdf_path),
         status="uploaded",
@@ -479,7 +479,7 @@ async def process_uploaded_pdf(db: Session, filename: str, content: bytes) -> Do
         return record
     except Exception as exc:
         record.status = "failed"
-        record.error_message = maybe_encrypt(str(exc))
+        record.error_message = str(exc)
         db.commit()
         create_processing_log(db, "document", "failed", "문서 처리 실패", document_id=record.id, detail=str(exc))
         raise
@@ -736,7 +736,7 @@ def approve_document(db: Session, record: DocumentRecord, review_note: str | Non
 
     record.status = "ready"
     record.is_active = True
-    record.review_note = maybe_encrypt(review_note)
+    record.review_note = review_note
     record.approved_at = datetime.utcnow()
     record.rejected_at = None
     db.commit()
@@ -757,7 +757,7 @@ def reject_document(db: Session, record: DocumentRecord, review_note: str | None
         sync_faqs_to_file(db)
     record.status = "rejected"
     record.is_active = False
-    record.review_note = maybe_encrypt(review_note)
+    record.review_note = review_note
     record.rejected_at = datetime.utcnow()
     db.commit()
     if was_active:
@@ -779,7 +779,7 @@ def soft_delete_document(db: Session, record: DocumentRecord, review_note: str |
     record.is_active = False
     record.status = "deleted"
     record.deleted_at = datetime.utcnow()
-    record.review_note = maybe_encrypt(review_note)
+    record.review_note = review_note
     db.commit()
     full_reindex(db)
     create_processing_log(db, "document", "deleted", "문서 소프트 삭제", document_id=record.id, detail=review_note)

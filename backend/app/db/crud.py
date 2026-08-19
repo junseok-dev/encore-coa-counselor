@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from app.db.models import ChatSession, ChatMessage
-from app.utils.crypto import encrypt, decrypt
+from app.utils.crypto import maybe_encrypt
 from datetime import datetime
 
 
@@ -8,7 +8,7 @@ def create_session(db: Session, session_id: str, encrypted_user_name: str = None
     """새 상담 세션 생성"""
     session = ChatSession(
         id=session_id,
-        encrypted_user_name=encrypted_user_name,
+        encrypted_user_name=maybe_encrypt(encrypted_user_name),
         message_count=0,
     )
     db.add(session)
@@ -38,7 +38,7 @@ def save_message(
     message = ChatMessage(
         session_id=session_id,
         role=role,
-        content=encrypt(content),
+        content=maybe_encrypt(content),
         source=source,
     )
     db.add(message)
