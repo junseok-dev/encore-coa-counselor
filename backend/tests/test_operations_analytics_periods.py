@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
-from app.db.models import BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession
+from app.db.models import BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, OpenAiMonthlyCostRecord
 from app.routers import admin
 
 
@@ -66,6 +66,12 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
             service_name="EC2",
             amount_krw=12000,
         ))
+        self.db.add(OpenAiMonthlyCostRecord(
+            billing_month="2026-08",
+            amount_usd=12.34,
+            note="API Key Usage 확인",
+            updated_by="admin",
+        ))
         self.db.commit()
 
     def tearDown(self):
@@ -94,7 +100,7 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
         self.assertEqual(1, result["period_summary"]["consultation_requests"])
         self.assertEqual(1, result["period_summary"]["cancels"])
         self.assertEqual(12000, result["cost_summary"]["aws_cost_krw"])
-        self.assertAlmostEqual(0.021, result["cost_summary"]["openai_estimated_usd"])
+        self.assertEqual(0, result["cost_summary"]["openai_cost_usd"])
 
     def test_day_period_returns_hourly_signal_metrics(self):
         result = self.analytics("day")
@@ -116,6 +122,8 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
         self.assertEqual("2026-08", august["month"])
         self.assertEqual(3, august["chats"])
         self.assertEqual(12000, august["aws_cost_krw"])
+        self.assertAlmostEqual(12.34, august["openai_cost_usd"])
+        self.assertAlmostEqual(12.34, result["cost_summary"]["openai_cost_usd"])
 
 
 if __name__ == "__main__":

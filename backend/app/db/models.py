@@ -226,6 +226,19 @@ class BillingCostUploadRecord(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class OpenAiMonthlyCostRecord(Base):
+    __tablename__ = "openai_monthly_cost_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    billing_month = Column(String(7), unique=True, index=True, nullable=False)
+    amount_usd = Column(Float, nullable=False)
+    note = Column(Text, nullable=True)
+    source = Column(String(30), default="manual_api_key_usage", nullable=False)
+    updated_by = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class ProcessingLog(Base):
     __tablename__ = "processing_logs"
 

@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -30,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, PromptVersion, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OpenAiMonthlyCostRecord, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, PromptVersion, SystemHealthProbe
 from app.models.chat import ChatRequest, HistoryMessage
 from app.models.session import MessageDetail, SessionDetail, SessionListResponse, SessionSummary
 from app.routers.chat import chat as run_chat_preview
@@ -98,6 +99,7 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "system_health_probes": "시스템 상태 점검 — 데이터베이스 저장 가능 여부 확인",
     "billing_daily_cost_records": "계정·서비스·일자별 실제 원화 사용 금액",
     "billing_cost_upload_records": "월별 n·Xavis 원본 비용 파일 — 마지막 업로드 파일 보관",
+    "openai_monthly_cost_records": "월별 OpenAI 챗봇 API 실제 비용 — API Key Usage 확인값 수동 기록",
     "processing_logs": "문서 처리 로그 — 파싱, 임베딩 등 단계별 처리 결과",
     "prompt_configs": "LLM 프롬프트 설정 — 시스템 프롬프트, 스타일 가이드 등",
     "prompt_versions": "프롬프트 운영 버전 이력 — 배포·복구 가능한 변경 내용",
@@ -139,6 +141,11 @@ class ModelChangeRequest(BaseModel):
 
 class EmbeddingModelChangeRequest(BaseModel):
     model_name: str
+
+
+class OpenAiMonthlyCostPayload(BaseModel):
+    amount_usd: float
+    note: str | None = None
 
 
 class ReviewRequest(BaseModel):
@@ -1492,6 +1499,10 @@ def get_operations_analytics(
         BillingDailyCostRecord.usage_date >= analysis_start.date(),
         BillingDailyCostRecord.usage_date < analysis_end.date(),
     ).all()
+    analysis_openai_costs = db.query(OpenAiMonthlyCostRecord).filter(
+        OpenAiMonthlyCostRecord.billing_month >= analysis_start.strftime("%Y-%m"),
+        OpenAiMonthlyCostRecord.billing_month < analysis_end.strftime("%Y-%m"),
+    ).all()
 
     monthly_map = {
         month_start.strftime("%Y-%m"): {
@@ -1506,7 +1517,7 @@ def get_operations_analytics(
             "safety": 0,
             "failed": 0,
             "aws_cost_krw": 0,
-            "openai_estimated_usd": 0.0,
+            "openai_cost_usd": 0.0,
         }
         for month_start in month_starts
     }
@@ -1514,7 +1525,7 @@ def get_operations_analytics(
         hour: {
             "hour": hour, "label": f"{hour:02d}시", "visitors": 0, "chats": 0,
             "handoffs": 0, "consultation_requests": 0, "cancels": 0, "refunds": 0,
-            "homepage_requests": 0, "safety": 0, "failed": 0, "openai_estimated_usd": 0.0,
+            "homepage_requests": 0, "safety": 0, "failed": 0, "openai_cost_usd": 0.0,
         }
         for hour in range(24)
     }
@@ -1534,7 +1545,7 @@ def get_operations_analytics(
                 "safety": 0,
                 "failed": 0,
                 "aws_cost_krw": 0,
-                "openai_estimated_usd": 0.0,
+                "openai_cost_usd": 0.0,
             }
             for offset in range(day_count)
         }
@@ -1568,7 +1579,6 @@ def get_operations_analytics(
                 monthly_map[month_key]["failed"] += 1
             if _is_homepage_request(decrypt_if_needed(row.question)):
                 monthly_map[month_key]["homepage_requests"] += 1
-            monthly_map[month_key]["openai_estimated_usd"] += float(row.embedding_cost or 0) + float(row.llm_cost or 0)
         hour_bucket = hourly_map[local_created_at.hour]
         hour_bucket["chats"] += 1
         if row.processing_status == "handoff" or row.source == "handoff":
@@ -1581,7 +1591,6 @@ def get_operations_analytics(
             hour_bucket["failed"] += 1
         if _is_homepage_request(decrypt_if_needed(row.question)):
             hour_bucket["homepage_requests"] += 1
-        hour_bucket["openai_estimated_usd"] += float(row.embedding_cost or 0) + float(row.llm_cost or 0)
         day_key = local_created_at.date().isoformat()
         if day_key in daily_map:
             daily_map[day_key]["chats"] += 1
@@ -1595,7 +1604,6 @@ def get_operations_analytics(
                 daily_map[day_key]["failed"] += 1
             if _is_homepage_request(decrypt_if_needed(row.question)):
                 daily_map[day_key]["homepage_requests"] += 1
-            daily_map[day_key]["openai_estimated_usd"] += float(row.embedding_cost or 0) + float(row.llm_cost or 0)
 
     for row in analysis_cancels:
         if not row.created_at:
@@ -1616,6 +1624,10 @@ def get_operations_analytics(
         day_key = row.usage_date.isoformat()
         if day_key in daily_map:
             daily_map[day_key]["aws_cost_krw"] += row.amount_krw
+
+    for row in analysis_openai_costs:
+        if row.billing_month in monthly_map:
+            monthly_map[row.billing_month]["openai_cost_usd"] = float(row.amount_usd)
 
     question_category_map: dict[str, dict] = {}
     answer_source_summary = {"faq": 0, "llm": 0, "other": 0}
@@ -1676,8 +1688,8 @@ def get_operations_analytics(
     hourly = list(hourly_map.values())
     daily = list(daily_map.values())
     for bucket in [*monthly, *daily, *hourly]:
-        if "openai_estimated_usd" in bucket:
-            bucket["openai_estimated_usd"] = round(float(bucket["openai_estimated_usd"]), 6)
+        if "openai_cost_usd" in bucket:
+            bucket["openai_cost_usd"] = round(float(bucket["openai_cost_usd"]), 6)
     question_categories_top5 = sorted(
         (item for item in question_category_map.values() if item["key"] != "general"),
         key=lambda item: (-item["count"], item["label"]),
@@ -1759,10 +1771,7 @@ def get_operations_analytics(
         "handoff_categories": handoff_categories,
         "cost_summary": {
             "aws_cost_krw": sum(row.amount_krw for row in analysis_costs),
-            "openai_estimated_usd": round(sum(
-                float(row.embedding_cost or 0) + float(row.llm_cost or 0)
-                for row in analysis_logs
-            ), 6),
+            "openai_cost_usd": round(sum(float(row.amount_usd) for row in analysis_openai_costs), 6),
         },
         "unclassified_count": unclassified_count,
     }
@@ -2176,6 +2185,105 @@ def _find_openai_project_id(admin_key: str, project_name: str) -> str:
     if len(matches) > 1:
         raise LookupError(f"이름이 같은 OpenAI 프로젝트가 여러 개입니다. OPENAI_PROJECT_ID를 설정해 주세요.")
     return matches[0]
+
+
+def _validate_billing_month(value: str) -> str:
+    try:
+        parsed = datetime.strptime(value, "%Y-%m")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.") from exc
+    normalized = parsed.strftime("%Y-%m")
+    if normalized != value:
+        raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.")
+    return normalized
+
+
+def _serialize_openai_manual_cost(row: OpenAiMonthlyCostRecord | None) -> dict | None:
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "billing_month": row.billing_month,
+        "amount_usd": round(float(row.amount_usd), 6),
+        "note": row.note,
+        "source": row.source,
+        "updated_by": row.updated_by,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+@router.get("/operations/openai-costs/manual")
+def get_manual_openai_costs(
+    billing_month: str = Query(...),
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
+    is_all_period = billing_month == "all"
+    if not is_all_period:
+        _validate_billing_month(billing_month)
+    rows = db.query(OpenAiMonthlyCostRecord).order_by(OpenAiMonthlyCostRecord.billing_month.asc()).all()
+    selected = None if is_all_period else next((row for row in rows if row.billing_month == billing_month), None)
+    selected_rows = rows if is_all_period else ([selected] if selected else [])
+    return {
+        "billing_month": billing_month,
+        "is_all_period": is_all_period,
+        "total_usd": round(sum(float(row.amount_usd) for row in selected_rows), 6),
+        "record": _serialize_openai_manual_cost(selected),
+        "monthly_history": [
+            {"billing_month": row.billing_month, "amount_usd": round(float(row.amount_usd), 6)}
+            for row in rows
+        ],
+    }
+
+
+@router.put("/operations/openai-costs/manual/{billing_month}")
+def save_manual_openai_cost(
+    billing_month: str,
+    body: OpenAiMonthlyCostPayload,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    _validate_billing_month(billing_month)
+    if not math.isfinite(body.amount_usd) or body.amount_usd < 0:
+        raise HTTPException(status_code=400, detail="OpenAI 비용은 0 이상의 유효한 금액이어야 합니다.")
+    note = (body.note or "").strip()[:1000] or None
+    row = db.query(OpenAiMonthlyCostRecord).filter(OpenAiMonthlyCostRecord.billing_month == billing_month).first()
+    created = row is None
+    if row is None:
+        row = OpenAiMonthlyCostRecord(billing_month=billing_month, amount_usd=body.amount_usd)
+        db.add(row)
+    row.amount_usd = round(body.amount_usd, 6)
+    row.note = note
+    row.source = "manual_api_key_usage"
+    row.updated_by = current_user
+    db.commit()
+    db.refresh(row)
+    create_audit_log(
+        db,
+        "openai_cost_created" if created else "openai_cost_updated",
+        "openai_monthly_cost",
+        billing_month,
+        f"USD {row.amount_usd:.6f}",
+        actor=current_user,
+    )
+    return {"message": f"{billing_month} OpenAI 실제 비용을 저장했습니다.", "record": _serialize_openai_manual_cost(row)}
+
+
+@router.delete("/operations/openai-costs/manual/{billing_month}")
+def delete_manual_openai_cost(
+    billing_month: str,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    _validate_billing_month(billing_month)
+    row = db.query(OpenAiMonthlyCostRecord).filter(OpenAiMonthlyCostRecord.billing_month == billing_month).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="삭제할 OpenAI 월 비용이 없습니다.")
+    db.delete(row)
+    db.commit()
+    create_audit_log(db, "openai_cost_deleted", "openai_monthly_cost", billing_month, actor=current_user)
+    return {"message": f"{billing_month} OpenAI 실제 비용을 삭제했습니다."}
 
 
 @router.get("/operations/openai-costs")

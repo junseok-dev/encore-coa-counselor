@@ -38,8 +38,6 @@ import {
   DbTableMeta,
   EncryptionSettings,
   ModelSettings,
-  CostManagementData,
-  OpenAiCostData,
   OperationsDashboardData,
   OperationsAnalyticsData,
   OperationsPeriodFilters,
@@ -57,10 +55,6 @@ type TabKey = 'dashboard' | 'improvements' | 'costs' | 'documents' | 'faqs' | 'p
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
 const CHAT_SESSION_PAGE_SIZE = 20;
 const EMPTY_ANALYTICS_FILTERS: OperationsPeriodFilters = { year: null, month: null, weekStart: null, day: null };
-
-function localDateIso(value = new Date()) {
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
-}
 
 function analyticsQuery(filters: OperationsPeriodFilters): { period?: OperationsPeriodMode; anchor?: string } {
   if (filters.day) return { period: 'day', anchor: filters.day };
@@ -318,9 +312,6 @@ export default function AdminPage() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsPeriod, setAnalyticsPeriod] = useState<OperationsPeriodMode>('month');
   const [analyticsFilters, setAnalyticsFilters] = useState<OperationsPeriodFilters>(EMPTY_ANALYTICS_FILTERS);
-  const analyticsAnchorDate = analyticsQuery(analyticsFilters).anchor ?? localDateIso();
-  const [dashboardCostData, setDashboardCostData] = useState<CostManagementData | null>(null);
-  const [dashboardOpenAiCostData, setDashboardOpenAiCostData] = useState<OpenAiCostData | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
 
@@ -532,32 +523,20 @@ export default function AdminPage() {
     }
   };
 
-  const loadDashboardCosts = async (anchorDate = analyticsAnchorDate) => {
-    const billingMonth = anchorDate.slice(0, 7);
-    const [costResult, openAiResult] = await Promise.allSettled([
-      adminApi.getCostManagement(billingMonth, '249173798473'),
-      adminApi.getOpenAiCosts(billingMonth),
-    ]);
-    if (costResult.status === 'fulfilled') setDashboardCostData(costResult.value);
-    if (openAiResult.status === 'fulfilled') setDashboardOpenAiCostData(openAiResult.value);
-  };
-
   const refreshOperationsDashboard = async () => {
-    await Promise.all([loadOperations(), loadSystemHealth(), loadAnalytics(), loadDashboardCosts()]);
+    await Promise.all([loadOperations(), loadSystemHealth(), loadAnalytics()]);
   };
 
   const handleAnalyticsFiltersChange = (filters: OperationsPeriodFilters) => {
     setAnalyticsFilters(filters);
-    const anchorDate = analyticsQuery(filters).anchor ?? localDateIso();
-    void Promise.all([loadAnalytics(filters), loadDashboardCosts(anchorDate)]);
+    void loadAnalytics(filters);
   };
 
   const handleAnalyticsPeriodChange = (period: OperationsPeriodMode) => {
     const nextFilters = filtersForMode(analyticsFilters, period);
     setAnalyticsPeriod(period);
     setAnalyticsFilters(nextFilters);
-    const anchorDate = analyticsQuery(nextFilters).anchor ?? localDateIso();
-    void Promise.all([loadAnalytics(nextFilters), loadDashboardCosts(anchorDate)]);
+    void loadAnalytics(nextFilters);
   };
 
   const loadModelSettings = async () => {
@@ -649,7 +628,6 @@ export default function AdminPage() {
   useEffect(() => {
     if (activeTab === 'dashboard' && authenticated) {
       void loadAnalytics();
-      void loadDashboardCosts();
     }
   }, [activeTab, authenticated]);
 
@@ -1592,9 +1570,6 @@ export default function AdminPage() {
               analyticsLoading={analyticsLoading}
               analyticsPeriod={analyticsPeriod}
               analyticsFilters={analyticsFilters}
-              analyticsAnchorDate={analyticsAnchorDate}
-              costData={dashboardCostData}
-              openAiCostData={dashboardOpenAiCostData}
               onRefresh={refreshOperationsDashboard}
               onPeriodChange={handleAnalyticsPeriodChange}
               onFiltersChange={handleAnalyticsFiltersChange}

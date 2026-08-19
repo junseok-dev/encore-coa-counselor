@@ -246,7 +246,7 @@ export interface OperationsDailyMetric {
   safety: number;
   failed: number;
   aws_cost_krw?: number;
-  openai_estimated_usd?: number;
+  openai_cost_usd?: number;
 }
 
 export interface HandoffCategoryMetric {
@@ -280,7 +280,7 @@ export interface OperationsMonthlyMetric {
   safety: number;
   failed: number;
   aws_cost_krw: number;
-  openai_estimated_usd: number;
+  openai_cost_usd: number;
 }
 
 export interface OperationsHourlyMetric {
@@ -295,7 +295,7 @@ export interface OperationsHourlyMetric {
   homepage_requests: number;
   safety: number;
   failed: number;
-  openai_estimated_usd: number;
+  openai_cost_usd: number;
 }
 
 export type OperationsPeriodMode = 'year' | 'month' | 'week' | 'day';
@@ -350,7 +350,7 @@ export interface OperationsAnalyticsData {
   handoff_categories: HandoffCategoryMetric[];
   cost_summary: {
     aws_cost_krw: number;
-    openai_estimated_usd: number;
+    openai_cost_usd: number;
   };
   unclassified_count: number;
 }
@@ -432,6 +432,25 @@ export interface OpenAiCostData {
   daily: OpenAiDailyCost[];
   line_items: OpenAiCostLineItem[];
   fetched_at: string;
+}
+
+export interface OpenAiManualCostRecord {
+  id: number;
+  billing_month: string;
+  amount_usd: number;
+  note: string | null;
+  source: 'manual_api_key_usage';
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OpenAiManualCostData {
+  billing_month: string;
+  is_all_period: boolean;
+  total_usd: number;
+  record: OpenAiManualCostRecord | null;
+  monthly_history: Array<{ billing_month: string; amount_usd: number }>;
 }
 
 export type SystemHealthStatus = 'healthy' | 'degraded' | 'critical' | 'unknown' | 'not_configured';

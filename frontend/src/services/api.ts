@@ -19,6 +19,8 @@ import {
   ModelSettings,
   OperationsDashboardData,
   OpenAiCostData,
+  OpenAiManualCostData,
+  OpenAiManualCostRecord,
   OperationsAnalyticsData,
   OperationsPeriodMode,
   OperationsAlertDetail,
@@ -273,6 +275,26 @@ export const adminApi = {
     const response = await adminApiClient.post<OperationsAlertTestResult>(`/admin/operations/alerts/${alertId}/test`, {
       question,
     });
+    return response.data;
+  },
+
+  getManualOpenAiCosts: async (billingMonth: string): Promise<OpenAiManualCostData> => {
+    const response = await adminApiClient.get<OpenAiManualCostData>('/admin/operations/openai-costs/manual', {
+      params: { billing_month: billingMonth },
+    });
+    return response.data;
+  },
+
+  saveManualOpenAiCost: async (billingMonth: string, amountUsd: number, note?: string): Promise<{ message: string; record: OpenAiManualCostRecord }> => {
+    const response = await adminApiClient.put(`/admin/operations/openai-costs/manual/${billingMonth}`, {
+      amount_usd: amountUsd,
+      note: note || null,
+    });
+    return response.data;
+  },
+
+  deleteManualOpenAiCost: async (billingMonth: string): Promise<{ message: string }> => {
+    const response = await adminApiClient.delete(`/admin/operations/openai-costs/manual/${billingMonth}`);
     return response.data;
   },
 
