@@ -255,7 +255,7 @@ export const adminApi = {
 
   updateOperationsAlert: async (
     alertId: number,
-    status: 'open' | 'checking' | 'resolved',
+    status: 'open' | 'checking' | 'developer_required' | 'resolved',
     note?: string,
   ): Promise<OperationsAlertUpdateResult> => {
     const response = await adminApiClient.patch<OperationsAlertUpdateResult>(`/admin/operations/alerts/${alertId}`, {

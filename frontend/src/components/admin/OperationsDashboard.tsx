@@ -117,7 +117,7 @@ function AttentionRow({
   onOpenDetail: () => void;
 }) {
   const config = SIGNAL_CONFIG[item.type];
-  const statusLabel = item.status === 'open' ? '미확인' : item.status === 'checking' ? '확인 중' : '처리 완료';
+  const statusLabel = item.status === 'open' ? '미확인' : item.status === 'checking' ? '확인 중' : item.status === 'developer_required' ? '개발자 조치 필요' : '처리 완료';
   return (
     <div className={`group grid w-full gap-3 border-b border-slate-100 px-1 py-4 text-left last:border-0 sm:grid-cols-[128px_1fr_auto] sm:px-3 ${item.status === 'resolved' ? 'opacity-60' : 'hover:bg-slate-50/80'}`}>
       <div>
@@ -125,7 +125,7 @@ function AttentionRow({
           <span className={`h-1.5 w-1.5 rounded-full ${config.dot}`} />
           {config.label}
         </span>
-        <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${item.status === 'open' ? 'bg-rose-100 text-rose-700' : item.status === 'checking' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{statusLabel}</span>
+        <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${item.status === 'open' ? 'bg-rose-100 text-rose-700' : item.status === 'checking' ? 'bg-blue-100 text-blue-700' : item.status === 'developer_required' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-700'}`}>{statusLabel}</span>
         <p className="mt-2 text-[11px] text-slate-400">{formatDateTime(item.created_at)}</p>
       </div>
       <div className="min-w-0">

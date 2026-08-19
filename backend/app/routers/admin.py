@@ -2743,7 +2743,14 @@ async def assist_operations_alert(
             created_by="admin-ai",
         ),
     ])
-    if alert.status == "open":
+    if result["root_cause"] == "code":
+        previous_status = alert.status
+        alert.status = "developer_required"
+        alert.assigned_to = current_user
+        alert.resolved_at = None
+        if previous_status != "developer_required":
+            _add_operations_alert_history(db, alert, "developer_required", current_user, previous_status)
+    elif alert.status == "open":
         previous_status = alert.status
         alert.status = "checking"
         alert.assigned_to = current_user
@@ -3022,7 +3029,7 @@ def update_operations_alert(
     db: Session = Depends(get_db),
     current_user: str = Depends(verify_admin),
 ):
-    if body.status not in {"open", "checking", "resolved"}:
+    if body.status not in {"open", "checking", "developer_required", "resolved"}:
         raise HTTPException(status_code=400, detail="지원하지 않는 알림 상태입니다.")
     alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
     if not alert:
@@ -3059,7 +3066,7 @@ def update_operations_alert(
         ).order_by(OperationsAlertHistory.id.desc()).first()
         latest_work = db.query(OperationsAlertHistory).filter(
             OperationsAlertHistory.alert_id == alert.id,
-            OperationsAlertHistory.action.in_(("checking_started", "work_updated")),
+            OperationsAlertHistory.action.in_(("checking_started", "developer_required", "work_updated")),
         ).order_by(OperationsAlertHistory.id.desc()).first()
         if not latest_test or (latest_work and latest_test.id <= latest_work.id):
             raise HTTPException(status_code=400, detail="마지막 작업 내용 저장 이후의 답변 테스트가 필요합니다.")
@@ -3067,9 +3074,14 @@ def update_operations_alert(
             raise HTTPException(status_code=400, detail="테스트 답변이 원하는 결과인지 확인해 주세요.")
 
     alert.status = body.status
-    alert.assigned_to = current_user if body.status in {"checking", "resolved"} else None
+    alert.assigned_to = current_user if body.status in {"checking", "developer_required", "resolved"} else None
     alert.resolved_at = datetime.now() if body.status == "resolved" else None
-    action = "resolved" if body.status == "resolved" else "checking_started" if previous_status != "checking" and body.status == "checking" else "work_updated"
+    action = (
+        "resolved" if body.status == "resolved"
+        else "developer_required" if body.status == "developer_required"
+        else "checking_started" if previous_status != "checking" and body.status == "checking"
+        else "work_updated"
+    )
     _add_operations_alert_history(db, alert, action, current_user, previous_status)
     db.commit()
     db.refresh(alert)

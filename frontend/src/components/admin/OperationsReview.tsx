@@ -41,7 +41,7 @@ function formatDateTime(value: string) {
 
 function AttentionRow({ item, onOpenDetail }: { item: OperationsAttentionItem; onOpenDetail: () => void }) {
   const config = SIGNAL_CONFIG[item.type];
-  const statusLabel = item.status === 'open' ? '미확인' : item.status === 'checking' ? '확인 중' : '처리 완료';
+  const statusLabel = item.status === 'open' ? '미확인' : item.status === 'checking' ? '확인 중' : item.status === 'developer_required' ? '개발자 조치 필요' : '처리 완료';
 
   return (
     <div className={`group grid w-full gap-3 border-b border-slate-100 px-1 py-4 text-left last:border-0 sm:grid-cols-[128px_1fr_auto] sm:px-3 ${item.status === 'resolved' ? 'opacity-60' : 'hover:bg-slate-50/80'}`}>
@@ -50,7 +50,7 @@ function AttentionRow({ item, onOpenDetail }: { item: OperationsAttentionItem; o
           <span className={`h-1.5 w-1.5 rounded-full ${config.dot}`} />
           {config.label}
         </span>
-        <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${item.status === 'open' ? 'bg-rose-100 text-rose-700' : item.status === 'checking' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{statusLabel}</span>
+        <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${item.status === 'open' ? 'bg-rose-100 text-rose-700' : item.status === 'checking' ? 'bg-blue-100 text-blue-700' : item.status === 'developer_required' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-700'}`}>{statusLabel}</span>
         <p className="mt-2 text-[11px] text-slate-400">{formatDateTime(item.created_at)}</p>
       </div>
       <div className="min-w-0">
@@ -82,7 +82,7 @@ function EmptyPanel({ loading }: { loading: boolean }) {
 export default function OperationsReview({ data, loading, initialFilter = 'all', onRefresh, onOpenPrompts }: OperationsReviewProps) {
   const [selectedAlert, setSelectedAlert] = useState<OperationsAttentionItem | null>(null);
   const [filter, setFilter] = useState<'all' | OperationsSignalType>(initialFilter);
-  const [statusFilter, setStatusFilter] = useState<'active' | 'all' | 'resolved'>('active');
+  const [statusFilter, setStatusFilter] = useState<'active' | 'developer_required' | 'all' | 'resolved'>('active');
   const [query, setQuery] = useState('');
   const items = data?.attention ?? [];
   const filtered = useMemo(() => {
@@ -90,6 +90,7 @@ export default function OperationsReview({ data, loading, initialFilter = 'all',
     return items.filter((item) => {
       if (filter !== 'all' && item.type !== filter) return false;
       if (statusFilter === 'active' && item.status === 'resolved') return false;
+      if (statusFilter === 'developer_required' && item.status !== 'developer_required') return false;
       if (statusFilter === 'resolved' && item.status !== 'resolved') return false;
       if (!keyword) return true;
       return `${item.session_id} ${item.question} ${item.reason}`.toLowerCase().includes(keyword);
@@ -97,6 +98,7 @@ export default function OperationsReview({ data, loading, initialFilter = 'all',
   }, [filter, items, query, statusFilter]);
   const unresolvedCount = items.filter((item) => item.status !== 'resolved').length;
   const highPriorityCount = items.filter((item) => item.status !== 'resolved' && item.severity === 'high').length;
+  const developerRequiredCount = items.filter((item) => item.status === 'developer_required').length;
   const filters: { key: 'all' | OperationsSignalType; label: string }[] = [
     { key: 'all', label: '전체' },
     { key: 'handoff', label: '상담 연결' },
@@ -117,7 +119,7 @@ export default function OperationsReview({ data, loading, initialFilter = 'all',
           </span>
           <div>
             <p className="font-semibold text-slate-900">답변 개선 검토</p>
-            <p className="text-xs text-slate-500">미처리 {unresolvedCount}건 · 우선 확인 {highPriorityCount}건</p>
+            <p className="text-xs text-slate-500">미처리 {unresolvedCount}건 · 개발자 조치 {developerRequiredCount}건 · 우선 확인 {highPriorityCount}건</p>
           </div>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -140,7 +142,7 @@ export default function OperationsReview({ data, loading, initialFilter = 'all',
             })}
           </div>
           <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
-            {([['active', '미처리'], ['resolved', '완료'], ['all', '전체 상태']] as const).map(([key, label]) => (
+            {([['active', '미처리'], ['developer_required', `개발자 조치 ${developerRequiredCount}`], ['resolved', '완료'], ['all', '전체 상태']] as const).map(([key, label]) => (
               <button key={key} onClick={() => setStatusFilter(key)} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${statusFilter === key ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}>{label}</button>
             ))}
           </div>

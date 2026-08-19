@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.db.migrations import migrate_database
-from app.db.models import ChatLog, ChatMessage, ChatSession, OperationsAiMessage, OperationsAlert, PromptConfig, PromptVersion
+from app.db.models import ChatLog, ChatMessage, ChatSession, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, PromptConfig, PromptVersion
 from app.routers import admin
 from app.services import openai_service
 from app.services.admin_ai_service import _parse_json_object
@@ -68,6 +68,7 @@ class AdminAiWorkflowTest(unittest.IsolatedAsyncioTestCase):
             "expected_answer": "현재 확인 가능한 과정부터 안내해 드릴게요.",
             "target_prompt": RESPONSE_IMPROVEMENT_PROMPT_KEY,
             "suggested_prompt": "과정 정보를 먼저 답한 뒤 필요한 경우에만 상담 연결을 제안하세요.",
+            "developer_handoff_prompt": "",
             "test_questions": ["과정 추천해줘"],
         }
         with (
@@ -181,6 +182,76 @@ class AdminAiWorkflowTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("방문 일정", result["expected_answer"])
         self.assertEqual("", result["target_prompt"])
         self.assertEqual("", result["suggested_prompt"])
+        self.assertEqual("", result["developer_handoff_prompt"])
+
+    async def test_code_analysis_sets_developer_required_and_creates_handoff(self):
+        handoff_prompt = "검색 결과가 갱신되지 않는 원인을 조사하고 회귀 테스트를 추가해 주세요."
+        analysis = {
+            "reply": "동일한 검색 실패가 반복되어 코드 경로 점검이 필요합니다.",
+            "root_cause": "code",
+            "confidence": 0.88,
+            "summary": "승인된 FAQ가 있는데도 검색 결과가 비어 있습니다.",
+            "recommendation": "인덱스 로딩과 검색 호출 경로를 순서대로 확인하세요.",
+            "expected_answer": "",
+            "target_prompt": "",
+            "suggested_prompt": "",
+            "developer_handoff_prompt": handoff_prompt,
+            "test_questions": ["예약 가능한 날짜가 없어요"],
+        }
+        with (
+            patch.object(admin, "analyze_improvement_case", new=AsyncMock(return_value=analysis)),
+            patch.object(admin, "maybe_encrypt", side_effect=lambda value: value),
+        ):
+            result = await admin.assist_operations_alert(
+                self.alert.id,
+                admin.OperationsAiAssistRequest(message="코드 문제인지 확인해줘"),
+                self.db,
+                "admin@example.com",
+            )
+
+        self.db.refresh(self.alert)
+        self.assertEqual("code", result["root_cause"])
+        self.assertEqual("developer_required", self.alert.status)
+        history = self.db.query(OperationsAlertHistory).filter_by(
+            alert_id=self.alert.id,
+            action="developer_required",
+        ).one()
+        self.assertEqual("open", history.from_status)
+        structured = self.db.query(OperationsAiMessage).filter_by(
+            alert_id=self.alert.id,
+            role="assistant",
+        ).one().structured_json
+        self.assertEqual(handoff_prompt, json.loads(structured)["developer_handoff_prompt"])
+
+    def test_code_analysis_gets_safe_fallback_handoff_prompt(self):
+        result = _parse_json_object(json.dumps({
+            "reply": "코드 경로 점검이 필요합니다.",
+            "root_cause": "code",
+            "confidence": 0.7,
+            "summary": "검색 결과가 반복해서 갱신되지 않습니다.",
+            "recommendation": "인덱스 로딩 경로를 확인하세요.",
+            "test_questions": ["예약 가능한 날짜가 없어요"],
+        }, ensure_ascii=False))
+
+        self.assertIn("저장소에서 조사", result["developer_handoff_prompt"])
+        self.assertIn("예약 가능한 날짜가 없어요", result["developer_handoff_prompt"])
+        self.assertEqual("", result["suggested_prompt"])
+
+    def test_developer_handoff_prompt_redacts_contact_and_secret_values(self):
+        result = _parse_json_object(json.dumps({
+            "reply": "코드 점검이 필요합니다.",
+            "root_cause": "code",
+            "summary": "연락처가 포함된 오류입니다.",
+            "recommendation": "로그를 확인하세요.",
+            "developer_handoff_prompt": "user@example.com, 010-1234-5678, sk-abcdefghijklmnop1234를 로그에서 확인하세요.",
+            "test_questions": [],
+        }, ensure_ascii=False))
+
+        prompt = result["developer_handoff_prompt"]
+        self.assertNotIn("user@example.com", prompt)
+        self.assertNotIn("010-1234-5678", prompt)
+        self.assertNotIn("sk-abcdefghijklmnop1234", prompt)
+        self.assertIn("[이메일 제거]", prompt)
 
     def test_publish_requires_preview_of_the_current_draft(self):
         admin.save_operations_prompt_draft(

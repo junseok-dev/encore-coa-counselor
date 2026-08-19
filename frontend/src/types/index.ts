@@ -419,6 +419,8 @@ export interface SystemHealthData {
   checks: SystemHealthCheck[];
 }
 
+export type OperationsAlertStatus = 'open' | 'checking' | 'developer_required' | 'resolved';
+
 export interface OperationsAttentionItem {
   id: number;
   alert_id: number;
@@ -426,7 +428,7 @@ export interface OperationsAttentionItem {
   type: OperationsSignalType;
   severity: 'low' | 'medium' | 'high';
   reason: string;
-  status: 'open' | 'checking' | 'resolved';
+  status: OperationsAlertStatus;
   assigned_to: string | null;
   note: string | null;
   question: string;
@@ -456,7 +458,7 @@ export interface OperationsAlertUpdateResult {
   signal_type: OperationsSignalType;
   severity: 'low' | 'medium' | 'high';
   reason: string;
-  status: 'open' | 'checking' | 'resolved';
+  status: OperationsAlertStatus;
   assigned_to: string | null;
   note: string | null;
   test_question: string | null;
@@ -480,8 +482,8 @@ export interface OperationsAlertHistory {
   id: number;
   action: 'checking_started' | 'work_updated' | 'answer_tested' | 'resolved' | string;
   actor: string;
-  from_status: 'open' | 'checking' | 'resolved' | null;
-  to_status: 'open' | 'checking' | 'resolved' | null;
+  from_status: OperationsAlertStatus | null;
+  to_status: OperationsAlertStatus | null;
   test_question: string | null;
   test_answer: string | null;
   test_source: string | null;
@@ -532,6 +534,7 @@ export interface OperationsAiAnalysis {
   expected_answer: string;
   target_prompt: string;
   suggested_prompt: string;
+  developer_handoff_prompt: string;
   test_questions: string[];
 }
 
@@ -569,7 +572,7 @@ export interface OperationsAlertTestResult {
 }
 
 export interface OperationsAlertWorkflowPayload {
-  status: 'open' | 'checking' | 'resolved';
+  status: OperationsAlertStatus;
   note?: string;
   test_question?: string;
   test_passed?: boolean;

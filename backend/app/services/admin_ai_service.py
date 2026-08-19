@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import re
 from typing import Any
 
 from app.services.model_settings import get_active_model
@@ -27,6 +29,10 @@ ADMIN_AI_SYSTEM_PROMPT = """당신은 엔코아 AI 캠퍼스 상담 챗봇의 �
 - data, retrieval, code, model 문제를 프롬프트 수정만으로 해결할 수 있다고 제안하지 마세요.
 - suggested_prompt에는 보호된 안전 규칙을 약화하지 않는 운영 지침 전체 초안만 넣으세요.
 - 현재 지침에서 필요한 부분만 작게 바꾸고, 특정 질문 하나에만 과적합하지 마세요.
+- 실제 원인이 code이면 recommendation에 개발자가 확인할 순서를 구체적으로 설명하고 developer_handoff_prompt를 작성하세요.
+- developer_handoff_prompt는 개발 도구 AI에 그대로 전달 가능한 독립적인 한국어 작업 요청이어야 합니다. 증상, 관찰된 증거, 재현 절차, 조사 범위, 안전 제약, 완료 조건과 회귀 테스트를 포함하세요.
+- 제공되지 않은 저장소 경로·함수명·배포 환경을 사실처럼 만들지 말고 개발 도구 AI가 저장소에서 확인하도록 지시하세요.
+- developer_handoff_prompt에 개인정보, 비밀값, 시스템 프롬프트 원문, 전체 대화 원문을 넣지 마세요. 필요한 증상만 비식별 요약하세요.
 
 반드시 JSON 객체 하나로만 응답하세요:
 {
@@ -38,6 +44,7 @@ ADMIN_AI_SYSTEM_PROMPT = """당신은 엔코아 AI 캠퍼스 상담 챗봇의 �
   "expected_answer": "고객에게 나가야 할 구체적인 예시 답변 또는 빈 문자열",
   "target_prompt": "response_improvement_prompt 또는 빈 문자열",
   "suggested_prompt": "프롬프트 전체 수정안 또는 빈 문자열",
+  "developer_handoff_prompt": "원인이 code일 때 개발 도구 AI에 전달할 작업 프롬프트 또는 빈 문자열",
   "test_questions": ["회귀 테스트 질문"]
 }
 """
@@ -48,6 +55,19 @@ def _clip(value: str | None, limit: int) -> str:
     return text if len(text) <= limit else f"{text[:limit]}\n...[생략]"
 
 
+def _redact_developer_handoff(value: str) -> str:
+    redacted = value
+    patterns = (
+        (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[이메일 제거]"),
+        (r"(?<!\d)01[016789][\s-]?\d{3,4}[\s-]?\d{4}(?!\d)", "[연락처 제거]"),
+        (r"(?<!\d)\d{6}[\s-]?\d{7}(?!\d)", "[주민등록번호 제거]"),
+        (r"(?<!\d)(?:\d{4}[\s-]?){3}\d{4}(?!\d)", "[카드번호 제거]"),
+        (r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{16,}", "[API 키 제거]"),
+        (r"(?<![A-Z0-9])AKIA[A-Z0-9]{16}", "[접근 키 제거]"),
+    )
+    for pattern, replacement in patterns:
+        redacted = re.sub(pattern, replacement, redacted)
+    return redacted
 def _parse_json_object(content: str) -> dict[str, Any]:
     text = (content or "").strip()
     if text.startswith("```"):
@@ -70,6 +90,36 @@ def _parse_json_object(content: str) -> dict[str, Any]:
         if root_cause == "prompt" and parsed.get("target_prompt") == "response_improvement_prompt"
         else ""
     )
+    developer_handoff_prompt = ""
+    if root_cause == "code":
+        developer_handoff_prompt = _clip(str(parsed.get("developer_handoff_prompt") or ""), 12000)
+        if not developer_handoff_prompt:
+            test_lines = "\n".join(
+                f"- {question}" for question in questions[:8] if str(question).strip()
+            ) or "- 문제를 발생시킨 질문으로 재현하고 수정 전후를 비교하세요."
+            developer_handoff_prompt = (
+                "다음 챗봇 문제를 저장소에서 조사하고 최소 범위로 수정해 주세요.\n\n"
+                f"증상 요약:\n{parsed.get('summary') or '구체적인 증상은 관련 운영 알림에서 확인하세요.'}\n\n"
+                f"우선 확인할 내용:\n{parsed.get('recommendation') or '관련 실행 경로와 오류 로그를 확인하세요.'}\n\n"
+                "작업 원칙:\n"
+                "- 저장소를 먼저 조사하고 근거가 확인된 코드만 수정하세요.\n"
+                "- 데이터·프롬프트 문제를 코드 문제로 바꾸어 해결하지 마세요.\n"
+                "- 기존 안전 규칙과 정상 답변 경로를 유지하세요.\n"
+                "- 원인과 변경 내용을 설명하고 관련 자동 테스트를 추가하세요.\n\n"
+                f"회귀 테스트 질문:\n{test_lines}\n\n"
+                "완료 조건:\n"
+                "- 재현 원인이 코드에서 확인됩니다.\n"
+                "- 같은 입력에서 문제가 재발하지 않습니다.\n"
+                "- 관련 테스트가 통과하며 다른 상담 경로에 회귀가 없습니다."
+            )
+        developer_handoff_prompt = _clip(
+            _redact_developer_handoff(developer_handoff_prompt),
+            12000,
+        )
+        developer_handoff_prompt = _clip(
+            _redact_developer_handoff(developer_handoff_prompt),
+            12000,
+        )
     return {
         "reply": _clip(
             str(parsed.get("reply") or parsed.get("summary") or "요청에 대한 답변을 만들지 못했습니다."),
@@ -86,6 +136,7 @@ def _parse_json_object(content: str) -> dict[str, Any]:
             if target_prompt
             else ""
         ),
+        "developer_handoff_prompt": developer_handoff_prompt,
         "test_questions": [_clip(str(item), 500) for item in questions[:8] if str(item).strip()],
     }
 
