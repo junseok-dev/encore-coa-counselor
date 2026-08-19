@@ -54,6 +54,20 @@ class CustomDataCatalogTest(unittest.TestCase):
 
         self.assertEqual(409, context.exception.status_code)
 
+    def test_system_table_name_is_rejected(self):
+        with self.assertRaises(HTTPException) as context:
+            self.create_table("  CUSTOM_TABLES  ")
+
+        self.assertEqual(409, context.exception.status_code)
+        self.assertIn("시스템", context.exception.detail)
+
+    def test_custom_physical_name_prefix_is_reserved(self):
+        with self.assertRaises(HTTPException) as context:
+            self.create_table("CData_운영자료")
+
+        self.assertEqual(409, context.exception.status_code)
+        self.assertIn("예약", context.exception.detail)
+
     def test_normalized_duplicate_column_name_is_rejected(self):
         created = self.create_table()
         admin.add_column(

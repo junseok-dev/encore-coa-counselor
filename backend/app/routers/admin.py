@@ -2424,6 +2424,11 @@ def create_data_table(body: CreateTableRequest, db: Session = Depends(get_db), _
     if db.query(CustomTable).filter(CustomTable.name_key == name_key).first():
         raise HTTPException(status_code=409, detail="같은 이름의 데이터 테이블이 이미 있습니다.")
 
+    physical_table_names = sa_inspect(db.bind).get_table_names()
+    physical_name_keys = {data_name_key(name) for name in physical_table_names}
+    if name_key in physical_name_keys or name_key.startswith("cdata_"):
+        raise HTTPException(status_code=409, detail="시스템에서 사용 중이거나 예약된 테이블 이름입니다.")
+
     table = CustomTable(
         name=table_name,
         name_key=name_key,
