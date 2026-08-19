@@ -35,12 +35,12 @@ export default function AdminSessionPage() {
       navigate(-1);
       return;
     }
-    navigate('/admin');
+    navigate('/admin?tab=chats');
   };
 
   useEffect(() => {
     if (!getAdminToken()) {
-      navigate('/admin');
+      navigate('/admin?tab=chats');
       return;
     }
     if (!sessionId) return;

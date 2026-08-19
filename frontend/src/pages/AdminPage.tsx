@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import {
   Bot,
@@ -265,12 +265,16 @@ function formatDate(value: string | null | undefined): string {
 }
 
 export default function AdminPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [authenticated, setAuthenticated] = useState(() => !!getAdminToken());
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
   const [initialAdminView] = useState(readStoredAdminView);
 
-  const [activeTab, setActiveTab] = useState<TabKey>(initialAdminView.activeTab);
+  const tabParam = searchParams.get('tab');
+  const activeTab = tabParam && ADMIN_TAB_KEYS.has(tabParam as TabKey)
+    ? (tabParam as TabKey)
+    : initialAdminView.activeTab;
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState('');
@@ -386,6 +390,12 @@ export default function AdminPage() {
   const faqMdInputRef = useRef<HTMLInputElement>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  const setActiveTab = (tab: TabKey) => {
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.set('tab', tab);
+    setSearchParams(nextSearchParams, { replace: true });
+  };
 
   const handleAdminLogout = () => {
     window.sessionStorage.removeItem(ADMIN_VIEW_STORAGE_KEY);
@@ -532,6 +542,13 @@ export default function AdminPage() {
       setActiveTab('dashboard');
     }
   }, [authenticated]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    if (!tabParam || !ADMIN_TAB_KEYS.has(tabParam as TabKey)) {
+      setActiveTab(initialAdminView.activeTab);
+    }
+  }, [authenticated, tabParam]);
 
   useEffect(() => {
     if (!authenticated) return;
