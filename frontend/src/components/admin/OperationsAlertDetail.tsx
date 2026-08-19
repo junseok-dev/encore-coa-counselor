@@ -205,7 +205,11 @@ export default function OperationsAlertDetailPanel({
   };
 
   const applyAiSuggestion = () => {
-    if (!latestAiAnalysis?.suggested_prompt) return;
+    if (
+      !latestAiAnalysis?.suggested_prompt
+      || latestAiAnalysis.root_cause !== 'prompt'
+      || latestAiAnalysis.target_prompt !== detail?.prompt_workspace.prompt_key
+    ) return;
     setDraftPrompt(latestAiAnalysis.suggested_prompt);
     setPromptPreview(null);
   };
@@ -354,6 +358,7 @@ export default function OperationsAlertDetailPanel({
                 <div className="mt-5 grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
                   <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-sm font-black text-slate-900">관리자 AI 대화</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">원인 분석 뒤에도 답변 예시나 수정 방향을 계속 질문하며 함께 다듬을 수 있습니다.</p>
                     <div className="mt-3 max-h-80 min-h-48 space-y-3 overflow-y-auto rounded-xl bg-white p-3">
                       {detail.ai_messages.length === 0 && (
                         <div className="flex min-h-40 flex-col items-center justify-center text-center">
@@ -366,23 +371,48 @@ export default function OperationsAlertDetailPanel({
                         <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-xs leading-5 ${message.role === 'user' ? 'bg-slate-900 text-white' : 'border border-violet-100 bg-violet-50 text-slate-700'}`}>
                             <p className="whitespace-pre-wrap">{message.content}</p>
-                            {message.structured && <p className="mt-2 font-bold text-violet-700">원인 {message.structured.root_cause} · 확신도 {Math.round(message.structured.confidence * 100)}%</p>}
-                            {message.structured?.suggested_prompt && (
+                            {message.structured && (
+                              <details className="mt-2 text-violet-700">
+                                <summary className="cursor-pointer font-bold">분석 근거 보기 · {message.structured.root_cause} {Math.round(message.structured.confidence * 100)}%</summary>
+                                <p className="mt-1 whitespace-pre-wrap text-slate-600">{message.structured.summary}</p>
+                              </details>
+                            )}
+                            {message.structured?.suggested_prompt && message.structured.root_cause === 'prompt' && message.structured.target_prompt === detail.prompt_workspace.prompt_key && (
                               <button onClick={() => { setDraftPrompt(message.structured!.suggested_prompt); setPromptPreview(null); }} className="mt-2 rounded-lg bg-white px-2.5 py-1 text-[11px] font-black text-violet-700 ring-1 ring-violet-200">이 수정안을 초안에 적용</button>
                             )}
                           </div>
                         </div>
                       ))}
                     </div>
-                    <textarea value={aiInput} onChange={(event) => setAiInput(event.target.value)} rows={3} placeholder="예: 답변이 너무 빨리 상담 연결로 넘어간 이유를 분석해줘." className="mt-3 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm leading-6 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" />
-                    <button onClick={() => void askAdminAi()} disabled={aiBusy || !aiInput.trim()} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 py-3 text-sm font-black text-white hover:bg-violet-800 disabled:opacity-50">{aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}{aiBusy ? '분석 중...' : 'AI에게 분석 요청'}</button>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {['고객에게 실제로 뭐라고 답해야 해?', 'FAQ에는 어떤 내용을 추가해야 해?', '프롬프트로 해결할 부분만 정리해줘.'].map((suggestion) => (
+                        <button key={suggestion} type="button" onClick={() => setAiInput(suggestion)} className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-bold text-violet-700 hover:bg-violet-50">{suggestion}</button>
+                      ))}
+                    </div>
+                    <textarea
+                      value={aiInput}
+                      onChange={(event) => setAiInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault();
+                          if (!aiBusy && aiInput.trim()) void askAdminAi();
+                        }
+                      }}
+                      rows={3}
+                      placeholder="답변 예시, FAQ 보강 내용, 수정 방향을 이어서 물어보세요."
+                      className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm leading-6 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">Enter 전송 · Shift+Enter 줄바꿈</p>
+                    <button onClick={() => void askAdminAi()} disabled={aiBusy || !aiInput.trim()} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 py-3 text-sm font-black text-white hover:bg-violet-800 disabled:opacity-50">{aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}{aiBusy ? '답변 작성 중...' : 'AI에게 보내기'}</button>
 
                     {latestAiAnalysis && (
                       <div className="mt-3 rounded-xl border border-violet-200 bg-white p-3">
                         <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-800">{latestAiAnalysis.root_cause}</span><span className="text-[11px] text-slate-500">확신도 {Math.round(latestAiAnalysis.confidence * 100)}%</span></div>
-                        <p className="mt-2 text-xs leading-5 text-slate-700">{latestAiAnalysis.summary}</p>
+                        <p className="mt-2 text-[11px] font-black text-slate-500">이번 대화의 분석 메모</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-700">{latestAiAnalysis.summary}</p>
+                        <p className="mt-2 text-xs leading-5 text-slate-600"><b>권장 조치</b> {latestAiAnalysis.recommendation}</p>
                         {latestAiAnalysis.test_questions.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{latestAiAnalysis.test_questions.map((question) => <button key={question} onClick={() => { setTestQuestion(question); setPromptPreview(null); }} className="rounded-lg bg-slate-100 px-2 py-1 text-left text-[11px] text-slate-600 hover:bg-slate-200">{question}</button>)}</div>}
-                        {latestAiAnalysis.suggested_prompt && <button onClick={applyAiSuggestion} className="mt-3 w-full rounded-lg bg-violet-100 px-3 py-2 text-xs font-black text-violet-800 hover:bg-violet-200">AI 수정안을 초안에 적용</button>}
+                        {latestAiAnalysis.suggested_prompt && latestAiAnalysis.root_cause === 'prompt' && latestAiAnalysis.target_prompt === detail.prompt_workspace.prompt_key && <button onClick={applyAiSuggestion} className="mt-3 w-full rounded-lg bg-violet-100 px-3 py-2 text-xs font-black text-violet-800 hover:bg-violet-200">AI 수정안을 초안에 적용</button>}
                       </div>
                     )}
                   </div>

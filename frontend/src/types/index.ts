@@ -524,10 +524,12 @@ export interface OperationsPromptWorkspace {
 }
 
 export interface OperationsAiAnalysis {
+  reply: string;
   root_cause: 'prompt' | 'data' | 'retrieval' | 'code' | 'model' | 'unknown';
   confidence: number;
   summary: string;
   recommendation: string;
+  expected_answer: string;
   target_prompt: string;
   suggested_prompt: string;
   test_questions: string[];

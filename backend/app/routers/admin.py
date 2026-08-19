@@ -2722,7 +2722,12 @@ async def assist_operations_alert(
     except Exception as exc:
         raise HTTPException(status_code=502, detail="관리자 AI 분석에 실패했습니다. 잠시 후 다시 시도해 주세요.") from exc
 
-    assistant_content = f"{result['summary']}\n\n권장 조치: {result['recommendation']}"
+    assistant_content = result["reply"]
+    if result.get("expected_answer"):
+        assistant_content = (
+            f"{assistant_content}\n\n"
+            f"고객에게 나갈 답변 예시:\n{result['expected_answer']}"
+        )
     db.add_all([
         OperationsAiMessage(
             alert_id=alert.id,
