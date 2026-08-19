@@ -1569,8 +1569,6 @@ export default function AdminPage() {
               analyticsAnchorDate={analyticsAnchorDate}
               costData={dashboardCostData}
               openAiCostData={dashboardOpenAiCostData}
-              systemHealth={systemHealth}
-              healthLoading={healthLoading}
               onRefresh={refreshOperationsDashboard}
               onPeriodChange={handleAnalyticsPeriodChange}
               onAnchorDateChange={handleAnalyticsAnchorChange}
@@ -1586,7 +1584,9 @@ export default function AdminPage() {
             <OperationsReview
               data={operationsData}
               loading={loading || operationsLoading}
-              onRefresh={loadOperations}
+              systemHealth={systemHealth}
+              healthLoading={healthLoading}
+              onRefresh={async () => { await Promise.all([loadOperations(), loadSystemHealth()]); }}
               onOpenPrompts={() => setActiveTab('prompts')}
             />
           </div>

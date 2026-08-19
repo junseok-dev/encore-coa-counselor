@@ -10,12 +10,16 @@ import {
   OperationsAttentionItem,
   OperationsDashboardData,
   OperationsSignalType,
+  SystemHealthData,
 } from '../../types';
 import OperationsAlertDetailPanel from './OperationsAlertDetail';
+import SystemHealthPanel from './SystemHealthPanel';
 
 interface OperationsReviewProps {
   data: OperationsDashboardData | null;
   loading: boolean;
+  systemHealth: SystemHealthData | null;
+  healthLoading: boolean;
   initialFilter?: 'all' | OperationsSignalType;
   onRefresh: () => Promise<void>;
   onOpenPrompts: () => void;
@@ -79,7 +83,7 @@ function EmptyPanel({ loading }: { loading: boolean }) {
   );
 }
 
-export default function OperationsReview({ data, loading, initialFilter = 'all', onRefresh, onOpenPrompts }: OperationsReviewProps) {
+export default function OperationsReview({ data, loading, systemHealth, healthLoading, initialFilter = 'all', onRefresh, onOpenPrompts }: OperationsReviewProps) {
   const [selectedAlert, setSelectedAlert] = useState<OperationsAttentionItem | null>(null);
   const [filter, setFilter] = useState<'all' | OperationsSignalType>(initialFilter);
   const [statusFilter, setStatusFilter] = useState<'active' | 'developer_required' | 'all' | 'resolved'>('active');
@@ -111,6 +115,8 @@ export default function OperationsReview({ data, loading, initialFilter = 'all',
 
   return (
     <div className="space-y-5">
+      <SystemHealthPanel data={systemHealth} loading={healthLoading} />
+
       <section className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
           <span className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700">
