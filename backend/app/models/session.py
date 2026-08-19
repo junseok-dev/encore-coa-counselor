@@ -29,3 +29,11 @@ class MessageDetail(BaseModel):
 class SessionDetail(BaseModel):
     session: SessionSummary
     messages: list[MessageDetail]
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionSummary]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int

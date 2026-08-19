@@ -3,7 +3,7 @@ import {
   AdminDocument,
   AdminDocumentDetail,
   AdminFaq,
-  AdminSession,
+  AdminSessionList,
   AuditLog,
   AdminSessionDetail,
   ChatLog,
@@ -282,8 +282,13 @@ export const adminApi = {
     return response.data;
   },
 
-  getSessions: async (): Promise<AdminSession[]> => {
-    const response = await adminApiClient.get<AdminSession[]>('/admin/sessions');
+  getSessions: async (params?: {
+    page?: number;
+    page_size?: number;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<AdminSessionList> => {
+    const response = await adminApiClient.get<AdminSessionList>('/admin/sessions', { params });
     return response.data;
   },
 

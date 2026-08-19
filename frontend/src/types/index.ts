@@ -95,6 +95,14 @@ export interface AdminSession {
   user_name: string | null;
 }
 
+export interface AdminSessionList {
+  sessions: AdminSession[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
 export interface AdminMessage {
   id: number;
   session_id: string;

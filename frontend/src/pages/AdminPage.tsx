@@ -53,6 +53,7 @@ import {
 type TabKey = 'dashboard' | 'improvements' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'security' | 'settings' | 'permissions';
 
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
+const CHAT_SESSION_PAGE_SIZE = 20;
 const ADMIN_TAB_KEYS = new Set<TabKey>([
   'dashboard',
   'improvements',
@@ -72,6 +73,7 @@ interface StoredAdminView {
   activeTab: TabKey;
   chatStartDate: string;
   chatEndDate: string;
+  chatSessionPage: number;
 }
 
 function readStoredAdminView(): StoredAdminView {
@@ -79,6 +81,7 @@ function readStoredAdminView(): StoredAdminView {
     activeTab: 'dashboard',
     chatStartDate: '',
     chatEndDate: '',
+    chatSessionPage: 1,
   };
   try {
     const raw = window.sessionStorage.getItem(ADMIN_VIEW_STORAGE_KEY);
@@ -89,6 +92,9 @@ function readStoredAdminView(): StoredAdminView {
       activeTab: storedTab === 'data' ? 'db' : storedTab,
       chatStartDate: typeof stored.chatStartDate === 'string' ? stored.chatStartDate : '',
       chatEndDate: typeof stored.chatEndDate === 'string' ? stored.chatEndDate : '',
+      chatSessionPage: typeof stored.chatSessionPage === 'number' && stored.chatSessionPage >= 1
+        ? Math.floor(stored.chatSessionPage)
+        : 1,
     };
   } catch {
     return fallback;
@@ -327,8 +333,14 @@ export default function AdminPage() {
 
   const [chatStartDate, setChatStartDate] = useState(initialAdminView.chatStartDate);
   const [chatEndDate, setChatEndDate] = useState(initialAdminView.chatEndDate);
+  const [appliedChatStartDate, setAppliedChatStartDate] = useState(initialAdminView.chatStartDate);
+  const [appliedChatEndDate, setAppliedChatEndDate] = useState(initialAdminView.chatEndDate);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatExporting, setChatExporting] = useState(false);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionPage, setSessionPage] = useState(initialAdminView.chatSessionPage);
+  const [sessionTotal, setSessionTotal] = useState(0);
+  const [sessionTotalPages, setSessionTotalPages] = useState(1);
 
   // DB 브라우저
   const [dbTables, setDbTables] = useState<DbTableMeta[]>([]);
@@ -425,22 +437,17 @@ export default function AdminPage() {
     setLoading(true);
     setLoadError('');
     try {
-      const [sessionData, documentData, faqData, promptData, logData, operations] = await Promise.all([
-        adminApi.getSessions(),
+      const [documentData, faqData, promptData, logData, operations] = await Promise.all([
         adminApi.getDocuments(true),
         adminApi.getFaqs(),
         adminApi.getPrompts(),
         adminApi.getLogs(),
         adminApi.getOperationsDashboard(),
       ]);
-      setSessions(sessionData);
       setDocuments(documentData.documents);
       setFaqs(faqData.faqs);
       setPrompts(promptData.prompts);
       setProcessingLogs(logData.processing_logs);
-      if (activeTab !== 'chats' || (!chatStartDate && !chatEndDate)) {
-        setChatLogs(logData.chat_logs);
-      }
       setAuditLogs(logData.audit_logs);
       setOperationsData(operations);
     } catch {
@@ -574,12 +581,13 @@ export default function AdminPage() {
       activeTab,
       chatStartDate,
       chatEndDate,
+      chatSessionPage: sessionPage,
     } satisfies StoredAdminView));
-  }, [activeTab, authenticated, chatEndDate, chatStartDate]);
+  }, [activeTab, authenticated, chatEndDate, chatStartDate, sessionPage]);
 
   useEffect(() => {
-    if (!authenticated || activeTab !== 'chats' || (!chatStartDate && !chatEndDate)) return;
-    void loadFilteredChatLogs(false);
+    if (!authenticated || activeTab !== 'chats') return;
+    void loadChatView(sessionPage, appliedChatStartDate, appliedChatEndDate, false);
   }, [activeTab, authenticated]);
 
   useEffect(() => {
@@ -1007,35 +1015,82 @@ export default function AdminPage() {
     }
   };
 
-  const loadFilteredChatLogs = async (showNotice: boolean) => {
+  const loadChatView = async (
+    page: number,
+    startDate: string,
+    endDate: string,
+    showNotice: boolean,
+  ) => {
     setChatLoading(true);
+    setSessionLoading(true);
     try {
-      const result = await adminApi.getChatLogs({
-        start_date: chatStartDate || undefined,
-        end_date: chatEndDate || undefined,
-      });
-      setChatLogs(result.chat_logs);
+      const period = {
+        start_date: startDate || undefined,
+        end_date: endDate || undefined,
+      };
+      const [logResult, sessionResult] = await Promise.all([
+        adminApi.getChatLogs(period),
+        adminApi.getSessions({
+          ...period,
+          page,
+          page_size: CHAT_SESSION_PAGE_SIZE,
+        }),
+      ]);
+      setChatLogs(logResult.chat_logs);
+      setSessions(sessionResult.sessions);
+      setSessionPage(sessionResult.page);
+      setSessionTotal(sessionResult.total);
+      setSessionTotalPages(sessionResult.total_pages);
       if (showNotice) {
-        if (result.chat_logs.length === 0) setNotice('조회 결과가 없습니다.');
-        else setNotice(`${result.chat_logs.length}건 조회되었습니다.`);
+        setNotice(`대화 로그 ${logResult.chat_logs.length}건, 상담 세션 ${sessionResult.total}건이 조회되었습니다.`);
       }
     } catch {
-      if (showNotice) setNotice('대화 로그 조회에 실패했습니다.');
+      if (showNotice) setNotice('대화 로그와 상담 세션 조회에 실패했습니다.');
     } finally {
       setChatLoading(false);
+      setSessionLoading(false);
     }
   };
 
   const handleFilterChatLogs = async () => {
-    await loadFilteredChatLogs(true);
+    if (chatStartDate && chatEndDate && chatStartDate > chatEndDate) {
+      setNotice('시작일은 종료일보다 늦을 수 없습니다.');
+      return;
+    }
+    setAppliedChatStartDate(chatStartDate);
+    setAppliedChatEndDate(chatEndDate);
+    setSessionPage(1);
+    await loadChatView(1, chatStartDate, chatEndDate, true);
+  };
+
+  const handleSessionPage = async (targetPage: number) => {
+    const nextPage = Math.min(Math.max(targetPage, 1), sessionTotalPages);
+    if (sessionLoading || nextPage === sessionPage) return;
+    setSessionLoading(true);
+    try {
+      const result = await adminApi.getSessions({
+        page: nextPage,
+        page_size: CHAT_SESSION_PAGE_SIZE,
+        start_date: appliedChatStartDate || undefined,
+        end_date: appliedChatEndDate || undefined,
+      });
+      setSessions(result.sessions);
+      setSessionPage(result.page);
+      setSessionTotal(result.total);
+      setSessionTotalPages(result.total_pages);
+    } catch {
+      setNotice('상담 세션 페이지를 불러오지 못했습니다.');
+    } finally {
+      setSessionLoading(false);
+    }
   };
 
   const handleExportChatLogs = async () => {
     setChatExporting(true);
     try {
       const blob = await adminApi.exportChatLogs({
-        start_date: chatStartDate || undefined,
-        end_date: chatEndDate || undefined,
+        start_date: appliedChatStartDate || undefined,
+        end_date: appliedChatEndDate || undefined,
       });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -1352,6 +1407,11 @@ export default function AdminPage() {
   );
 
   const reviewCount = useMemo(() => documents.filter((doc) => doc.status === 'review' && !doc.is_deleted).length, [documents]);
+  const sessionPageNumbers = useMemo(() => {
+    const visibleCount = Math.min(5, sessionTotalPages);
+    const start = Math.max(1, Math.min(sessionPage - 2, sessionTotalPages - visibleCount + 1));
+    return Array.from({ length: visibleCount }, (_, index) => start + index);
+  }, [sessionPage, sessionTotalPages]);
 
   if (!authenticated) {
     return (
@@ -1934,6 +1994,9 @@ export default function AdminPage() {
                 </div>
               </div>
               <div className="mt-4 max-h-[420px] space-y-3 overflow-y-auto">
+                {!chatLoading && chatLogs.length === 0 && (
+                  <p className="rounded-2xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">조회된 대화 로그가 없습니다.</p>
+                )}
                 {chatLogs.map((log) => (
                   <div key={log.id} className="rounded-2xl border border-slate-200 p-4">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -1980,7 +2043,7 @@ export default function AdminPage() {
             <section className="rounded-3xl bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-slate-900">상담 세션</h2>
-                <span className="text-sm text-slate-500">{sessions.length}건</span>
+                <span className="text-sm text-slate-500">전체 {sessionTotal}건</span>
               </div>
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-sm">
@@ -1994,6 +2057,9 @@ export default function AdminPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
+                    {!sessionLoading && sessions.length === 0 && (
+                      <tr><td colSpan={5} className="px-3 py-10 text-center text-slate-500">조회된 상담 세션이 없습니다.</td></tr>
+                    )}
                     {sessions.map((session) => (
                       <tr key={session.id}>
                         <td className="px-3 py-3">{session.user_name ?? '익명'}</td>
@@ -2002,7 +2068,7 @@ export default function AdminPage() {
                         <td className="px-3 py-3">{session.message_count}</td>
                         <td className="px-3 py-3">
                           <button
-                            onClick={() => navigate(`/admin/sessions/${session.id}`, { state: { fromAdmin: true } })}
+                            onClick={() => navigate(`/admin/sessions/${session.id}?tab=chats`, { state: { fromAdmin: true } })}
                             className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
                           >보기</button>
                         </td>
@@ -2011,6 +2077,51 @@ export default function AdminPage() {
                   </tbody>
                 </table>
               </div>
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSessionPage(1)}
+                  disabled={sessionLoading || sessionPage <= 1}
+                  aria-label="첫 페이지"
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >&lt;&lt;</button>
+                <button
+                  type="button"
+                  onClick={() => void handleSessionPage(sessionPage - 1)}
+                  disabled={sessionLoading || sessionPage <= 1}
+                  aria-label="이전 페이지"
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >&lt;</button>
+                {sessionPageNumbers.map((pageNumber) => (
+                  <button
+                    key={pageNumber}
+                    type="button"
+                    onClick={() => void handleSessionPage(pageNumber)}
+                    disabled={sessionLoading || pageNumber === sessionPage}
+                    aria-current={pageNumber === sessionPage ? 'page' : undefined}
+                    className={`min-w-10 rounded-lg px-3 py-2 text-sm font-semibold ${
+                      pageNumber === sessionPage
+                        ? 'bg-slate-900 text-white disabled:opacity-100'
+                        : 'border border-slate-300 text-slate-700 disabled:opacity-40'
+                    }`}
+                  >{pageNumber}</button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => void handleSessionPage(sessionPage + 1)}
+                  disabled={sessionLoading || sessionPage >= sessionTotalPages}
+                  aria-label="다음 페이지"
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >&gt;</button>
+                <button
+                  type="button"
+                  onClick={() => void handleSessionPage(sessionTotalPages)}
+                  disabled={sessionLoading || sessionPage >= sessionTotalPages}
+                  aria-label="마지막 페이지"
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >&gt;&gt;</button>
+              </div>
+              {sessionLoading && <p className="mt-2 text-center text-xs text-slate-500">상담 세션을 불러오는 중입니다.</p>}
             </section>
           </div>
         )}

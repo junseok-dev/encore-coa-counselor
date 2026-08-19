@@ -28,11 +28,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import ENV_FILE_PATH, get_settings
-from app.db.crud import get_all_sessions, get_session_messages
+from app.db.crud import get_session_messages
 from app.db.database import SessionLocal, get_db
 from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, SystemHealthProbe
 from app.models.chat import ChatRequest, HistoryMessage
-from app.models.session import MessageDetail, SessionDetail, SessionSummary
+from app.models.session import MessageDetail, SessionDetail, SessionListResponse, SessionSummary
 from app.routers.chat import chat as run_chat_preview
 from app.services.admin_service import (
     approve_document,
@@ -715,12 +715,33 @@ def _build_workbook(rows: list[dict]) -> bytes:
     return buffer.getvalue()
 
 
+def _date_filter_bounds(start_date: date | None, end_date: date | None) -> tuple[datetime | None, datetime | None]:
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="시작일은 종료일보다 늦을 수 없습니다.")
+    local_timezone = ZoneInfo("Asia/Seoul")
+    start_at = (
+        datetime.combine(start_date, time.min, tzinfo=local_timezone).astimezone(ZoneInfo("UTC"))
+        if start_date else None
+    )
+    end_before = (
+        datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=local_timezone).astimezone(ZoneInfo("UTC"))
+        if end_date else None
+    )
+    return start_at, end_before
+
+
+def _apply_created_at_period(query, column, start_date: date | None, end_date: date | None):
+    start_at, end_before = _date_filter_bounds(start_date, end_date)
+    if start_at:
+        query = query.filter(column >= start_at)
+    if end_before:
+        query = query.filter(column < end_before)
+    return query
+
+
 def _filter_chat_logs(db: Session, start_date: date | None = None, end_date: date | None = None, session_id: str | None = None, limit: int | None = 500) -> list[ChatLog]:
     query = db.query(ChatLog)
-    if start_date:
-        query = query.filter(ChatLog.created_at >= datetime.combine(start_date, time.min))
-    if end_date:
-        query = query.filter(ChatLog.created_at <= datetime.combine(end_date, time.max))
+    query = _apply_created_at_period(query, ChatLog.created_at, start_date, end_date)
     if session_id:
         query = query.filter(ChatLog.session_id == session_id)
     query = query.order_by(ChatLog.created_at.desc())
@@ -729,15 +750,37 @@ def _filter_chat_logs(db: Session, start_date: date | None = None, end_date: dat
     return query.all()
 
 
-@router.get("/sessions", response_model=list[SessionSummary])
-def list_sessions(skip: int = 0, limit: int = 50, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
-    sessions = get_all_sessions(db, skip=skip, limit=limit)
+@router.get("/sessions", response_model=SessionListResponse)
+def list_sessions(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    start_date: date | None = None,
+    end_date: date | None = None,
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
+    query = _apply_created_at_period(db.query(ChatSession), ChatSession.created_at, start_date, end_date)
+    total = query.count()
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    current_page = min(page, total_pages)
+    sessions = (
+        query.order_by(ChatSession.created_at.desc())
+        .offset((current_page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
     result = []
     for session in sessions:
         summary = SessionSummary.model_validate(session)
         summary.user_name = decrypt_if_needed(session.encrypted_user_name) if session.encrypted_user_name else None
         result.append(summary)
-    return result
+    return SessionListResponse(
+        sessions=result,
+        page=current_page,
+        page_size=page_size,
+        total=total,
+        total_pages=total_pages,
+    )
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetail)
