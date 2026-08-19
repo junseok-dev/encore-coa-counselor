@@ -45,6 +45,7 @@ const SIGNAL_CONFIG: Record<OperationsSignalType, { label: string; badge: string
   refund: { label: '환불 요청', badge: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
   safety: { label: '안전 확인', badge: 'bg-amber-50 text-amber-800 ring-amber-200', dot: 'bg-amber-500' },
   error: { label: '처리 오류', badge: 'bg-slate-100 text-slate-700 ring-slate-200', dot: 'bg-slate-500' },
+  quality: { label: '답변 품질', badge: 'bg-cyan-50 text-cyan-800 ring-cyan-200', dot: 'bg-cyan-500' },
 };
 
 function formatDateTime(value: string) {

@@ -41,6 +41,13 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
             "test_passed": "BOOLEAN NOT NULL DEFAULT FALSE",
             "tested_by": "VARCHAR(255)",
             "tested_at": "TIMESTAMP WITH TIME ZONE",
+            "draft_prompt_key": "VARCHAR(50)",
+            "draft_prompt_content": "TEXT",
+            "draft_updated_by": "VARCHAR(255)",
+            "draft_updated_at": "TIMESTAMP WITH TIME ZONE",
+            "draft_preview_hash": "VARCHAR(64)",
+            "draft_previewed_at": "TIMESTAMP WITH TIME ZONE",
+            "published_prompt_version_id": "INTEGER",
         }.get(column_name)
     return None
 
@@ -242,6 +249,9 @@ def migrate_database(engine: Engine) -> None:
         existing = {column["name"] for column in inspector.get_columns("operations_alerts")}
         for column_name in (
             "test_question", "test_answer", "test_source", "test_passed", "tested_by", "tested_at",
+            "draft_prompt_key", "draft_prompt_content", "draft_updated_by", "draft_updated_at",
+            "draft_preview_hash", "draft_previewed_at",
+            "published_prompt_version_id",
         ):
             if column_name in existing:
                 continue

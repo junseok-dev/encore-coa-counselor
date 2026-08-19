@@ -19,6 +19,7 @@ const SIGNAL_LABEL: Record<OperationsAttentionItem['type'], string> = {
   refund: '환불 요청',
   safety: '안전 확인',
   error: '처리 오류',
+  quality: '답변 품질',
 };
 
 export default function AdminSessionPage() {
@@ -30,6 +31,8 @@ export default function AdminSessionPage() {
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
+  const [reviewingMessageId, setReviewingMessageId] = useState<number | null>(null);
+  const [reviewNotice, setReviewNotice] = useState('');
 
   const returnToAdmin = () => {
     const navigationState = location.state as { fromAdmin?: boolean } | null;
@@ -59,6 +62,20 @@ export default function AdminSessionPage() {
       setExportError('세션 엑셀 다운로드에 실패했습니다. 다시 시도해 주세요.');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleCreateReview = async (messageId: number, question: string) => {
+    if (!sessionId || !question) return;
+    setReviewingMessageId(messageId);
+    setReviewNotice('');
+    try {
+      const result = await adminApi.createSessionOperationsReview(sessionId, question);
+      setReviewNotice(result.message);
+    } catch {
+      setReviewNotice('개선 검토 등록에 실패했습니다. 대화 로그를 확인해 주세요.');
+    } finally {
+      setReviewingMessageId(null);
     }
   };
 
@@ -114,6 +131,7 @@ export default function AdminSessionPage() {
         </div>
 
         {exportError && <p className="mt-3 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{exportError}</p>}
+        {reviewNotice && <p className="mt-3 rounded-xl bg-cyan-50 px-4 py-3 text-sm text-cyan-800">{reviewNotice}</p>}
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -150,9 +168,12 @@ export default function AdminSessionPage() {
             <p className="mt-1 text-xs text-slate-500">응답 출처와 상담·안전 전환 여부를 함께 표시합니다.</p>
           </div>
           <div className="space-y-5 bg-slate-50/60 p-5 sm:p-7">
-            {messages.map((msg) => {
+            {messages.map((msg, index) => {
               const isUser = msg.role === 'user';
               const badge = msg.source ? SOURCE_BADGE[msg.source] : null;
+              const relatedQuestion = isUser
+                ? ''
+                : [...messages.slice(0, index)].reverse().find((candidate) => candidate.role === 'user')?.content || '';
               return (
                 <div key={msg.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                   <div className={`flex max-w-[88%] flex-col gap-1.5 sm:max-w-[76%] ${isUser ? 'items-end' : 'items-start'}`}>
@@ -161,6 +182,14 @@ export default function AdminSessionPage() {
                       {msg.content}
                     </div>
                     <span className="text-[11px] text-slate-400">{new Date(msg.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                    {!isUser && relatedQuestion && (
+                      <button
+                        type="button"
+                        onClick={() => void handleCreateReview(msg.id, relatedQuestion)}
+                        disabled={reviewingMessageId === msg.id}
+                        className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-[11px] font-bold text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+                      >{reviewingMessageId === msg.id ? '등록 중...' : '이 답변 개선 검토'}</button>
+                    )}
                   </div>
                 </div>
               );

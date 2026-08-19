@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, PromptVersion, SystemHealthProbe
 from app.models.chat import ChatRequest, HistoryMessage
 from app.models.session import MessageDetail, SessionDetail, SessionListResponse, SessionSummary
 from app.routers.chat import chat as run_chat_preview
@@ -58,7 +58,17 @@ from app.services.model_settings import (
     set_active_embedding_model,
     set_active_model,
 )
-from app.services.prompt_service import PROMPT_DEFAULTS, seed_prompt_configs, serialize_prompt
+from app.services.admin_ai_service import analyze_improvement_case
+from app.services.prompt_service import (
+    PROMPT_DEFAULTS,
+    RESPONSE_IMPROVEMENT_PROMPT_KEY,
+    list_prompt_versions,
+    publish_prompt,
+    seed_prompt_configs,
+    serialize_prompt,
+    serialize_prompt_version,
+    use_response_prompt_override,
+)
 from app.services.question_category_service import categorize_question_rule, classify_questions_batch
 from app.services.storage_service import (
     FAISS_DIR,
@@ -90,6 +100,8 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "billing_cost_upload_records": "월별 n·Xavis 원본 비용 파일 — 마지막 업로드 파일 보관",
     "processing_logs": "문서 처리 로그 — 파싱, 임베딩 등 단계별 처리 결과",
     "prompt_configs": "LLM 프롬프트 설정 — 시스템 프롬프트, 스타일 가이드 등",
+    "prompt_versions": "프롬프트 운영 버전 이력 — 배포·복구 가능한 변경 내용",
+    "operations_ai_messages": "관리자 AI 개선 대화 — 개선 건별 분석 요청과 제안 이력",
     "faqs": "FAQ 데이터 — 질문, 답변, 키워드, 카테고리",
     "admin_audit_logs": "관리자 감사 로그 — 누가, 무엇을, 언제 수행했는지",
     "admin_secret_records": "관리자 보안정보 금고 — 접속 계정과 비밀번호 암호화 저장",
@@ -175,6 +187,32 @@ class OperationsAlertUpdate(BaseModel):
 
 class OperationsAlertTestRequest(BaseModel):
     question: str
+
+
+class ManualOperationsReviewRequest(BaseModel):
+    reason: str | None = None
+
+
+class SessionOperationsReviewRequest(BaseModel):
+    question: str
+    reason: str | None = None
+
+
+class OperationsAiAssistRequest(BaseModel):
+    message: str
+
+
+class OperationsPromptDraftRequest(BaseModel):
+    content: str
+
+
+class OperationsPromptPreviewRequest(BaseModel):
+    question: str
+    content: str
+
+
+class OperationsPromptPublishRequest(BaseModel):
+    change_reason: str | None = None
 
 
 class VaultPasswordRequest(BaseModel):
@@ -835,6 +873,33 @@ def export_session(session_id: str, db: Session = Depends(get_db), _: None = Dep
     )
 
 
+@router.post("/sessions/{session_id}/review")
+def create_session_operations_review(
+    session_id: str,
+    body: SessionOperationsReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="개선 검토할 질문을 찾을 수 없습니다.")
+    session_logs = db.query(ChatLog).filter(
+        ChatLog.session_id == session_id
+    ).order_by(ChatLog.created_at.desc(), ChatLog.id.desc()).all()
+    chat_log = next(
+        (row for row in session_logs if (decrypt_if_needed(row.question) or "").strip() == question),
+        None,
+    )
+    if not chat_log:
+        raise HTTPException(status_code=404, detail="해당 질문의 대화 로그를 찾을 수 없습니다.")
+    return create_manual_operations_review(
+        chat_log.id,
+        ManualOperationsReviewRequest(reason=body.reason),
+        db,
+        current_user,
+    )
+
+
 @router.post("/upload-md")
 async def upload_md(file: UploadFile = File(...), title: str = Form(None), category: str = Form(None), db: Session = Depends(get_db), _: None = Depends(verify_admin)):
     if not file.filename or not file.filename.lower().endswith(".md"):
@@ -1136,30 +1201,36 @@ def get_prompts(db: Session = Depends(get_db), _: None = Depends(verify_admin)):
 
 
 @router.post("/prompts")
-def create_prompt(body: PromptPayload, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+def create_prompt(body: PromptPayload, db: Session = Depends(get_db), current_user: str = Depends(verify_admin)):
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="프롬프트 내용은 비워둘 수 없습니다.")
     existing = db.query(PromptConfig).filter(PromptConfig.prompt_key == body.prompt_key).first()
     if existing:
         raise HTTPException(status_code=409, detail="같은 키의 프롬프트가 이미 있습니다.")
-    row = PromptConfig(prompt_key=body.prompt_key, label=body.label, content=body.content)
+    row = PromptConfig(prompt_key=body.prompt_key, label=body.label, content=body.content.strip())
     db.add(row)
-    db.commit()
-    db.refresh(row)
-    create_audit_log(db, "prompt_created", "prompt", body.prompt_key, body.label)
+    db.flush()
+    row, _ = publish_prompt(db, body.prompt_key, body.content, current_user, "프롬프트 최초 등록")
+    create_audit_log(db, "prompt_created", "prompt", body.prompt_key, body.label, actor=current_user)
     return {"message": "프롬프트를 추가했습니다.", "prompt": serialize_prompt(row)}
 
 
 @router.put("/prompts/{prompt_key}")
-def update_prompt(prompt_key: str, body: PromptPayload, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+def update_prompt(prompt_key: str, body: PromptPayload, db: Session = Depends(get_db), current_user: str = Depends(verify_admin)):
     if prompt_key != body.prompt_key:
         raise HTTPException(status_code=400, detail="프롬프트 키가 일치하지 않습니다.")
     row = db.query(PromptConfig).filter(PromptConfig.prompt_key == prompt_key).first()
     if not row:
         raise HTTPException(status_code=404, detail="프롬프트를 찾을 수 없습니다.")
     row.label = body.label
-    row.content = body.content
-    db.commit()
-    db.refresh(row)
-    create_audit_log(db, "prompt_updated", "prompt", body.prompt_key, body.label)
+    try:
+        row, version = publish_prompt(db, prompt_key, body.content, current_user, "프롬프트 관리에서 수정")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    create_audit_log(
+        db, "prompt_updated", "prompt", body.prompt_key,
+        f"{body.label}, version={version.version}", actor=current_user,
+    )
     return {"message": "프롬프트를 수정했습니다.", "prompt": serialize_prompt(row)}
 
 
@@ -1170,10 +1241,57 @@ def delete_prompt(prompt_key: str, db: Session = Depends(get_db), _: None = Depe
     row = db.query(PromptConfig).filter(PromptConfig.prompt_key == prompt_key).first()
     if not row:
         raise HTTPException(status_code=404, detail="프롬프트를 찾을 수 없습니다.")
+    db.query(PromptVersion).filter(PromptVersion.prompt_key == prompt_key).delete(synchronize_session=False)
     db.delete(row)
     db.commit()
     create_audit_log(db, "prompt_deleted", "prompt", prompt_key)
     return {"message": "프롬프트를 삭제했습니다."}
+
+
+@router.get("/prompts/{prompt_key}/versions")
+def get_prompt_versions(
+    prompt_key: str,
+    db: Session = Depends(get_db),
+    _: str = Depends(verify_admin),
+):
+    prompt = db.query(PromptConfig).filter(PromptConfig.prompt_key == prompt_key).first()
+    if not prompt:
+        raise HTTPException(status_code=404, detail="프롬프트를 찾을 수 없습니다.")
+    return {"versions": [serialize_prompt_version(row) for row in list_prompt_versions(db, prompt_key)]}
+
+
+@router.post("/prompts/{prompt_key}/rollback/{version_id}")
+def rollback_prompt_version(
+    prompt_key: str,
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    target = db.query(PromptVersion).filter(
+        PromptVersion.id == version_id,
+        PromptVersion.prompt_key == prompt_key,
+    ).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="복구할 프롬프트 버전을 찾을 수 없습니다.")
+    try:
+        prompt, published = publish_prompt(
+            db,
+            prompt_key,
+            target.content,
+            current_user,
+            f"버전 {target.version} 내용으로 복구",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    create_audit_log(
+        db, "prompt_rolled_back", "prompt", prompt_key,
+        f"source_version={target.version}, published_version={published.version}", actor=current_user,
+    )
+    return {
+        "message": f"버전 {target.version}의 내용으로 복구했습니다.",
+        "prompt": serialize_prompt(prompt),
+        "version": serialize_prompt_version(published),
+    }
 
 
 @router.get("/logs")
@@ -1198,6 +1316,56 @@ def get_audit_logs(limit: int = 100, db: Session = Depends(get_db), _: None = De
 def list_chat_logs(start_date: date | None = None, end_date: date | None = None, session_id: str | None = None, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
     rows = _filter_chat_logs(db, start_date=start_date, end_date=end_date, session_id=session_id)
     return {"chat_logs": [_serialize_chat_log(row) for row in rows]}
+
+
+@router.post("/chat-logs/{chat_log_id}/review")
+def create_manual_operations_review(
+    chat_log_id: int,
+    body: ManualOperationsReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    chat_log = db.query(ChatLog).filter(ChatLog.id == chat_log_id).first()
+    if not chat_log:
+        raise HTTPException(status_code=404, detail="대화 로그를 찾을 수 없습니다.")
+    alert = db.query(OperationsAlert).filter(OperationsAlert.chat_log_id == chat_log_id).first()
+    created = alert is None
+    reopened = bool(alert and alert.status == "resolved")
+    if alert is None:
+        alert = OperationsAlert(
+            chat_log_id=chat_log.id,
+            session_id=chat_log.session_id,
+            signal_type="quality",
+            severity="medium",
+            reason=(body.reason or "관리자 답변 품질 검토").strip() or "관리자 답변 품질 검토",
+            status="open",
+        )
+        db.add(alert)
+        db.commit()
+        db.refresh(alert)
+    elif reopened:
+        alert.status = "open"
+        alert.assigned_to = None
+        alert.resolved_at = None
+        alert.test_passed = False
+        db.commit()
+        db.refresh(alert)
+    create_audit_log(
+        db,
+        "operations_review_created" if created else "operations_review_reopened" if reopened else "operations_review_already_exists",
+        "operations_alert",
+        str(alert.id),
+        f"chat_log_id={chat_log_id}",
+        actor=current_user,
+    )
+    return {
+        "message": (
+            "개선 검토에 등록했습니다." if created
+            else "완료된 개선 검토를 다시 열었습니다." if reopened
+            else "이미 개선 검토에 등록된 대화입니다."
+        ),
+        "alert": _serialize_operations_alert(alert),
+    }
 
 
 @router.get("/chat-logs/export")
@@ -1745,6 +1913,7 @@ def get_operations_dashboard(
             )
             category["count"] += 1
 
+        alert = alert_by_log_id.get(row.id)
         signal_type = None
         severity = "medium"
         if request_signal == "refund":
@@ -1759,8 +1928,12 @@ def get_operations_dashboard(
             signal_type = "handoff"
             severity = "low" if row.processing_status == "handoff_offer" else "medium"
 
+        if signal_type is None and alert and alert.signal_type == "quality":
+            signal_type = alert.signal_type
+            severity = alert.severity
+            reason = alert.reason
+
         if signal_type:
-            alert = alert_by_log_id.get(row.id)
             if alert is None:
                 alert = OperationsAlert(
                     chat_log_id=row.id,
@@ -2385,6 +2558,12 @@ def _serialize_operations_alert(alert: OperationsAlert) -> dict:
         "test_passed": bool(alert.test_passed),
         "tested_by": alert.tested_by,
         "tested_at": alert.tested_at,
+        "draft_prompt_key": alert.draft_prompt_key,
+        "draft_prompt_content": alert.draft_prompt_content,
+        "draft_updated_by": alert.draft_updated_by,
+        "draft_updated_at": alert.draft_updated_at,
+        "draft_previewed_at": alert.draft_previewed_at,
+        "published_prompt_version_id": alert.published_prompt_version_id,
         "created_at": alert.created_at,
         "updated_at": alert.updated_at,
         "resolved_at": alert.resolved_at,
@@ -2423,6 +2602,14 @@ def get_operations_alert_detail(
         OperationsAlert.signal_type == alert.signal_type,
         OperationsAlert.reason == alert.reason,
     ).order_by(OperationsAlert.resolved_at.desc(), OperationsAlert.id.desc()).limit(5).all()
+    seed_prompt_configs(db)
+    improvement_prompt = db.query(PromptConfig).filter(
+        PromptConfig.prompt_key == RESPONSE_IMPROVEMENT_PROMPT_KEY
+    ).first()
+    prompt_versions = list_prompt_versions(db, RESPONSE_IMPROVEMENT_PROMPT_KEY, limit=8)
+    ai_messages = db.query(OperationsAiMessage).filter(
+        OperationsAiMessage.alert_id == alert.id
+    ).order_by(OperationsAiMessage.created_at, OperationsAiMessage.id).all()
     return {
         "alert": _serialize_operations_alert(alert),
         "problem_start_message_id": problem_start_message_id,
@@ -2463,6 +2650,302 @@ def get_operations_alert_detail(
             }
             for related in related_alerts
         ],
+        "prompt_workspace": {
+            "prompt_key": RESPONSE_IMPROVEMENT_PROMPT_KEY,
+            "label": improvement_prompt.label if improvement_prompt else "답변 개선 운영 지침",
+            "current_content": improvement_prompt.content if improvement_prompt else "",
+            "draft_content": alert.draft_prompt_content,
+            "draft_updated_by": alert.draft_updated_by,
+            "draft_updated_at": alert.draft_updated_at,
+            "draft_previewed_at": alert.draft_previewed_at,
+            "published_prompt_version_id": alert.published_prompt_version_id,
+            "versions": [serialize_prompt_version(row) for row in prompt_versions],
+        },
+        "ai_messages": [_serialize_operations_ai_message(row) for row in ai_messages],
+    }
+
+
+@router.post("/operations/alerts/{alert_id}/ai-assist")
+async def assist_operations_alert(
+    alert_id: int,
+    body: OperationsAiAssistRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="관리자 AI에게 요청할 내용을 입력해 주세요.")
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
+    source_log = db.query(ChatLog).filter(ChatLog.id == alert.chat_log_id).first()
+    if not source_log:
+        raise HTTPException(status_code=404, detail="원본 대화 로그를 찾을 수 없습니다.")
+    seed_prompt_configs(db)
+    prompt = db.query(PromptConfig).filter(
+        PromptConfig.prompt_key == RESPONSE_IMPROVEMENT_PROMPT_KEY
+    ).first()
+    conversation_rows = db.query(ChatMessage).filter(
+        ChatMessage.session_id == alert.session_id,
+        ChatMessage.role.in_(("user", "assistant")),
+    ).order_by(ChatMessage.created_at, ChatMessage.id).all()
+    previous_rows = db.query(OperationsAiMessage).filter(
+        OperationsAiMessage.alert_id == alert.id
+    ).order_by(OperationsAiMessage.created_at, OperationsAiMessage.id).all()
+    try:
+        result = await analyze_improvement_case(
+            operator_message=message,
+            alert_context={
+                "signal_type": alert.signal_type,
+                "severity": alert.severity,
+                "reason": alert.reason,
+                "question": decrypt_if_needed(source_log.question),
+                "answer": decrypt_if_needed(source_log.answer),
+                "source": source_log.source,
+                "processing_status": source_log.processing_status,
+                "error": decrypt_if_needed(source_log.error),
+                "retrieval_chunks": source_log.retrieval_chunks,
+            },
+            conversation=[
+                {"role": row.role, "content": decrypt_if_needed(row.content) or ""}
+                for row in conversation_rows
+            ],
+            current_prompt=prompt.content if prompt else "",
+            draft_prompt=alert.draft_prompt_content,
+            assistant_history=[
+                {"role": row.role, "content": decrypt_if_needed(row.content) or ""}
+                for row in previous_rows
+            ],
+        )
+    except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="관리자 AI 분석에 실패했습니다. 잠시 후 다시 시도해 주세요.") from exc
+
+    assistant_content = f"{result['summary']}\n\n권장 조치: {result['recommendation']}"
+    db.add_all([
+        OperationsAiMessage(
+            alert_id=alert.id,
+            role="user",
+            content=maybe_encrypt(message) or "",
+            created_by=current_user,
+        ),
+        OperationsAiMessage(
+            alert_id=alert.id,
+            role="assistant",
+            content=maybe_encrypt(assistant_content) or "",
+            structured_json=maybe_encrypt(json.dumps(result, ensure_ascii=False)),
+            created_by="admin-ai",
+        ),
+    ])
+    if alert.status == "open":
+        previous_status = alert.status
+        alert.status = "checking"
+        alert.assigned_to = current_user
+        _add_operations_alert_history(db, alert, "checking_started", current_user, previous_status)
+    db.commit()
+    create_audit_log(
+        db, "operations_ai_assisted", "operations_alert", str(alert.id),
+        f"root_cause={result['root_cause']}, confidence={result['confidence']}", actor=current_user,
+    )
+    return result
+
+
+@router.put("/operations/alerts/{alert_id}/prompt-draft")
+def save_operations_prompt_draft(
+    alert_id: int,
+    body: OperationsPromptDraftRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="프롬프트 초안은 비워둘 수 없습니다.")
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
+    previous_status = alert.status
+    alert.draft_prompt_key = RESPONSE_IMPROVEMENT_PROMPT_KEY
+    alert.draft_prompt_content = content
+    alert.draft_updated_by = current_user
+    alert.draft_updated_at = datetime.now()
+    alert.draft_preview_hash = None
+    alert.draft_previewed_at = None
+    alert.status = "checking"
+    alert.assigned_to = current_user
+    alert.test_answer = None
+    alert.test_source = None
+    alert.test_passed = False
+    alert.tested_by = None
+    alert.tested_at = None
+    _add_operations_alert_history(db, alert, "draft_saved", current_user, previous_status)
+    db.commit()
+    create_audit_log(
+        db, "operations_prompt_draft_saved", "operations_alert", str(alert.id),
+        f"prompt_key={RESPONSE_IMPROVEMENT_PROMPT_KEY}", actor=current_user,
+    )
+    return {"message": "프롬프트 초안을 저장했습니다.", "alert": _serialize_operations_alert(alert)}
+
+
+@router.post("/operations/alerts/{alert_id}/prompt-preview")
+async def preview_operations_prompt(
+    alert_id: int,
+    body: OperationsPromptPreviewRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    question = body.question.strip()
+    content = body.content.strip()
+    if not question or not content:
+        raise HTTPException(status_code=400, detail="테스트 질문과 프롬프트 초안을 모두 입력해 주세요.")
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
+    source_log = db.query(ChatLog).filter(ChatLog.id == alert.chat_log_id).first()
+    original_messages = db.query(ChatMessage).filter(
+        ChatMessage.session_id == alert.session_id,
+        ChatMessage.role.in_(("user", "assistant")),
+    ).order_by(ChatMessage.created_at, ChatMessage.id).all()
+    history = [
+        HistoryMessage(role=row.role, content=decrypt_if_needed(row.content) or "")
+        for row in original_messages[-8:]
+    ]
+    test_session_id = f"admin-draft-{uuid4().hex}"
+    try:
+        with use_response_prompt_override(content):
+            response = await run_chat_preview(
+                ChatRequest(session_id=test_session_id, message=question, history=history),
+                db,
+            )
+        candidate_answer = response.answer
+        candidate_source = response.source
+    finally:
+        db.rollback()
+        db.query(OperationsAlert).filter(OperationsAlert.session_id == test_session_id).delete(synchronize_session=False)
+        db.query(CancelRequest).filter(CancelRequest.session_id == test_session_id).delete(synchronize_session=False)
+        db.query(ChatLog).filter(ChatLog.session_id == test_session_id).delete(synchronize_session=False)
+        db.query(ChatMessage).filter(ChatMessage.session_id == test_session_id).delete(synchronize_session=False)
+        db.query(ChatSession).filter(ChatSession.id == test_session_id).delete(synchronize_session=False)
+        db.commit()
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    alert.draft_prompt_key = RESPONSE_IMPROVEMENT_PROMPT_KEY
+    alert.draft_prompt_content = content
+    alert.draft_updated_by = current_user
+    alert.draft_updated_at = datetime.now()
+    alert.draft_preview_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    alert.draft_previewed_at = datetime.now()
+    alert.status = "checking"
+    alert.assigned_to = current_user
+    db.commit()
+    create_audit_log(
+        db, "operations_prompt_previewed", "operations_alert", str(alert_id),
+        f"question={question[:120]}", actor=current_user,
+    )
+    return {
+        "question": question,
+        "before": {
+            "answer": decrypt_if_needed(source_log.answer) if source_log else "",
+            "source": source_log.source if source_log else "",
+        },
+        "after": {"answer": candidate_answer, "source": candidate_source},
+    }
+
+
+@router.post("/operations/alerts/{alert_id}/publish-prompt")
+def publish_operations_prompt(
+    alert_id: int,
+    body: OperationsPromptPublishRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
+    if alert.draft_prompt_key != RESPONSE_IMPROVEMENT_PROMPT_KEY or not alert.draft_prompt_content:
+        raise HTTPException(status_code=400, detail="먼저 답변 개선 프롬프트 초안을 저장해 주세요.")
+    expected_preview_hash = hashlib.sha256(alert.draft_prompt_content.encode("utf-8")).hexdigest()
+    if alert.draft_preview_hash != expected_preview_hash or not alert.draft_previewed_at:
+        raise HTTPException(status_code=400, detail="현재 초안으로 변경 전·후 답변 비교를 먼저 실행해 주세요.")
+    try:
+        prompt, version = publish_prompt(
+            db,
+            RESPONSE_IMPROVEMENT_PROMPT_KEY,
+            alert.draft_prompt_content,
+            current_user,
+            body.change_reason or f"개선 검토 #{alert.id}: {alert.reason}",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    previous_status = alert.status
+    alert.published_prompt_version_id = version.id
+    alert.draft_preview_hash = None
+    alert.draft_previewed_at = None
+    alert.status = "checking"
+    alert.assigned_to = current_user
+    alert.test_answer = None
+    alert.test_source = None
+    alert.test_passed = False
+    alert.tested_by = None
+    alert.tested_at = None
+    _add_operations_alert_history(db, alert, "prompt_published", current_user, previous_status)
+    db.commit()
+    create_audit_log(
+        db, "operations_prompt_published", "operations_alert", str(alert.id),
+        f"prompt_key={RESPONSE_IMPROVEMENT_PROMPT_KEY}, version={version.version}", actor=current_user,
+    )
+    return {
+        "message": f"답변 개선 운영 지침 버전 {version.version}을 반영했습니다.",
+        "prompt": serialize_prompt(prompt),
+        "version": serialize_prompt_version(version),
+        "alert": _serialize_operations_alert(alert),
+    }
+
+
+@router.post("/operations/alerts/{alert_id}/rollback-prompt/{version_id}")
+def rollback_operations_prompt(
+    alert_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
+    target = db.query(PromptVersion).filter(
+        PromptVersion.id == version_id,
+        PromptVersion.prompt_key == RESPONSE_IMPROVEMENT_PROMPT_KEY,
+    ).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="복구할 프롬프트 버전을 찾을 수 없습니다.")
+    prompt, version = publish_prompt(
+        db,
+        RESPONSE_IMPROVEMENT_PROMPT_KEY,
+        target.content,
+        current_user,
+        f"개선 검토 #{alert.id}에서 버전 {target.version} 내용으로 복구",
+    )
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    previous_status = alert.status
+    alert.published_prompt_version_id = version.id
+    alert.status = "checking"
+    alert.assigned_to = current_user
+    alert.test_answer = None
+    alert.test_source = None
+    alert.test_passed = False
+    alert.tested_by = None
+    alert.tested_at = None
+    _add_operations_alert_history(db, alert, "prompt_rolled_back", current_user, previous_status)
+    db.commit()
+    create_audit_log(
+        db, "operations_prompt_rolled_back", "operations_alert", str(alert.id),
+        f"source_version={target.version}, published_version={version.version}", actor=current_user,
+    )
+    return {
+        "message": f"버전 {target.version}의 내용으로 복구했습니다.",
+        "prompt": serialize_prompt(prompt),
+        "version": serialize_prompt_version(version),
+        "alert": _serialize_operations_alert(alert),
     }
 
 
@@ -2849,6 +3332,23 @@ def get_data_table(
         "total_pages": total_pages,
         "query": normalized_query,
         "search_column": normalized_search_column,
+    }
+
+
+def _serialize_operations_ai_message(message: OperationsAiMessage) -> dict:
+    structured = None
+    if message.structured_json:
+        try:
+            structured = json.loads(decrypt_if_needed(message.structured_json) or "{}")
+        except json.JSONDecodeError:
+            structured = None
+    return {
+        "id": message.id,
+        "role": message.role,
+        "content": decrypt_if_needed(message.content) or "",
+        "structured": structured,
+        "created_by": message.created_by,
+        "created_at": message.created_at,
     }
 
 

@@ -9,10 +9,14 @@ import {
   Loader2,
   MessageSquareText,
   Play,
+  RotateCcw,
+  Save,
+  Send,
+  Sparkles,
   X,
 } from 'lucide-react';
 import { adminApi } from '../../services/api';
-import { OperationsAlertDetail, OperationsAttentionItem } from '../../types';
+import { OperationsAiAnalysis, OperationsAlertDetail, OperationsAttentionItem, OperationsPromptPreview } from '../../types';
 
 interface OperationsAlertDetailProps {
   item: OperationsAttentionItem;
@@ -24,6 +28,9 @@ interface OperationsAlertDetailProps {
 const HISTORY_LABELS: Record<string, string> = {
   checking_started: '확인 시작',
   work_updated: '검증 기준 저장',
+  draft_saved: '프롬프트 초안 저장',
+  prompt_published: '운영 프롬프트 반영',
+  prompt_rolled_back: '운영 프롬프트 복구',
   answer_tested: '수정 후 답변 테스트',
   resolved: '처리 완료',
 };
@@ -55,6 +62,15 @@ export default function OperationsAlertDetailPanel({
   const [testSource, setTestSource] = useState('');
   const [testPassed, setTestPassed] = useState(false);
   const [testedAt, setTestedAt] = useState<string | null>(null);
+  const [aiInput, setAiInput] = useState('이 답변이 이상한 원인을 분석하고 안전한 수정안을 제안해줘.');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [latestAiAnalysis, setLatestAiAnalysis] = useState<OperationsAiAnalysis | null>(null);
+  const [draftPrompt, setDraftPrompt] = useState('');
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [promptPreview, setPromptPreview] = useState<OperationsPromptPreview | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [rollbackBusyId, setRollbackBusyId] = useState<number | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const problemStartRef = useRef<HTMLDivElement>(null);
 
@@ -66,6 +82,7 @@ export default function OperationsAlertDetailPanel({
     setTestSource(next.alert.test_source || '');
     setTestPassed(next.alert.test_passed);
     setTestedAt(next.alert.tested_at);
+    setDraftPrompt(next.prompt_workspace.draft_content || next.prompt_workspace.current_content);
   };
 
   const loadDetail = async () => {
@@ -167,6 +184,105 @@ export default function OperationsAlertDetailPanel({
     await saveWorkflow('resolved');
   };
 
+  const askAdminAi = async () => {
+    if (!aiInput.trim()) {
+      setError('관리자 AI에게 요청할 내용을 입력해 주세요.');
+      return;
+    }
+    setAiBusy(true);
+    setError('');
+    try {
+      const result = await adminApi.assistOperationsAlert(item.alert_id, aiInput.trim());
+      setLatestAiAnalysis(result);
+      setAiInput('');
+      await loadDetail();
+      await onRefresh();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const applyAiSuggestion = () => {
+    if (!latestAiAnalysis?.suggested_prompt) return;
+    setDraftPrompt(latestAiAnalysis.suggested_prompt);
+    setPromptPreview(null);
+  };
+
+  const savePromptDraft = async (): Promise<boolean> => {
+    if (!draftPrompt.trim()) {
+      setError('프롬프트 초안은 비워둘 수 없습니다.');
+      return false;
+    }
+    setDraftSaving(true);
+    setError('');
+    try {
+      await adminApi.saveOperationsPromptDraft(item.alert_id, draftPrompt);
+      await loadDetail();
+      await onRefresh();
+      return true;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      return false;
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
+  const previewPromptDraft = async () => {
+    if (!testQuestion.trim() || !draftPrompt.trim()) {
+      setError('테스트 질문과 프롬프트 초안을 모두 입력해 주세요.');
+      return;
+    }
+    setPreviewBusy(true);
+    setError('');
+    try {
+      const result = await adminApi.previewOperationsPrompt(item.alert_id, testQuestion.trim(), draftPrompt);
+      setPromptPreview(result);
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
+
+  const publishPromptDraft = async () => {
+    if (!promptPreview) {
+      setError('운영 반영 전에 수정 전·후 답변 비교를 실행해 주세요.');
+      return;
+    }
+    if (!window.confirm('검증한 프롬프트 초안을 실제 상담 답변에 반영할까요?')) return;
+    setPublishing(true);
+    setError('');
+    try {
+      await adminApi.publishOperationsPrompt(item.alert_id, `개선 검토 #${item.alert_id}: ${item.reason}`);
+      setPromptPreview(null);
+      await loadDetail();
+      await onRefresh();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const rollbackPrompt = async (versionId: number, version: number) => {
+    if (!window.confirm(`프롬프트 버전 ${version}의 내용으로 복구할까요? 복구 내용은 새 운영 버전으로 기록됩니다.`)) return;
+    setRollbackBusyId(versionId);
+    setError('');
+    try {
+      await adminApi.rollbackOperationsPrompt(item.alert_id, versionId);
+      setPromptPreview(null);
+      await loadDetail();
+      await onRefresh();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setRollbackBusyId(null);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
       <div className="my-3 w-full max-w-6xl overflow-hidden rounded-3xl bg-slate-50 shadow-2xl">
@@ -224,6 +340,97 @@ export default function OperationsAlertDetailPanel({
                 <div className="mt-4 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">프롬프트나 코드를 수정·배포한 뒤 이 화면으로 돌아와 같은 질문으로 결과를 확인하세요.</div>
               </section>
             </div>
+
+            {detail && (
+              <section className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="flex items-center gap-2 font-black text-slate-900"><Sparkles className="h-5 w-5 text-violet-700" />AI 개선 도우미와 운영 프롬프트 초안</h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">AI는 원인과 수정안을 제안만 합니다. 운영자가 변경 전후 답변을 비교한 뒤 직접 반영합니다.</p>
+                  </div>
+                  <span className="w-fit rounded-full bg-violet-50 px-3 py-1 text-[11px] font-bold text-violet-700 ring-1 ring-violet-200">{detail.prompt_workspace.label}</span>
+                </div>
+
+                <div className="mt-5 grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+                  <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm font-black text-slate-900">관리자 AI 대화</p>
+                    <div className="mt-3 max-h-80 min-h-48 space-y-3 overflow-y-auto rounded-xl bg-white p-3">
+                      {detail.ai_messages.length === 0 && (
+                        <div className="flex min-h-40 flex-col items-center justify-center text-center">
+                          <Bot className="h-7 w-7 text-violet-300" />
+                          <p className="mt-2 text-sm font-semibold text-slate-600">문제 대화와 검색 결과를 함께 분석합니다.</p>
+                          <p className="mt-1 text-xs text-slate-400">아래 요청을 그대로 보내거나 원하는 방향을 추가해 주세요.</p>
+                        </div>
+                      )}
+                      {detail.ai_messages.map((message) => (
+                        <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-xs leading-5 ${message.role === 'user' ? 'bg-slate-900 text-white' : 'border border-violet-100 bg-violet-50 text-slate-700'}`}>
+                            <p className="whitespace-pre-wrap">{message.content}</p>
+                            {message.structured && <p className="mt-2 font-bold text-violet-700">원인 {message.structured.root_cause} · 확신도 {Math.round(message.structured.confidence * 100)}%</p>}
+                            {message.structured?.suggested_prompt && (
+                              <button onClick={() => { setDraftPrompt(message.structured!.suggested_prompt); setPromptPreview(null); }} className="mt-2 rounded-lg bg-white px-2.5 py-1 text-[11px] font-black text-violet-700 ring-1 ring-violet-200">이 수정안을 초안에 적용</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <textarea value={aiInput} onChange={(event) => setAiInput(event.target.value)} rows={3} placeholder="예: 답변이 너무 빨리 상담 연결로 넘어간 이유를 분석해줘." className="mt-3 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm leading-6 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" />
+                    <button onClick={() => void askAdminAi()} disabled={aiBusy || !aiInput.trim()} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 py-3 text-sm font-black text-white hover:bg-violet-800 disabled:opacity-50">{aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}{aiBusy ? '분석 중...' : 'AI에게 분석 요청'}</button>
+
+                    {latestAiAnalysis && (
+                      <div className="mt-3 rounded-xl border border-violet-200 bg-white p-3">
+                        <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-800">{latestAiAnalysis.root_cause}</span><span className="text-[11px] text-slate-500">확신도 {Math.round(latestAiAnalysis.confidence * 100)}%</span></div>
+                        <p className="mt-2 text-xs leading-5 text-slate-700">{latestAiAnalysis.summary}</p>
+                        {latestAiAnalysis.test_questions.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{latestAiAnalysis.test_questions.map((question) => <button key={question} onClick={() => { setTestQuestion(question); setPromptPreview(null); }} className="rounded-lg bg-slate-100 px-2 py-1 text-left text-[11px] text-slate-600 hover:bg-slate-200">{question}</button>)}</div>}
+                        {latestAiAnalysis.suggested_prompt && <button onClick={applyAiSuggestion} className="mt-3 w-full rounded-lg bg-violet-100 px-3 py-2 text-xs font-black text-violet-800 hover:bg-violet-200">AI 수정안을 초안에 적용</button>}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="min-w-0 space-y-4">
+                    <details className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <summary className="cursor-pointer text-xs font-black text-slate-700">현재 운영 중인 지침 보기</summary>
+                      <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-white p-3 font-sans text-xs leading-5 text-slate-600">{detail.prompt_workspace.current_content}</pre>
+                    </details>
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="text-sm font-black text-slate-900">수정 초안</label>
+                        <span className="text-[11px] text-slate-400">보호된 안전 규칙은 별도로 유지됩니다.</span>
+                      </div>
+                      <textarea value={draftPrompt} onChange={(event) => { setDraftPrompt(event.target.value); setPromptPreview(null); }} rows={14} className="mt-2 w-full resize-y rounded-xl border border-slate-200 px-3 py-3 font-mono text-xs leading-5 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <button onClick={() => void savePromptDraft()} disabled={draftSaving || !draftPrompt.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs font-black text-slate-700 disabled:opacity-50">{draftSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}초안 저장</button>
+                      <button onClick={() => void previewPromptDraft()} disabled={previewBusy || !draftPrompt.trim() || !testQuestion.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-700 px-3 py-2.5 text-xs font-black text-white disabled:opacity-50">{previewBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}변경 전후 비교</button>
+                      <button onClick={() => void publishPromptDraft()} disabled={publishing || !promptPreview} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 py-2.5 text-xs font-black text-white disabled:opacity-40">{publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}운영 반영</button>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-xs font-black text-slate-700">최근 운영 버전</p>
+                      <div className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+                        {detail.prompt_workspace.versions.map((version) => (
+                          <div key={version.id} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2">
+                            <div className="min-w-0"><p className="text-xs font-bold text-slate-700">버전 {version.version} · {version.status === 'published' ? '현재 운영' : '이전 버전'}</p><p className="truncate text-[10px] text-slate-400">{version.change_reason || '-'} · {version.created_by}</p></div>
+                            {version.status !== 'published' && <button onClick={() => void rollbackPrompt(version.id, version.version)} disabled={rollbackBusyId !== null} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-slate-600 disabled:opacity-50">{rollbackBusyId === version.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}복구</button>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {promptPreview && (
+                  <div className="mt-5 border-t border-violet-100 pt-5">
+                    <p className="text-sm font-black text-slate-900">변경 전·후 답변 비교</p>
+                    <p className="mt-1 text-xs text-slate-500">질문: {promptPreview.question}</p>
+                    <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-black text-slate-500">변경 전 · {promptPreview.before.source || '-'}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{promptPreview.before.answer || '기존 답변이 없습니다.'}</p></div>
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4"><p className="text-xs font-black text-emerald-700">초안 적용 결과 · {promptPreview.after.source || '-'}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-800">{promptPreview.after.answer}</p></div>
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
 
             <section className="rounded-2xl border border-cyan-200 bg-white p-5 shadow-sm">
               <div><h3 className="flex items-center gap-2 font-black text-slate-900"><Bot className="h-5 w-5 text-cyan-700" />수정 후 동일 질문 테스트</h3><p className="mt-1 text-xs text-slate-500">수정·배포가 끝났다면 같은 질문을 실제 챗봇 경로로 다시 실행해 답변을 확인합니다.</p></div>

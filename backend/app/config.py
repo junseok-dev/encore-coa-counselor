@@ -155,6 +155,12 @@ class Settings(BaseSettings):
             "- 자연스러운 상담 답변처럼 보이되, 사실성은 엄격하게 지킵니다."
         )
     )
+    default_response_improvement_prompt: str = Field(
+        default=(
+            "[운영자 답변 개선 지침]\n"
+            "현재 추가로 적용할 운영 지침이 없습니다. 위의 기본 상담 원칙과 보호된 안전 규칙을 그대로 따르세요."
+        )
+    )
     default_cancel_prompt: str = Field(
         default=(
             "아, 수강 취소·환불·일정 변경은 회원님 상황을 정확히 확인해야 해서 "

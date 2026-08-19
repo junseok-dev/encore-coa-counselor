@@ -21,6 +21,9 @@ import {
   OpenAiCostData,
   OperationsAnalyticsData,
   OperationsAlertDetail,
+  OperationsAiAnalysis,
+  OperationsPromptPreview,
+  PromptVersion,
   OperationsAlertTestResult,
   OperationsAlertUpdateResult,
   OperationsAlertWorkflowPayload,
@@ -292,6 +295,46 @@ export const adminApi = {
     return response.data;
   },
 
+  createOperationsReview: async (chatLogId: number): Promise<{ message: string; alert: OperationsAlertUpdateResult }> => {
+    const response = await adminApiClient.post(`/admin/chat-logs/${chatLogId}/review`, {});
+    return response.data;
+  },
+
+  assistOperationsAlert: async (alertId: number, message: string): Promise<OperationsAiAnalysis> => {
+    const response = await adminApiClient.post<OperationsAiAnalysis>(`/admin/operations/alerts/${alertId}/ai-assist`, { message });
+    return response.data;
+  },
+
+  saveOperationsPromptDraft: async (alertId: number, content: string): Promise<{ message: string; alert: OperationsAlertUpdateResult }> => {
+    const response = await adminApiClient.put(`/admin/operations/alerts/${alertId}/prompt-draft`, { content });
+    return response.data;
+  },
+
+  previewOperationsPrompt: async (alertId: number, question: string, content: string): Promise<OperationsPromptPreview> => {
+    const response = await adminApiClient.post<OperationsPromptPreview>(`/admin/operations/alerts/${alertId}/prompt-preview`, { question, content });
+    return response.data;
+  },
+
+  publishOperationsPrompt: async (alertId: number, changeReason?: string): Promise<{ message: string; prompt: PromptConfig; version: PromptVersion; alert: OperationsAlertUpdateResult }> => {
+    const response = await adminApiClient.post(`/admin/operations/alerts/${alertId}/publish-prompt`, { change_reason: changeReason });
+    return response.data;
+  },
+
+  rollbackOperationsPrompt: async (alertId: number, versionId: number): Promise<{ message: string; prompt: PromptConfig; version: PromptVersion; alert: OperationsAlertUpdateResult }> => {
+    const response = await adminApiClient.post(`/admin/operations/alerts/${alertId}/rollback-prompt/${versionId}`);
+    return response.data;
+  },
+
+  getPromptVersions: async (promptKey: string): Promise<{ versions: PromptVersion[] }> => {
+    const response = await adminApiClient.get(`/admin/prompts/${encodeURIComponent(promptKey)}/versions`);
+    return response.data;
+  },
+
+  rollbackPromptVersion: async (promptKey: string, versionId: number): Promise<{ message: string; prompt: PromptConfig; version: PromptVersion }> => {
+    const response = await adminApiClient.post(`/admin/prompts/${encodeURIComponent(promptKey)}/rollback/${versionId}`);
+    return response.data;
+  },
+
   getSessionDetail: async (sessionId: string): Promise<AdminSessionDetail> => {
     const response = await adminApiClient.get<AdminSessionDetail>(`/admin/sessions/${sessionId}`);
     return response.data;
@@ -353,6 +396,11 @@ export const adminApi = {
 
   getDocumentDetail: async (documentId: number): Promise<AdminDocumentDetail> => {
     const response = await adminApiClient.get(`/admin/documents/${documentId}`);
+    return response.data;
+  },
+
+  createSessionOperationsReview: async (sessionId: string, question: string): Promise<{ message: string; alert: OperationsAlertUpdateResult }> => {
+    const response = await adminApiClient.post(`/admin/sessions/${encodeURIComponent(sessionId)}/review`, { question });
     return response.data;
   },
 

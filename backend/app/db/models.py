@@ -151,6 +151,13 @@ class OperationsAlert(Base):
     test_passed = Column(Boolean, default=False, nullable=False)
     tested_by = Column(String(255), nullable=True)
     tested_at = Column(DateTime(timezone=True), nullable=True)
+    draft_prompt_key = Column(String(50), nullable=True)
+    draft_prompt_content = Column(Text, nullable=True)
+    draft_updated_by = Column(String(255), nullable=True)
+    draft_updated_at = Column(DateTime(timezone=True), nullable=True)
+    draft_preview_hash = Column(String(64), nullable=True)
+    draft_previewed_at = Column(DateTime(timezone=True), nullable=True)
+    published_prompt_version_id = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     resolved_at = Column(DateTime(timezone=True), nullable=True)
@@ -239,6 +246,35 @@ class PromptConfig(Base):
     label = Column(String(100), nullable=False)
     content = Column(Text, nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PromptVersion(Base):
+    __tablename__ = "prompt_versions"
+    __table_args__ = (
+        UniqueConstraint("prompt_key", "version", name="uq_prompt_versions_key_version"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    prompt_key = Column(String(50), index=True, nullable=False)
+    version = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    status = Column(String(20), index=True, default="published", nullable=False)
+    change_reason = Column(Text, nullable=True)
+    created_by = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    published_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class OperationsAiMessage(Base):
+    __tablename__ = "operations_ai_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    alert_id = Column(Integer, index=True, nullable=False)
+    role = Column(String(20), nullable=False)
+    content = Column(Text, nullable=False)
+    structured_json = Column(Text, nullable=True)
+    created_by = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class FaqRecord(Base):

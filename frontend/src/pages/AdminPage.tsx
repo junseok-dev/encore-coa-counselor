@@ -337,6 +337,7 @@ export default function AdminPage() {
   const [appliedChatEndDate, setAppliedChatEndDate] = useState(initialAdminView.chatEndDate);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatExporting, setChatExporting] = useState(false);
+  const [chatReviewingId, setChatReviewingId] = useState<number | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionPage, setSessionPage] = useState(initialAdminView.chatSessionPage);
   const [sessionTotal, setSessionTotal] = useState(0);
@@ -1123,6 +1124,19 @@ export default function AdminPage() {
       setNotice('테이블 데이터를 불러오지 못했습니다.');
     } finally {
       setDataLoading(false);
+    }
+  };
+
+  const handleCreateOperationsReview = async (chatLogId: number) => {
+    setChatReviewingId(chatLogId);
+    try {
+      const result = await adminApi.createOperationsReview(chatLogId);
+      setNotice(result.message);
+      await loadOperations();
+    } catch {
+      setNotice('개선 검토 등록에 실패했습니다.');
+    } finally {
+      setChatReviewingId(null);
     }
   };
 
@@ -2004,6 +2018,12 @@ export default function AdminPage() {
                       <span>{formatDate(log.created_at)}</span>
                       <span>{log.source}</span>
                       <span>LLM ${log.llm_cost.toFixed(6)}</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleCreateOperationsReview(log.id)}
+                        disabled={chatReviewingId === log.id}
+                        className="ml-auto rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 font-semibold text-violet-700 disabled:opacity-50"
+                      >{chatReviewingId === log.id ? '등록 중...' : '개선 검토 등록'}</button>
                     </div>
                     <div className="mt-2 font-medium text-slate-900">{log.question}</div>
                     <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{log.answer}</p>

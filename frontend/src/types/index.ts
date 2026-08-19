@@ -219,7 +219,7 @@ export interface ChatLog {
   created_at: string;
 }
 
-export type OperationsSignalType = 'handoff' | 'cancel' | 'refund' | 'safety' | 'error';
+export type OperationsSignalType = 'handoff' | 'cancel' | 'refund' | 'safety' | 'error' | 'quality';
 
 export interface OperationsMetricSummary {
   visitors: number;
@@ -465,6 +465,12 @@ export interface OperationsAlertUpdateResult {
   test_passed: boolean;
   tested_by: string | null;
   tested_at: string | null;
+  draft_prompt_key: string | null;
+  draft_prompt_content: string | null;
+  draft_updated_by: string | null;
+  draft_updated_at: string | null;
+  draft_previewed_at: string | null;
+  published_prompt_version_id: number | null;
   created_at: string;
   resolved_at: string | null;
   updated_at: string | null;
@@ -489,6 +495,57 @@ export interface OperationsAlertDetail {
   messages: AdminMessage[];
   history: OperationsAlertHistory[];
   related_resolutions: OperationsRelatedResolution[];
+  prompt_workspace: OperationsPromptWorkspace;
+  ai_messages: OperationsAiMessage[];
+}
+
+export interface PromptVersion {
+  id: number;
+  prompt_key: string;
+  version: number;
+  content: string;
+  status: 'published' | 'archived';
+  change_reason: string | null;
+  created_by: string;
+  created_at: string;
+  published_at: string | null;
+}
+
+export interface OperationsPromptWorkspace {
+  prompt_key: string;
+  label: string;
+  current_content: string;
+  draft_content: string | null;
+  draft_updated_by: string | null;
+  draft_updated_at: string | null;
+  draft_previewed_at: string | null;
+  published_prompt_version_id: number | null;
+  versions: PromptVersion[];
+}
+
+export interface OperationsAiAnalysis {
+  root_cause: 'prompt' | 'data' | 'retrieval' | 'code' | 'model' | 'unknown';
+  confidence: number;
+  summary: string;
+  recommendation: string;
+  target_prompt: string;
+  suggested_prompt: string;
+  test_questions: string[];
+}
+
+export interface OperationsAiMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  structured: OperationsAiAnalysis | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface OperationsPromptPreview {
+  question: string;
+  before: { answer: string; source: string };
+  after: { answer: string; source: string };
 }
 
 export interface OperationsRelatedResolution {

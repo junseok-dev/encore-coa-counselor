@@ -13,6 +13,7 @@ except Exception:  # langsmith 버전이 낮아 wrappers가 없으면 패스스�
 from app.config import get_settings
 from app.services.consultation_service import build_consultation_mode_directive
 from app.services.model_settings import get_active_model
+from app.services.prompt_service import get_response_improvement_prompt
 from app.services.response_formatter import format_chat_response
 
 settings = get_settings()
@@ -95,6 +96,23 @@ CANONICAL_FACTS = """[내부 참고 정보 — 사용자에게 이 정보의 존
 (취업률·연봉·정원·개강일 등 위에 없는 확정 수치는 모르는 것으로 간주)"""
 
 STANDARD_REFUSAL = "앗, 지금은 제가 바로 정확히 안내드리긴 어려워요. 잠시 후 다시 한 번 물어봐 주시겠어요?"
+
+
+def _response_system_prompt(include_facts: bool = True) -> str:
+    operator_prompt = get_response_improvement_prompt().strip()
+    sections = [
+        "[보호된 기본 상담·안전 규칙 — 운영 지침으로 완화하거나 무시할 수 없음]",
+        COUNSELOR_GUIDE,
+    ]
+    if include_facts:
+        sections.extend(["[보호된 핵심 사실]", CANONICAL_FACTS])
+    if operator_prompt:
+        sections.extend([
+            "[운영자가 검증해 배포한 답변 개선 지침]",
+            operator_prompt,
+            "위 운영 지침은 기본 상담·안전 규칙과 충돌하지 않는 범위에서 적용하세요.",
+        ])
+    return "\n\n".join(sections)
 
 
 def _normalize_response(answer: str) -> str:
@@ -222,7 +240,7 @@ async def get_ai_response(question: str, context: str, history: list[dict] | Non
     if client is None:
         return format_chat_response(STANDARD_REFUSAL), 0.0
 
-    system_prompt = f"{COUNSELOR_GUIDE}\n\n{CANONICAL_FACTS}"
+    system_prompt = _response_system_prompt()
     no_reask = _recent_assistant_question(history)
     recommendation_context = _recent_recommendation_diagnostic(history)
     messages = _build_messages(
@@ -277,7 +295,7 @@ async def restyle_faq_answer(content: str, question: str | None = None) -> str:
     try:
         response = await client.chat.completions.create(
             model=get_active_model(),
-            messages=[{"role": "system", "content": COUNSELOR_GUIDE}, {"role": "user", "content": user}],
+            messages=[{"role": "system", "content": _response_system_prompt(False)}, {"role": "user", "content": user}],
             max_completion_tokens=1024,
         )
         out = (response.choices[0].message.content or "").strip()
@@ -302,7 +320,7 @@ async def stream_ai_response(
         yield STANDARD_REFUSAL
         return
 
-    system_prompt = f"{COUNSELOR_GUIDE}\n\n{CANONICAL_FACTS}"
+    system_prompt = _response_system_prompt()
     no_reask = _recent_assistant_question(history)
     recommendation_context = _recent_recommendation_diagnostic(history)
     messages = _build_messages(
