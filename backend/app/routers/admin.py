@@ -42,15 +42,19 @@ from app.services.admin_service import (
     process_uploaded_faq_md,
     process_uploaded_md,
     process_uploaded_pdf,
+    preview_reindex,
+    reconvert_faq_document,
     reject_document,
     restore_document,
     soft_delete_document,
+    update_document_artifacts,
 )
+from app.services.rag_service import ReindexInProgressError
 from app.services.faq_service import _serialize_faq, seed_faqs, sync_faqs_to_file
 from app.services.model_settings import get_active_model, set_active_model
 from app.services.prompt_service import PROMPT_DEFAULTS, seed_prompt_configs, serialize_prompt
 from app.services.question_category_service import categorize_question_rule, classify_questions_batch
-from app.services.storage_service import read_text_from_storage, storage_exists
+from app.services.storage_service import build_s3_uri, read_bytes_from_storage, read_text_from_storage, storage_exists
 from app.utils.crypto import ENCRYPTED_PREFIX, decrypt_if_needed, encrypt, maybe_encrypt
 from app.utils.data_names import clean_data_name, data_name_key
 
@@ -111,6 +115,20 @@ class ModelChangeRequest(BaseModel):
 
 class ReviewRequest(BaseModel):
     note: str | None = None
+
+
+class DocumentArtifactUpdateRequest(BaseModel):
+    md_content: str
+    json_content: str | None = None
+
+
+class FaqReconvertRequest(BaseModel):
+    category: str | None = None
+
+
+class ReindexRequest(BaseModel):
+    force: bool = False
+    expected_fingerprint: str | None = None
 
 
 class FaqItemPayload(BaseModel):
@@ -783,11 +801,16 @@ async def upload_md(file: UploadFile = File(...), title: str = Form(None), categ
 async def upload_faq_md(file: UploadFile = File(...), category: str = Form(None), db: Session = Depends(get_db), _: None = Depends(verify_admin)):
     if not file.filename or not file.filename.lower().endswith(".md"):
         raise HTTPException(status_code=400, detail="MD 파일만 업로드할 수 있습니다.")
-    record, faq_items = await process_uploaded_faq_md(db, file.filename, await file.read(), category=category)
+    record, faq_items, conversion = await process_uploaded_faq_md(db, file.filename, await file.read(), category=category)
     return {
         "message": "FAQ 변환 결과를 생성했고, 아직 운영 반영 전입니다.",
         "document": _serialize_document(record),
         "faqs": faq_items,
+        "conversion": {
+            "method": conversion["method"],
+            "warnings": conversion["warnings"],
+            "item_count": len(faq_items),
+        },
     }
 
 
@@ -835,12 +858,91 @@ def get_document_detail(document_id: int, db: Session = Depends(get_db), _: None
     return {"document": _serialize_document(record), "md_content": _read_optional_text(record.md_path), "json_content": _read_optional_text(record.json_path)}
 
 
+@router.get("/documents/{document_id}/pdf")
+def get_document_pdf(document_id: int, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+    record = db.query(DocumentRecord).filter(DocumentRecord.id == document_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    pdf_path = record.pdf_path or (build_s3_uri(record.storage_key) if record.storage_key else None)
+    try:
+        content = read_bytes_from_storage(pdf_path)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="원본 PDF 저장소에서 파일을 읽지 못했습니다.") from exc
+    if content is None:
+        raise HTTPException(status_code=404, detail="원본 PDF 파일을 찾을 수 없습니다.")
+    filename = decrypt_if_needed(record.original_filename) or f"document-{record.id}.pdf"
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.put("/documents/{document_id}/artifacts")
+def update_document_artifacts_route(
+    document_id: int,
+    body: DocumentArtifactUpdateRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
+    record = db.query(DocumentRecord).filter(DocumentRecord.id == document_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    try:
+        updated, chunk_count = update_document_artifacts(db, record, body.md_content, body.json_content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "message": "변환 결과를 저장했습니다. 다시 검토한 뒤 승인해 주세요.",
+        "document": _serialize_document(updated),
+        "md_content": _read_optional_text(updated.md_path),
+        "json_content": _read_optional_text(updated.json_path),
+        "chunk_count": chunk_count,
+    }
+
+
+@router.post("/documents/{document_id}/faq/reconvert")
+async def reconvert_faq_document_route(
+    document_id: int,
+    body: FaqReconvertRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
+    record = db.query(DocumentRecord).filter(DocumentRecord.id == document_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    try:
+        updated, conversion = await reconvert_faq_document(db, record, category=body.category)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "message": "MD에서 FAQ JSON을 다시 생성해 저장했습니다. 내용을 검토하고 필요하면 수정한 뒤 승인해 주세요.",
+        "document": _serialize_document(updated),
+        "md_content": _read_optional_text(updated.md_path),
+        "json_content": _read_optional_text(updated.json_path),
+        "conversion": {
+            "method": conversion["method"],
+            "warnings": conversion["warnings"],
+            "item_count": len(conversion["items"]),
+        },
+    }
+
+
 @router.post("/documents/{document_id}/approve")
 def approve_document_route(document_id: int, body: ReviewRequest, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
     record = db.query(DocumentRecord).filter(DocumentRecord.id == document_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
-    updated = approve_document(db, record, body.note)
+    try:
+        updated = approve_document(db, record, body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"message": "문서를 승인해 운영 데이터에 반영했습니다.", "document": _serialize_document(updated)}
 
 
@@ -849,7 +951,10 @@ def reject_document_route(document_id: int, body: ReviewRequest, db: Session = D
     record = db.query(DocumentRecord).filter(DocumentRecord.id == document_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
-    updated = reject_document(db, record, body.note)
+    try:
+        updated = reject_document(db, record, body.note)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"message": "문서를 반려했습니다.", "document": _serialize_document(updated)}
 
 
@@ -867,7 +972,10 @@ def delete_document(document_id: int, note: str | None = Query(default=None), db
     record = db.query(DocumentRecord).filter(DocumentRecord.id == document_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
-    updated = soft_delete_document(db, record, note)
+    try:
+        updated = soft_delete_document(db, record, note)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"message": "문서를 삭제 처리했습니다.", "document": _serialize_document(updated)}
 
 
@@ -881,11 +989,45 @@ def retry_document(document_id: int, db: Session = Depends(get_db), _: None = De
     return {"message": "재처리는 같은 파일을 다시 업로드하는 방식으로 진행합니다."}
 
 
+@router.get("/reindex/preview")
+def reindex_preview(db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+    try:
+        return preview_reindex(db)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/reindex")
-def reindex(db: Session = Depends(get_db), _: None = Depends(verify_admin)):
-    full_reindex(db)
-    create_audit_log(db, "reindex", "system", "global", "full_rebuild")
-    return {"message": "전체 인덱스를 다시 생성했습니다.", "strategy": "full_rebuild"}
+def reindex(body: ReindexRequest, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+    try:
+        result = full_reindex(
+            db,
+            force=body.force,
+            expected_fingerprint=body.expected_fingerprint,
+        )
+    except ReindexInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    skipped = result.get("status") == "skipped"
+    create_audit_log(
+        db,
+        "reindex_skipped" if skipped else "reindex",
+        "system",
+        "global",
+        f"status={result.get('status')}; fingerprint={result.get('corpus_fingerprint')}",
+    )
+    return {
+        "message": (
+            "승인 데이터가 현재 인덱스와 같아 재구성을 건너뛰었습니다."
+            if skipped
+            else "전체 인덱스를 생성하고 저장·재로딩 검증까지 완료했습니다."
+        ),
+        "strategy": "unchanged_skip" if skipped else "full_rebuild_verified",
+        **result,
+    }
 
 
 @router.get("/faqs")

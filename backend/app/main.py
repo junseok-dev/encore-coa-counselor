@@ -50,7 +50,12 @@ async def lifespan(app: FastAPI):
         # 코드 기본값으로 강제 덮어써 관리자 편집분이 사라지는 버그가 있어 제거함.
         # 기본값은 seed_prompt_configs가 레코드가 없을 때만 시드한다.
         if get_settings().rag_index_on_startup:
-            get_rag_service().index_all(db)
+            try:
+                get_rag_service().index_all(db)
+            except RuntimeError as exc:
+                # 관리자 재구성 API에는 명확히 실패를 반환하되, 설정 누락 하나로
+                # 상태 확인·관리자 페이지까지 모두 기동 불가가 되지는 않게 한다.
+                logger.error("시작 시 FAISS 인덱스 재구성 실패: %s", exc)
         else:
             # Still initialize any existing local index without rebuilding it.
             get_rag_service()

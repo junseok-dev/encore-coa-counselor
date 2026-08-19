@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from urllib.parse import urlparse
 
 from app.config import get_settings
@@ -24,6 +25,8 @@ MANAGED_EMBEDDINGS_DIR = DATA_DIR / "managed_embeddings"
 FAISS_DIR = DATA_DIR / "faiss_index"
 
 _FAISS_FILES = ("index.faiss", "index.pkl")
+_FAISS_MANIFEST = "manifest.json"
+_FAISS_POINTER = "current.json"
 
 
 def _get_s3_client():
@@ -63,32 +66,123 @@ def parse_s3_uri(path_value: str) -> tuple[str, str]:
     return bucket, key
 
 
-def upload_faiss_to_s3() -> None:
+def upload_faiss_to_s3(source_dir: Path | None = None) -> str | None:
+    source_dir = source_dir or FAISS_DIR
+    missing = [filename for filename in _FAISS_FILES if not (source_dir / filename).is_file()]
+    if missing:
+        raise FileNotFoundError(f"FAISS 필수 파일이 없습니다: {', '.join(missing)}")
+
     client, settings = _get_s3_client()
     if client is None:
-        return
+        return None
+
+    manifest_path = source_dir / _FAISS_MANIFEST
+    if not manifest_path.is_file():
+        raise FileNotFoundError("FAISS manifest.json 파일이 없습니다.")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    version = str(manifest.get("version") or "").strip()
+    if not version:
+        raise ValueError("FAISS manifest에 version이 없습니다.")
+
     prefix = f"{settings.aws_s3_prefix.rstrip('/')}/faiss"
-    for filename in _FAISS_FILES:
-        local_path = FAISS_DIR / filename
-        if local_path.exists():
-            client.upload_file(str(local_path), settings.aws_s3_bucket, f"{prefix}/{filename}")
+    version_prefix = f"{prefix}/versions/{version}"
+    for filename in (*_FAISS_FILES, _FAISS_MANIFEST):
+        client.upload_file(str(source_dir / filename), settings.aws_s3_bucket, f"{version_prefix}/{filename}")
+
+    pointer = json.dumps({"version": version}, ensure_ascii=False).encode("utf-8")
+    client.put_object(
+        Bucket=settings.aws_s3_bucket,
+        Key=f"{prefix}/{_FAISS_POINTER}",
+        Body=pointer,
+        ContentType="application/json; charset=utf-8",
+    )
+    return version
+
+
+def install_faiss_artifacts(source_dir: Path) -> None:
+    missing = [filename for filename in _FAISS_FILES if not (source_dir / filename).is_file()]
+    if missing:
+        raise FileNotFoundError(f"FAISS 필수 파일이 없습니다: {', '.join(missing)}")
+
+    FAISS_DIR.mkdir(parents=True, exist_ok=True)
+    filenames = (*_FAISS_FILES, _FAISS_MANIFEST)
+    backup_dir = source_dir.parent / f"{source_dir.name}_backup"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    replaced: list[str] = []
+    try:
+        for filename in filenames:
+            target = FAISS_DIR / filename
+            if target.exists():
+                shutil.copy2(target, backup_dir / filename)
+        for filename in filenames:
+            source = source_dir / filename
+            target = FAISS_DIR / filename
+            if source.exists():
+                os.replace(source, target)
+                replaced.append(filename)
+    except Exception:
+        for filename in replaced:
+            backup = backup_dir / filename
+            target = FAISS_DIR / filename
+            if backup.exists():
+                os.replace(backup, target)
+            else:
+                safe_unlink(str(target))
+        raise
+    finally:
+        safe_rmtree(str(backup_dir))
 
 
 def download_faiss_from_s3() -> bool:
     client, settings = _get_s3_client()
     if client is None:
         return False
-    FAISS_DIR.mkdir(parents=True, exist_ok=True)
     prefix = f"{settings.aws_s3_prefix.rstrip('/')}/faiss"
-    downloaded = False
-    for filename in _FAISS_FILES:
-        local_path = FAISS_DIR / filename
+    FAISS_DIR.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="faiss-download-", dir=str(FAISS_DIR.parent)) as temp_dir_value:
+        temp_dir = Path(temp_dir_value)
         try:
-            client.download_file(settings.aws_s3_bucket, f"{prefix}/{filename}", str(local_path))
-            downloaded = True
+            pointer_response = client.get_object(Bucket=settings.aws_s3_bucket, Key=f"{prefix}/{_FAISS_POINTER}")
+            pointer = json.loads(pointer_response["Body"].read().decode("utf-8"))
+            version = str(pointer.get("version") or "").strip()
+            if not version:
+                return False
+            version_prefix = f"{prefix}/versions/{version}"
+            for filename in (*_FAISS_FILES, _FAISS_MANIFEST):
+                client.download_file(settings.aws_s3_bucket, f"{version_prefix}/{filename}", str(temp_dir / filename))
+            install_faiss_artifacts(temp_dir)
+            return True
         except Exception:
-            pass
-    return downloaded
+            # Backward compatibility for indexes written before versioned manifests.
+            for filename in (*_FAISS_FILES, _FAISS_MANIFEST):
+                safe_unlink(str(temp_dir / filename))
+            for filename in _FAISS_FILES:
+                try:
+                    client.download_file(settings.aws_s3_bucket, f"{prefix}/{filename}", str(temp_dir / filename))
+                except Exception:
+                    return False
+            install_faiss_artifacts(temp_dir)
+            return True
+
+
+def clear_faiss_storage() -> None:
+    for filename in (*_FAISS_FILES, _FAISS_MANIFEST):
+        safe_unlink(str(FAISS_DIR / filename))
+
+    client, settings = _get_s3_client()
+    if client is None:
+        return
+    prefix = f"{settings.aws_s3_prefix.rstrip('/')}/faiss"
+    try:
+        response = client.get_object(Bucket=settings.aws_s3_bucket, Key=f"{prefix}/{_FAISS_POINTER}")
+        version = str(json.loads(response["Body"].read().decode("utf-8")).get("version") or "").strip()
+        if version:
+            for filename in (*_FAISS_FILES, _FAISS_MANIFEST):
+                client.delete_object(Bucket=settings.aws_s3_bucket, Key=f"{prefix}/versions/{version}/{filename}")
+    except Exception:
+        pass
+    for filename in (*_FAISS_FILES, _FAISS_POINTER):
+        client.delete_object(Bucket=settings.aws_s3_bucket, Key=f"{prefix}/{filename}")
 
 
 def ensure_storage_dirs() -> None:
@@ -154,6 +248,22 @@ def read_text_from_storage(path_value: str | None) -> str | None:
     if not path.exists() or not path.is_file():
         return None
     return path.read_text(encoding="utf-8")
+
+
+def read_bytes_from_storage(path_value: str | None) -> bytes | None:
+    if not path_value:
+        return None
+    if is_s3_uri(path_value):
+        client, _ = _get_s3_client()
+        if client is None:
+            return None
+        bucket, key = parse_s3_uri(path_value)
+        response = client.get_object(Bucket=bucket, Key=key)
+        return response["Body"].read()
+    path = Path(path_value)
+    if not path.exists() or not path.is_file():
+        return None
+    return path.read_bytes()
 
 
 def storage_exists(path_value: str | None) -> bool:

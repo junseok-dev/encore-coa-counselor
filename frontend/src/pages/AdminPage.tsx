@@ -296,6 +296,12 @@ export default function AdminPage() {
   const [selectedDocument, setSelectedDocument] = useState<AdminDocumentDetail | null>(null);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [reviewNote, setReviewNote] = useState('');
+  const [documentMdDraft, setDocumentMdDraft] = useState('');
+  const [documentJsonDraft, setDocumentJsonDraft] = useState('');
+  const [documentArtifactSaving, setDocumentArtifactSaving] = useState(false);
+  const [faqReconvertBusy, setFaqReconvertBusy] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [pdfPreviewLoading, setPdfPreviewLoading] = useState(false);
 
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [mdFile, setMdFile] = useState<File | null>(null);
@@ -383,6 +389,7 @@ export default function AdminPage() {
   const mdInputRef = useRef<HTMLInputElement>(null);
   const faqMdInputRef = useRef<HTMLInputElement>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
+  const documentRequestIdRef = useRef(0);
   const navigate = useNavigate();
 
   const setActiveTab = (tab: TabKey) => {
@@ -606,6 +613,10 @@ export default function AdminPage() {
     return () => window.clearInterval(timer);
   }, [activeTab, authenticated]);
 
+  useEffect(() => () => {
+    if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+  }, [pdfPreviewUrl]);
+
   const loadEncryptionSettings = async () => {
     setEncryptionLoading(true);
     try {
@@ -666,13 +677,33 @@ export default function AdminPage() {
   };
 
   const openDocument = async (documentId: number) => {
+    const requestId = ++documentRequestIdRef.current;
     setDocumentLoading(true);
+    setPdfPreviewLoading(false);
+    setPdfPreviewUrl(null);
     try {
       const detail = await adminApi.getDocumentDetail(documentId);
+      if (requestId !== documentRequestIdRef.current) return;
       setSelectedDocument(detail);
       setReviewNote(detail.document.review_note ?? '');
+      setDocumentMdDraft(detail.md_content ?? '');
+      setDocumentJsonDraft(detail.json_content ?? '');
+      if (detail.document.has_pdf) {
+        setPdfPreviewLoading(true);
+        try {
+          const pdfBlob = await adminApi.getDocumentPdf(documentId);
+          if (requestId !== documentRequestIdRef.current) return;
+          setPdfPreviewUrl(URL.createObjectURL(pdfBlob));
+        } catch {
+          if (requestId === documentRequestIdRef.current) {
+            setNotice('문서 내용은 불러왔지만 원본 PDF 미리보기를 열지 못했습니다.');
+          }
+        } finally {
+          if (requestId === documentRequestIdRef.current) setPdfPreviewLoading(false);
+        }
+      }
     } finally {
-      setDocumentLoading(false);
+      if (requestId === documentRequestIdRef.current) setDocumentLoading(false);
     }
   };
 
@@ -682,13 +713,31 @@ export default function AdminPage() {
   };
 
   const handleReindex = async () => {
-    if (!window.confirm('승인된 모든 문서를 다시 청크·임베딩한 뒤 FAISS 인덱스를 재구성합니다. 수 초~수 분 소요될 수 있어요. 진행할까요?')) return;
     setReindexBusy(true);
     try {
-      const result = await adminApi.reindex();
-      setNotice(result.message || '인덱스 재구성 완료');
-    } catch {
-      setNotice('인덱스 재구성에 실패했습니다.');
+      const preview = await adminApi.previewReindex();
+      if (!preview.can_rebuild) {
+        setNotice('OpenAI API 키가 없어 인덱스를 재구성할 수 없습니다. 설정을 먼저 확인해 주세요.');
+        return;
+      }
+      if (!preview.changed) {
+        setNotice(
+          `변경 사항이 없습니다. 현재 인덱스를 그대로 사용합니다. 문서 ${preview.document_count}건, FAQ ${preview.faq_count}건, 벡터 ${preview.current_vector_count}건`,
+        );
+        return;
+      }
+      const confirmed = window.confirm(
+        `변경 사항이 확인되었습니다.\n\n승인 문서 ${preview.document_count}건\nFAQ ${preview.faq_count}건\n예상 청크 ${preview.chunk_count}건\n\n이 경우에만 임베딩 비용이 발생합니다. 재구성할까요?`,
+      );
+      if (!confirmed) {
+        setNotice('사전 점검만 완료했고 인덱스는 변경하지 않았습니다.');
+        return;
+      }
+      const result = await adminApi.reindex(preview.fingerprint);
+      setNotice(`${result.message} 문서 ${result.document_count}건, FAQ ${result.faq_count}건, 벡터 ${result.vector_count}건 (${result.storage})`);
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(detail || '인덱스 재구성에 실패했습니다.');
     } finally {
       setReindexBusy(false);
     }
@@ -733,7 +782,9 @@ export default function AdminPage() {
     setUploadBusy(true);
     try {
       const result = await adminApi.uploadFaqMd(faqMdFile, faqMdCategory || undefined);
-      setNotice(`${result.message} (${result.faqs.length}건)`);
+      const methodLabel = result.conversion.method === 'ai' ? 'AI 변환' : '규칙 기반 대체 변환';
+      const warning = result.conversion.warnings.length ? ` ${result.conversion.warnings.join(' ')}` : '';
+      setNotice(`${result.message} (${methodLabel} ${result.faqs.length}건)${warning}`);
       setFaqMdFile(null);
       setFaqMdCategory('');
       if (faqMdInputRef.current) faqMdInputRef.current.value = '';
@@ -747,25 +798,53 @@ export default function AdminPage() {
 
   const handleDocumentApprove = async () => {
     if (!selectedDocument) return;
-    const result = await adminApi.approveDocument(selectedDocument.document.id, reviewNote || undefined);
-    setNotice(result.message);
-    await reloadAndOpenDocument(selectedDocument.document.id);
+    const isFaqDocument = selectedDocument.document.parser_type === 'faq_json';
+    const hasUnsavedChanges = documentMdDraft !== (selectedDocument.md_content ?? '')
+      || (isFaqDocument && documentJsonDraft !== (selectedDocument.json_content ?? ''));
+    if (hasUnsavedChanges) {
+      setNotice('수정한 MD/JSON을 먼저 저장한 뒤 승인해 주세요.');
+      return;
+    }
+    try {
+      const result = await adminApi.approveDocument(selectedDocument.document.id, reviewNote || undefined);
+      setNotice(result.message);
+      await reloadAndOpenDocument(selectedDocument.document.id);
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(detail || '문서 승인과 인덱스 반영에 실패했습니다.');
+    }
   };
 
   const handleDocumentReject = async () => {
     if (!selectedDocument) return;
-    const result = await adminApi.rejectDocument(selectedDocument.document.id, reviewNote || undefined);
-    setNotice(result.message);
-    await reloadAndOpenDocument(selectedDocument.document.id);
+    try {
+      const result = await adminApi.rejectDocument(selectedDocument.document.id, reviewNote || undefined);
+      setNotice(result.message);
+      await reloadAndOpenDocument(selectedDocument.document.id);
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(detail || '문서 반려 처리에 실패했습니다.');
+    }
   };
 
   const handleDocumentDelete = async (documentId: number) => {
     if (!window.confirm('이 문서를 삭제 처리할까요?')) return;
     const note = selectedDocument?.document.id === documentId ? reviewNote : undefined;
-    const result = await adminApi.deleteDocument(documentId, note);
-    setNotice(result.message);
-    if (selectedDocument?.document.id === documentId) setSelectedDocument(null);
-    await loadDashboard();
+    try {
+      const result = await adminApi.deleteDocument(documentId, note);
+      setNotice(result.message);
+      if (selectedDocument?.document.id === documentId) {
+        documentRequestIdRef.current += 1;
+        setSelectedDocument(null);
+        setDocumentMdDraft('');
+        setDocumentJsonDraft('');
+        setPdfPreviewUrl(null);
+      }
+      await loadDashboard();
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(detail || '문서 삭제 처리에 실패했습니다.');
+    }
   };
 
   const handleDocumentRestore = async () => {
@@ -773,6 +852,61 @@ export default function AdminPage() {
     const result = await adminApi.restoreDocument(selectedDocument.document.id);
     setNotice(result.message);
     await reloadAndOpenDocument(selectedDocument.document.id);
+  };
+
+  const handleDocumentArtifactSave = async () => {
+    if (!selectedDocument) return;
+    setDocumentArtifactSaving(true);
+    try {
+      const isFaqDocument = selectedDocument.document.parser_type === 'faq_json';
+      const result = await adminApi.updateDocumentArtifacts(selectedDocument.document.id, {
+        md_content: documentMdDraft,
+        ...(isFaqDocument ? { json_content: documentJsonDraft } : {}),
+      });
+      setSelectedDocument({
+        document: result.document,
+        md_content: result.md_content,
+        json_content: result.json_content,
+      });
+      setDocumentMdDraft(result.md_content ?? '');
+      setDocumentJsonDraft(result.json_content ?? '');
+      setNotice(`${result.message}${isFaqDocument ? '' : ` (검색 청크 ${result.chunk_count}건)`}`);
+      await loadDashboard();
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(detail || '변환 결과 저장에 실패했습니다.');
+    } finally {
+      setDocumentArtifactSaving(false);
+    }
+  };
+
+  const handleFaqReconvert = async () => {
+    if (!selectedDocument || selectedDocument.document.parser_type !== 'faq_json') return;
+    if (documentMdDraft !== (selectedDocument.md_content ?? '')) {
+      setNotice('수정한 MD를 먼저 저장한 뒤 FAQ JSON을 다시 변환해 주세요.');
+      return;
+    }
+    if (!window.confirm('현재 FAQ JSON을 MD 기준으로 다시 생성할까요? 기존 JSON 초안은 바뀝니다.')) return;
+    setFaqReconvertBusy(true);
+    try {
+      const result = await adminApi.reconvertFaqDocument(selectedDocument.document.id);
+      setSelectedDocument({
+        document: result.document,
+        md_content: result.md_content,
+        json_content: result.json_content,
+      });
+      setDocumentMdDraft(result.md_content ?? '');
+      setDocumentJsonDraft(result.json_content ?? '');
+      const methodLabel = result.conversion.method === 'ai' ? 'AI 변환' : '규칙 기반 대체 변환';
+      const warning = result.conversion.warnings.length ? ` ${result.conversion.warnings.join(' ')}` : '';
+      setNotice(`${result.message} ${methodLabel} ${result.conversion.item_count}건.${warning}`);
+      await loadDashboard();
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(detail || 'FAQ JSON 재변환에 실패했습니다.');
+    } finally {
+      setFaqReconvertBusy(false);
+    }
   };
 
   const handleSelectFaq = (faq: AdminFaq) => {
@@ -1136,6 +1270,11 @@ export default function AdminPage() {
     () => [...documents].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
     [documents],
   );
+  const selectedIsFaqDocument = selectedDocument?.document.parser_type === 'faq_json';
+  const documentArtifactsDirty = Boolean(selectedDocument) && (
+    documentMdDraft !== (selectedDocument?.md_content ?? '')
+    || (selectedIsFaqDocument && documentJsonDraft !== (selectedDocument?.json_content ?? ''))
+  );
 
   const visibleDbTables = useMemo(() => {
     const query = dbTableQuery.trim().toLocaleLowerCase('ko-KR');
@@ -1334,7 +1473,7 @@ export default function AdminPage() {
         )}
 
         {activeTab === 'documents' && (
-          <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+          <div className="mt-6 grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
             <div className="space-y-6">
               <section className="rounded-3xl bg-white p-6 shadow-sm">
                 <h2 className="text-lg font-semibold text-slate-900">업로드와 변환</h2>
@@ -1361,11 +1500,11 @@ export default function AdminPage() {
                     <button onClick={handleFaqMdUpload} disabled={!faqMdFile || uploadBusy} className="mt-4 w-full rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">변환 생성</button>
                   </div>
                   <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4">
-                    <h3 className="text-sm font-semibold text-slate-900">FAISS 인덱스 재구성</h3>
-                    <p className="mt-1 text-xs text-slate-500">승인된 모든 문서를 다시 임베딩하고 검색 인덱스를 새로 만듭니다. 문서 본문이 바뀌었거나 검색 결과가 옛날 그대로일 때 실행하세요.</p>
-                    <p className="mt-2 text-[11px] text-amber-700">⚠ 수 초~수 분 소요. S3와도 자동 동기화됩니다.</p>
+                    <h3 className="text-sm font-semibold text-slate-900">FAISS 변경 확인</h3>
+                    <p className="mt-1 text-xs text-slate-500">먼저 승인 데이터와 현재 인덱스를 비교합니다. 변경이 없으면 임베딩을 실행하지 않아 비용이 발생하지 않습니다.</p>
+                    <p className="mt-2 text-[11px] text-amber-700">변경이 있을 때만 건수 확인 후 재구성하며, 중복 실행은 서버에서 차단합니다.</p>
                     <button onClick={handleReindex} disabled={reindexBusy} className="mt-4 w-full rounded-xl bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
-                      {reindexBusy ? '재구성 중...' : '인덱스 재구성'}
+                      {reindexBusy ? '확인/재구성 처리 중...' : '변경 확인 후 재구성'}
                     </button>
                   </div>
                 </div>
@@ -1438,18 +1577,83 @@ export default function AdminPage() {
                     <textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} className={`${TEXTAREA_CLASS} h-24`} placeholder="승인/반려/삭제 사유를 남겨두세요." />
                   </div>
                   <div className="flex flex-wrap gap-3">
-                    <button onClick={() => void handleDocumentApprove()} disabled={selectedDocument.document.is_deleted} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">승인</button>
+                    <button onClick={() => void handleDocumentApprove()} disabled={selectedDocument.document.is_deleted || documentArtifactsDirty || documentArtifactSaving} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">승인</button>
                     <button onClick={() => void handleDocumentReject()} disabled={selectedDocument.document.is_deleted} className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">반려</button>
                     <button onClick={() => void handleDocumentDelete(selectedDocument.document.id)} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white">삭제</button>
                     <button onClick={() => void handleDocumentRestore()} disabled={!selectedDocument.document.is_deleted} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50">복구</button>
                   </div>
-                  <div>
-                    <h3 className="mb-2 text-sm font-semibold text-slate-900">MD 미리보기</h3>
-                    <textarea readOnly value={selectedDocument.md_content ?? ''} className="h-56 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-700" />
+                  {documentArtifactsDirty && (
+                    <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                      저장하지 않은 수정 내용이 있습니다. 저장이 끝날 때까지 승인할 수 없습니다.
+                    </p>
+                  )}
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div>
+                      <div className="mb-2 flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-slate-900">원본 PDF</h3>
+                        <span className="text-[11px] text-slate-500">원본과 변환 결과를 나란히 확인하세요.</span>
+                      </div>
+                      <div className="h-[30rem] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                        {pdfPreviewLoading ? (
+                          <div className="flex h-full items-center justify-center text-sm text-slate-500">PDF를 불러오는 중...</div>
+                        ) : pdfPreviewUrl ? (
+                          <iframe title="원본 PDF 미리보기" src={pdfPreviewUrl} className="h-full w-full" />
+                        ) : (
+                          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-500">
+                            {selectedDocument.document.has_pdf ? '원본 PDF 미리보기를 불러오지 못했습니다.' : 'MD로 직접 등록된 문서라 원본 PDF가 없습니다.'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <h3 className="text-sm font-semibold text-slate-900">변환된 MD 편집</h3>
+                        <span className="text-[11px] text-slate-500">표·제목·누락 문장을 확인하세요.</span>
+                      </div>
+                      <textarea
+                        value={documentMdDraft}
+                        onChange={(event) => setDocumentMdDraft(event.target.value)}
+                        disabled={selectedDocument.document.is_deleted}
+                        className="h-[30rem] w-full rounded-2xl border border-slate-200 bg-white p-4 font-mono text-xs text-slate-700 disabled:bg-slate-50"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="mb-2 text-sm font-semibold text-slate-900">JSON 미리보기</h3>
-                    <textarea readOnly value={selectedDocument.json_content ?? ''} className="h-56 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-700" />
+                  {selectedIsFaqDocument ? (
+                    <div>
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-900">FAQ JSON 편집·검증</h3>
+                          <p className="mt-1 text-[11px] text-slate-500">저장할 때 JSON 문법, question/answer, 중복 id, top_k 범위를 검사합니다.</p>
+                        </div>
+                        <button
+                          onClick={() => void handleFaqReconvert()}
+                          disabled={faqReconvertBusy || documentArtifactSaving || selectedDocument.document.is_deleted || documentMdDraft !== (selectedDocument.md_content ?? '')}
+                          className="rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-xs font-medium text-cyan-800 disabled:opacity-50"
+                        >
+                          {faqReconvertBusy ? '재변환 중...' : '저장된 MD에서 다시 변환'}
+                        </button>
+                      </div>
+                      <textarea
+                        value={documentJsonDraft}
+                        onChange={(event) => setDocumentJsonDraft(event.target.value)}
+                        disabled={selectedDocument.document.is_deleted}
+                        className="h-80 w-full rounded-2xl border border-slate-200 bg-white p-4 font-mono text-xs text-slate-700 disabled:bg-slate-50"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <h3 className="mb-2 text-sm font-semibold text-slate-900">처리 메타데이터 JSON</h3>
+                      <textarea readOnly value={documentJsonDraft} className="h-48 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-700" />
+                    </div>
+                  )}
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => void handleDocumentArtifactSave()}
+                      disabled={!documentArtifactsDirty || documentArtifactSaving || selectedDocument.document.is_deleted}
+                      className="rounded-xl bg-cyan-700 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                      {documentArtifactSaving ? '검증·저장 중...' : '변환 결과 검증 후 저장'}
+                    </button>
                   </div>
                 </div>
               )}

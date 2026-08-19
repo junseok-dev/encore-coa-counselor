@@ -1,8 +1,15 @@
+import hashlib
 import json
 import math
+import os
 import re
+import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Optional
+from uuid import uuid4
 
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
@@ -13,11 +20,65 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.database import SessionLocal
 from app.db.models import ChunkRecord, DocumentRecord, FaqRecord
-from app.services.storage_service import download_faiss_from_s3, read_text_from_storage, upload_faiss_to_s3
+from app.services.storage_service import (
+    FAISS_DIR,
+    clear_faiss_storage,
+    download_faiss_from_s3,
+    install_faiss_artifacts,
+    read_text_from_storage,
+    upload_faiss_to_s3,
+)
 from app.utils.crypto import decrypt_if_needed, maybe_encrypt
 
-ROOT = Path(__file__).resolve().parent.parent.parent.parent
-FAISS_DIR = ROOT / "data" / "faiss_index"
+INDEX_SCHEMA_VERSION = 2
+REINDEX_LOCK_STALE_SECONDS = 6 * 60 * 60
+
+
+class ReindexInProgressError(RuntimeError):
+    pass
+
+
+class ReindexSourceChangedError(ValueError):
+    pass
+
+
+@contextmanager
+def _reindex_lock():
+    FAISS_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = FAISS_DIR / ".reindex.lock"
+    lock_token = uuid4().hex
+
+    for attempt in range(2):
+        try:
+            descriptor = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError as exc:
+            try:
+                is_stale = time.time() - lock_path.stat().st_mtime > REINDEX_LOCK_STALE_SECONDS
+            except FileNotFoundError:
+                continue
+            if is_stale and attempt == 0:
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
+            raise ReindexInProgressError("이미 다른 FAISS 인덱스 재구성이 진행 중입니다.") from exc
+        else:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as lock_file:
+                lock_file.write(lock_token)
+            break
+    else:  # pragma: no cover - defensive fallback
+        raise ReindexInProgressError("FAISS 인덱스 재구성 잠금을 얻지 못했습니다.")
+
+    try:
+        yield
+    finally:
+        try:
+            if lock_path.read_text(encoding="utf-8") == lock_token:
+                lock_path.unlink()
+        except (OSError, UnicodeDecodeError):
+            pass
+
 STOPWORDS = {
     "과정",
     "관련",
@@ -73,6 +134,8 @@ class RAGService:
         self._documents: list[Document] = []
         self._keyword_index: list[tuple[Document, set[str], str]] = []
         self._doc_position_map: dict[int, int] = {}
+        self._manifest_mtime_ns: int | None = None
+        self._index_version: str | None = None
         faiss_path = FAISS_DIR / "index.faiss"
         if self._embeddings and not faiss_path.exists():
             download_faiss_from_s3()
@@ -85,6 +148,60 @@ class RAGService:
             self._documents = self._load_documents_from_vectorstore()
             self._keyword_index = self._build_keyword_index(self._documents)
             self._doc_position_map = self._build_position_map()
+            self._remember_loaded_manifest()
+
+    def _remember_loaded_manifest(self) -> None:
+        manifest_path = FAISS_DIR / "manifest.json"
+        if not manifest_path.is_file():
+            self._manifest_mtime_ns = None
+            self._index_version = None
+            return
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self._manifest_mtime_ns = manifest_path.stat().st_mtime_ns
+            self._index_version = str(manifest.get("version") or "") or None
+        except (OSError, json.JSONDecodeError):
+            self._manifest_mtime_ns = None
+            self._index_version = None
+
+    def _reload_local_index_if_changed(self) -> None:
+        if not self._embeddings:
+            return
+        faiss_path = FAISS_DIR / "index.faiss"
+        manifest_path = FAISS_DIR / "manifest.json"
+        if not faiss_path.is_file():
+            if self._vectorstore is not None:
+                self._vectorstore = None
+                self._documents = []
+                self._keyword_index = []
+                self._doc_position_map = {}
+                self._remember_loaded_manifest()
+            return
+        if not manifest_path.is_file():
+            return
+        try:
+            current_mtime_ns = manifest_path.stat().st_mtime_ns
+            current_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            current_version = str(current_manifest.get("version") or "") or None
+        except (OSError, json.JSONDecodeError):
+            return
+        if current_mtime_ns == self._manifest_mtime_ns and current_version == self._index_version:
+            return
+        try:
+            vectorstore = FAISS.load_local(
+                str(FAISS_DIR),
+                self._embeddings,
+                allow_dangerous_deserialization=True,
+            )
+            documents = self._load_documents_from_store(vectorstore)
+        except Exception:
+            # 교체 중인 순간에는 기존 메모리 인덱스를 유지하고 다음 요청에서 다시 시도한다.
+            return
+        self._vectorstore = vectorstore
+        self._documents = documents
+        self._keyword_index = self._build_keyword_index(documents)
+        self._doc_position_map = self._build_position_map()
+        self._remember_loaded_manifest()
 
     def build_chunks_for_markdown(self, content: str, metadata: dict) -> list[Document]:
         chunks = self._splitter.create_documents([content], metadatas=[metadata])
@@ -104,9 +221,13 @@ class RAGService:
         return documents
 
     def _load_documents_from_vectorstore(self) -> list[Document]:
-        if self._vectorstore is None:
+        return self._load_documents_from_store(self._vectorstore)
+
+    @staticmethod
+    def _load_documents_from_store(vectorstore) -> list[Document]:
+        if vectorstore is None:
             return []
-        docstore_dict = getattr(getattr(self._vectorstore, "docstore", None), "_dict", {})
+        docstore_dict = getattr(getattr(vectorstore, "docstore", None), "_dict", {})
         return [doc for doc in docstore_dict.values() if isinstance(doc, Document)]
 
     def _build_position_map(self) -> dict[int, int]:
@@ -291,65 +412,231 @@ class RAGService:
         reranked = [doc for _, doc in scored_docs]
         return self._unique_documents(reranked, top_k), top_score
 
-    def index_all(self, db: Session | None = None) -> None:
+    def _collect_index_documents(
+        self,
+        db: Session,
+    ) -> tuple[list[Document], list[DocumentRecord], list[FaqRecord]]:
+        documents: list[Document] = []
+        active_docs = (
+            db.query(DocumentRecord)
+            .filter(DocumentRecord.is_active.is_(True), DocumentRecord.status == "ready")
+            .order_by(DocumentRecord.created_at.asc(), DocumentRecord.id.asc())
+            .all()
+        )
+        unreadable_documents: list[str] = []
+        for item in active_docs:
+            if not item.md_path:
+                unreadable_documents.append(f"{item.logical_name}: MD 경로 없음")
+                continue
+            content = read_text_from_storage(item.md_path)
+            if not content or not content.strip():
+                unreadable_documents.append(f"{item.logical_name}: MD를 읽을 수 없음")
+                continue
+            metadata = {
+                "file": item.logical_name,
+                "title": decrypt_if_needed(item.original_filename) or item.logical_name,
+                "category": "document",
+                "document_id": item.id,
+                "source_type": "document",
+            }
+            document_chunks = self.build_chunks_for_markdown(content, metadata)
+            if not document_chunks:
+                unreadable_documents.append(f"{item.logical_name}: 생성된 청크 없음")
+                continue
+            documents.extend(document_chunks)
+
+        if unreadable_documents:
+            joined = ", ".join(unreadable_documents)
+            raise RuntimeError(f"활성 문서를 모두 읽지 못해 기존 인덱스를 유지했습니다. {joined}")
+
+        active_faqs = db.query(FaqRecord).filter(FaqRecord.is_active.is_(True)).order_by(FaqRecord.id.asc()).all()
+        for faq in active_faqs:
+            faq_question = decrypt_if_needed(faq.question) or ""
+            faq_answer = decrypt_if_needed(faq.answer) or ""
+            faq_text = f"FAQ 질문: {faq_question}\nFAQ 답변: {faq_answer}"
+            metadata = {
+                "file": f"faq::{faq.faq_key}",
+                "title": faq_question,
+                "category": decrypt_if_needed(faq.category) or "",
+                "source_type": "faq",
+            }
+            documents.extend(self.build_chunks_for_markdown(faq_text, metadata))
+        return documents, active_docs, active_faqs
+
+    @staticmethod
+    def _read_current_manifest() -> dict:
+        manifest_path = FAISS_DIR / "manifest.json"
+        if not manifest_path.is_file():
+            return {}
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    @staticmethod
+    def _corpus_fingerprint(documents: list[Document]) -> str:
+        digest = hashlib.sha256()
+        digest.update(f"schema={INDEX_SCHEMA_VERSION}\n".encode("utf-8"))
+        digest.update(f"embedding={get_settings().embedding_model}\n".encode("utf-8"))
+        for document in documents:
+            digest.update(document.page_content.encode("utf-8"))
+            digest.update(b"\x00")
+            digest.update(json.dumps(document.metadata, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+            digest.update(b"\x00")
+        return digest.hexdigest()
+
+    def preview_reindex(self, db: Session | None = None) -> dict[str, object]:
+        owns_session = db is None
+        db = db or SessionLocal()
+        try:
+            documents, active_docs, active_faqs = self._collect_index_documents(db)
+            fingerprint = self._corpus_fingerprint(documents)
+            manifest = self._read_current_manifest()
+            index_files_ready = all((FAISS_DIR / filename).is_file() for filename in ("index.faiss", "index.pkl"))
+            any_index_file = any((FAISS_DIR / filename).is_file() for filename in ("index.faiss", "index.pkl"))
+            unchanged = bool(
+                (not documents and not any_index_file)
+                or (
+                    documents
+                    and index_files_ready
+                    and manifest.get("corpus_fingerprint") == fingerprint
+                    and manifest.get("index_schema_version") == INDEX_SCHEMA_VERSION
+                )
+            )
+            return {
+                "changed": not unchanged,
+                "can_rebuild": self._embeddings is not None,
+                "fingerprint": fingerprint,
+                "current_version": manifest.get("version"),
+                "document_count": len(active_docs),
+                "faq_count": len(active_faqs),
+                "chunk_count": len(documents),
+                "current_vector_count": int(manifest.get("vector_count") or 0),
+                "reason": "변경 사항 없음" if unchanged else "승인 데이터 또는 인덱스 설정이 변경됨",
+            }
+        finally:
+            if owns_session:
+                db.close()
+
+    def index_all(
+        self,
+        db: Session | None = None,
+        *,
+        force: bool = False,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
         if not self._embeddings:
-            self._vectorstore = None
-            self._documents = []
-            self._keyword_index = []
-            self._doc_position_map = {}
-            return
+            raise RuntimeError("OpenAI API 키가 없어 FAISS 임베딩을 생성할 수 없습니다.")
 
         owns_session = db is None
         db = db or SessionLocal()
         try:
-            documents: list[Document] = []
-            active_docs = (
-                db.query(DocumentRecord)
-                .filter(DocumentRecord.is_active.is_(True), DocumentRecord.status == "ready")
-                .order_by(DocumentRecord.created_at.asc())
-                .all()
-            )
-            for item in active_docs:
-                if not item.md_path:
-                    continue
-                content = read_text_from_storage(item.md_path)
-                if not content:
-                    continue
-                metadata = {
-                    "file": item.logical_name,
-                    "title": decrypt_if_needed(item.original_filename) or item.logical_name,
-                    "category": "document",
-                    "document_id": item.id,
-                    "source_type": "document",
+            with _reindex_lock():
+                documents, active_docs, active_faqs = self._collect_index_documents(db)
+                fingerprint = self._corpus_fingerprint(documents)
+                if expected_fingerprint and expected_fingerprint != fingerprint:
+                    raise ReindexSourceChangedError(
+                        "사전 점검 이후 승인 데이터가 변경되었습니다. 다시 점검해 주세요."
+                    )
+
+                manifest = self._read_current_manifest()
+                index_files_ready = all((FAISS_DIR / filename).is_file() for filename in ("index.faiss", "index.pkl"))
+                any_index_file = any((FAISS_DIR / filename).is_file() for filename in ("index.faiss", "index.pkl"))
+                unchanged = bool(
+                    (not documents and not any_index_file)
+                    or (
+                        documents
+                        and index_files_ready
+                        and manifest.get("corpus_fingerprint") == fingerprint
+                        and manifest.get("index_schema_version") == INDEX_SCHEMA_VERSION
+                    )
+                )
+                if unchanged and not force:
+                    return {
+                        **manifest,
+                        "version": manifest.get("version"),
+                        "status": "skipped",
+                        "changed": False,
+                        "corpus_fingerprint": fingerprint,
+                        "document_count": len(active_docs),
+                        "faq_count": len(active_faqs),
+                        "chunk_count": len(documents),
+                        "vector_count": int(manifest.get("vector_count") or 0),
+                        "storage": "existing",
+                    }
+
+                if not documents:
+                    clear_faiss_storage()
+                    self._vectorstore = None
+                    self._documents = []
+                    self._keyword_index = []
+                    self._doc_position_map = {}
+                    self._remember_loaded_manifest()
+                    return {
+                        "version": None,
+                        "status": "cleared",
+                        "changed": True,
+                        "corpus_fingerprint": fingerprint,
+                        "document_count": len(active_docs),
+                        "faq_count": len(active_faqs),
+                        "chunk_count": 0,
+                        "vector_count": 0,
+                        "storage": "cleared",
+                    }
+
+                version = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
+                FAISS_DIR.parent.mkdir(parents=True, exist_ok=True)
+                with TemporaryDirectory(prefix="faiss-build-", dir=str(FAISS_DIR.parent)) as temp_dir_value:
+                    temp_dir = Path(temp_dir_value)
+                    new_vectorstore = FAISS.from_documents(documents, self._embeddings)
+                    new_vectorstore.save_local(str(temp_dir))
+                    vector_count = int(new_vectorstore.index.ntotal)
+                    if vector_count != len(documents):
+                        raise RuntimeError(
+                            f"FAISS 검증 실패: 청크 {len(documents)}건과 벡터 {vector_count}건이 일치하지 않습니다."
+                        )
+
+                    manifest = {
+                        "version": version,
+                        "status": "rebuilt",
+                        "changed": True,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "embedding_model": get_settings().embedding_model,
+                        "index_schema_version": INDEX_SCHEMA_VERSION,
+                        "corpus_fingerprint": fingerprint,
+                        "document_count": len(active_docs),
+                        "faq_count": len(active_faqs),
+                        "chunk_count": len(documents),
+                        "vector_count": vector_count,
+                        "document_ids": [item.id for item in active_docs],
+                    }
+                    (temp_dir / "manifest.json").write_text(
+                        json.dumps(manifest, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+
+                    # 저장한 결과가 실제로 다시 열리는지 확인한 뒤에만 운영 인덱스를 교체한다.
+                    verified_vectorstore = FAISS.load_local(
+                        str(temp_dir),
+                        self._embeddings,
+                        allow_dangerous_deserialization=True,
+                    )
+                    if int(verified_vectorstore.index.ntotal) != vector_count:
+                        raise RuntimeError("저장된 FAISS 인덱스 재로딩 검증에 실패했습니다.")
+
+                    s3_version = upload_faiss_to_s3(temp_dir)
+                    install_faiss_artifacts(temp_dir)
+
+                self._vectorstore = verified_vectorstore
+                self._documents = self._load_documents_from_vectorstore()
+                self._keyword_index = self._build_keyword_index(self._documents)
+                self._doc_position_map = self._build_position_map()
+                self._remember_loaded_manifest()
+                return {
+                    **manifest,
+                    "storage": "local+s3" if s3_version else "local",
                 }
-                documents.extend(self.build_chunks_for_markdown(content, metadata))
-
-            active_faqs = db.query(FaqRecord).filter(FaqRecord.is_active.is_(True)).order_by(FaqRecord.id.asc()).all()
-            for faq in active_faqs:
-                faq_question = decrypt_if_needed(faq.question) or ""
-                faq_answer = decrypt_if_needed(faq.answer) or ""
-                faq_text = f"FAQ 질문: {faq_question}\nFAQ 답변: {faq_answer}"
-                metadata = {
-                    "file": f"faq::{faq.faq_key}",
-                    "title": faq_question,
-                    "category": decrypt_if_needed(faq.category) or "",
-                    "source_type": "faq",
-                }
-                documents.extend(self.build_chunks_for_markdown(faq_text, metadata))
-
-            if not documents:
-                self._vectorstore = None
-                self._documents = []
-                self._keyword_index = []
-                self._doc_position_map = {}
-                return
-
-            self._vectorstore = FAISS.from_documents(documents, self._embeddings)
-            self._documents = documents
-            self._keyword_index = self._build_keyword_index(documents)
-            self._doc_position_map = self._build_position_map()
-            self._vectorstore.save_local(str(FAISS_DIR))
-            upload_faiss_to_s3()
         finally:
             if owns_session:
                 db.close()
@@ -401,6 +688,7 @@ class RAGService:
         strategy: str = "hybrid",
         files: list[str] | None = None,
     ) -> list[Document]:
+        self._reload_local_index_if_changed()
         if self._vectorstore is None and not self._keyword_index:
             return []
         query_embedding = self._compute_query_embedding(query)
@@ -415,6 +703,7 @@ class RAGService:
         strategy: str = "hybrid",
         files: list[str] | None = None,
     ) -> tuple[list[Document], float]:
+        self._reload_local_index_if_changed()
         if self._vectorstore is None and not self._keyword_index:
             return [], 0.0
         query_embedding = self._compute_query_embedding(query)

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import AdminAuditLog, DocumentRecord, FaqRecord, ProcessingLog
-from app.services.faq_service import seed_faqs, sync_faqs_to_file
+from app.services.faq_service import sync_faqs_to_file
 from app.services.rag_service import get_rag_service
 from app.services.storage_service import (
     MANAGED_CHUNKS_DIR,
@@ -22,14 +22,18 @@ from app.services.storage_service import (
     delete_s3_key,
     ensure_storage_dirs,
     is_s3_uri,
+    parse_s3_uri,
     read_text_from_storage,
     safe_unlink,
     upload_file_to_s3,
     upload_json_to_s3,
     upload_text_to_s3,
 )
-from app.services.transformation_service import convert_markdown_to_faq_items
-from app.utils.crypto import maybe_encrypt
+from app.services.transformation_service import (
+    convert_markdown_to_faq_items_with_report,
+    validate_faq_items,
+)
+from app.utils.crypto import decrypt_if_needed, maybe_encrypt
 from app.utils.pdf_converter import convert_pdf_to_md
 
 
@@ -40,6 +44,45 @@ def _slugify(value: str) -> str:
 
 def _artifact_key(logical_name: str, version: int, filename: str) -> str:
     return build_s3_key("documents", logical_name, f"v{version}", filename)
+
+
+def _write_text_artifact(
+    content: str,
+    current_path: str | None,
+    local_path: Path,
+    storage_key: str,
+    content_type: str = "text/plain; charset=utf-8",
+) -> str:
+    if is_s3_uri(current_path):
+        _, current_key = parse_s3_uri(current_path or "")
+        stored_uri = upload_text_to_s3(content, current_key, content_type=content_type)
+        if not stored_uri:
+            raise RuntimeError("S3 문서 저장소에 연결할 수 없습니다.")
+        return stored_uri
+
+    target_path = Path(current_path) if current_path else local_path
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(content, encoding="utf-8")
+    stored_uri = upload_text_to_s3(content, storage_key, content_type=content_type)
+    if stored_uri:
+        safe_unlink(str(target_path))
+        return stored_uri
+    return str(target_path)
+
+
+def _write_json_artifact(
+    payload: object,
+    current_path: str | None,
+    local_path: Path,
+    storage_key: str,
+) -> str:
+    return _write_text_artifact(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        current_path,
+        local_path,
+        storage_key,
+        content_type="application/json; charset=utf-8",
+    )
 
 
 def _next_version(db: Session, logical_name: str) -> int:
@@ -255,7 +298,7 @@ async def process_uploaded_faq_md(
     filename: str,
     content: bytes,
     category: str | None = None,
-) -> tuple[DocumentRecord, list[dict]]:
+) -> tuple[DocumentRecord, list[dict], dict]:
     ensure_storage_dirs()
     md_content = content.decode("utf-8")
     logical_name = _slugify(Path(filename).stem)
@@ -267,7 +310,8 @@ async def process_uploaded_faq_md(
     if md_storage:
         safe_unlink(str(managed_md_path))
 
-    faq_items = await convert_markdown_to_faq_items(md_content, category=category)
+    conversion = await convert_markdown_to_faq_items_with_report(md_content, category=category)
+    faq_items = conversion["items"]
     managed_json_path = MANAGED_JSON_DIR / f"{logical_name}_v{version}.faq.json"
     managed_json_path.write_text(json.dumps(faq_items, ensure_ascii=False, indent=2), encoding="utf-8")
     faq_json_storage = upload_json_to_s3(faq_items, _artifact_key(logical_name, version, "faq.json"))
@@ -289,9 +333,16 @@ async def process_uploaded_faq_md(
     db.add(record)
     db.commit()
     db.refresh(record)
-    create_processing_log(db, "faq_import", "review", f"{filename} FAQ JSON 변환 검토 대기", document_id=record.id)
+    create_processing_log(
+        db,
+        "faq_import",
+        "review",
+        f"{filename} FAQ JSON 변환 검토 대기 ({conversion['method']})",
+        document_id=record.id,
+        detail="; ".join(conversion["warnings"]) or None,
+    )
     create_audit_log(db, "faq_document_uploaded", "document", str(record.id), f"{logical_name} v{version}")
-    return record, faq_items
+    return record, faq_items, conversion
 
 
 async def process_catalog_import(
@@ -465,10 +516,208 @@ def retry_document_processing(db: Session, record: DocumentRecord) -> DocumentRe
     return record
 
 
-def full_reindex(db: Session) -> None:
-    seed_faqs(db)
+def preview_reindex(db: Session) -> dict[str, object]:
+    return get_rag_service().preview_reindex(db)
+
+
+def full_reindex(
+    db: Session,
+    *,
+    force: bool = False,
+    expected_fingerprint: str | None = None,
+) -> dict[str, object]:
+    # 런타임에는 DB를 기준 데이터로 사용한다. 오래된 파일을 DB로 다시 시드하면
+    # 방금 비활성화한 FAQ가 되살아날 수 있으므로 DB → 파일 방향만 동기화한다.
     sync_faqs_to_file(db)
-    get_rag_service().index_all(db)
+    return get_rag_service().index_all(
+        db,
+        force=force,
+        expected_fingerprint=expected_fingerprint,
+    )
+
+
+def _deactivate_faq_items(db: Session, payload: object) -> None:
+    if not isinstance(payload, list):
+        return
+    faq_keys = [str(item.get("id") or "").strip() for item in payload if isinstance(item, dict)]
+    faq_keys = [key for key in faq_keys if key]
+    if faq_keys:
+        db.query(FaqRecord).filter(FaqRecord.faq_key.in_(faq_keys)).update(
+            {FaqRecord.is_active: False},
+            synchronize_session=False,
+        )
+
+
+def update_document_artifacts(
+    db: Session,
+    record: DocumentRecord,
+    md_content: str,
+    json_content: str | None = None,
+) -> tuple[DocumentRecord, int]:
+    if getattr(record, "is_deleted", False):
+        raise ValueError("삭제된 문서는 수정할 수 없습니다.")
+    if not md_content.strip():
+        raise ValueError("MD 내용은 비워둘 수 없습니다.")
+
+    ensure_storage_dirs()
+    previous_json_payload: object = []
+    if record.json_path:
+        previous_json_text = read_text_from_storage(record.json_path)
+        if previous_json_text:
+            try:
+                previous_json_payload = json.loads(previous_json_text)
+            except json.JSONDecodeError:
+                previous_json_payload = []
+
+    faq_payload: list[dict] | None = None
+    if record.parser_type == "faq_json":
+        if json_content is None:
+            raise ValueError("FAQ 문서는 JSON 내용도 함께 저장해야 합니다.")
+        try:
+            raw_payload = json.loads(json_content)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"FAQ JSON 문법 오류: {exc.msg} (줄 {exc.lineno}, 열 {exc.colno})") from exc
+        faq_payload = validate_faq_items(raw_payload)
+
+    logical_name = record.logical_name
+    version = record.version
+    old_metadata = previous_json_payload if isinstance(previous_json_payload, dict) else {}
+    title = str(old_metadata.get("title") or logical_name)
+    category = str(old_metadata.get("category") or "document")
+    chunks = []
+    if record.parser_type != "faq_json":
+        chunks = get_rag_service().build_chunks_for_markdown(
+            md_content,
+            {
+                "file": logical_name,
+                "title": title,
+                "category": category,
+                "document_id": record.id,
+                "source_type": "document",
+            },
+        )
+        if not chunks:
+            raise ValueError("MD 내용에서 검색에 사용할 수 있는 청크가 생성되지 않았습니다.")
+
+    md_path = _write_text_artifact(
+        md_content,
+        record.md_path,
+        MANAGED_DOCS_DIR / f"{logical_name}_v{version}.md",
+        _artifact_key(logical_name, version, "document.md"),
+    )
+
+    chunk_count = 0
+    if record.parser_type == "faq_json":
+        json_path = _write_json_artifact(
+            faq_payload or [],
+            record.json_path,
+            MANAGED_JSON_DIR / f"{logical_name}_v{version}.faq.json",
+            _artifact_key(logical_name, version, "faq.json"),
+        )
+    else:
+        rag = get_rag_service()
+        rag.replace_document_chunks(db, record.id, chunks)
+        chunk_count = len(chunks)
+
+        metadata_payload = {
+            **old_metadata,
+            "document_id": record.id,
+            "logical_name": logical_name,
+            "version": version,
+            "original_filename": old_metadata.get("original_filename") or decrypt_if_needed(record.original_filename) or logical_name,
+            "title": title,
+            "category": category,
+            "status": "review",
+            "chunk_count": chunk_count,
+        }
+        json_path = _write_json_artifact(
+            metadata_payload,
+            record.json_path,
+            MANAGED_JSON_DIR / f"{logical_name}_v{version}.json",
+            _artifact_key(logical_name, version, "document.json"),
+        )
+
+        chunk_payload = [
+            {"index": index, "content": chunk.page_content, "metadata": chunk.metadata}
+            for index, chunk in enumerate(chunks)
+        ]
+        record.chunk_path = _write_json_artifact(
+            chunk_payload,
+            record.chunk_path,
+            MANAGED_CHUNKS_DIR / f"{logical_name}_v{version}.json",
+            _artifact_key(logical_name, version, "chunks.json"),
+        )
+        embedding_payload = {
+            "document_id": record.id,
+            "embedding_model": get_settings().embedding_model,
+            "strategy": "full_rebuild_on_approval",
+            "chunk_count": chunk_count,
+        }
+        record.embedding_path = _write_json_artifact(
+            embedding_payload,
+            record.embedding_path,
+            MANAGED_EMBEDDINGS_DIR / f"{logical_name}_v{version}.json",
+            _artifact_key(logical_name, version, "embedding.json"),
+        )
+
+    was_active = bool(record.is_active)
+    if was_active and record.parser_type == "faq_json":
+        _deactivate_faq_items(db, previous_json_payload)
+
+    record.md_path = md_path
+    record.json_path = json_path
+    record.status = "review"
+    record.is_active = False
+    record.approved_at = None
+    record.rejected_at = None
+    record.error_message = None
+    db.commit()
+
+    if was_active and record.parser_type == "faq_json":
+        sync_faqs_to_file(db)
+    if was_active:
+        full_reindex(db)
+    create_processing_log(db, "document", "review", "변환 결과 수정 후 재검토 대기", document_id=record.id)
+    create_audit_log(db, "document_artifacts_updated", "document", str(record.id), f"chunks={chunk_count}")
+    db.refresh(record)
+    return record, chunk_count
+
+
+async def reconvert_faq_document(
+    db: Session,
+    record: DocumentRecord,
+    category: str | None = None,
+) -> tuple[DocumentRecord, dict]:
+    if record.parser_type != "faq_json":
+        raise ValueError("FAQ JSON 문서만 다시 변환할 수 있습니다.")
+    markdown = read_text_from_storage(record.md_path)
+    if not markdown or not markdown.strip():
+        raise ValueError("변환할 MD 내용을 찾을 수 없습니다.")
+
+    if not category and record.json_path:
+        try:
+            current_payload = json.loads(read_text_from_storage(record.json_path) or "[]")
+            if isinstance(current_payload, list) and current_payload and isinstance(current_payload[0], dict):
+                category = str(current_payload[0].get("category") or "").strip() or None
+        except json.JSONDecodeError:
+            category = None
+
+    result = await convert_markdown_to_faq_items_with_report(markdown, category=category)
+    updated, _ = update_document_artifacts(
+        db,
+        record,
+        markdown,
+        json.dumps(result["items"], ensure_ascii=False, indent=2),
+    )
+    create_processing_log(
+        db,
+        "faq_import",
+        "review",
+        f"FAQ JSON 재변환 완료 ({result['method']})",
+        document_id=record.id,
+        detail="; ".join(result["warnings"]) or None,
+    )
+    return updated, result
 
 
 def approve_document(db: Session, record: DocumentRecord, review_note: str | None = None) -> DocumentRecord:
@@ -476,7 +725,8 @@ def approve_document(db: Session, record: DocumentRecord, review_note: str | Non
         raise ValueError("삭제된 문서는 승인할 수 없습니다.")
 
     if record.parser_type == "faq_json":
-        payload = json.loads(read_text_from_storage(record.json_path) or "[]") if record.json_path else []
+        raw_payload = json.loads(read_text_from_storage(record.json_path) or "[]") if record.json_path else []
+        payload = validate_faq_items(raw_payload)
         for item in payload:
             _upsert_faq_from_payload(db, item)
         sync_faqs_to_file(db)
@@ -497,11 +747,20 @@ def approve_document(db: Session, record: DocumentRecord, review_note: str | Non
 
 
 def reject_document(db: Session, record: DocumentRecord, review_note: str | None = None) -> DocumentRecord:
+    was_active = bool(record.is_active)
+    if was_active and record.parser_type == "faq_json":
+        try:
+            _deactivate_faq_items(db, json.loads(read_text_from_storage(record.json_path) or "[]"))
+        except json.JSONDecodeError:
+            pass
+        sync_faqs_to_file(db)
     record.status = "rejected"
     record.is_active = False
     record.review_note = maybe_encrypt(review_note)
     record.rejected_at = datetime.utcnow()
     db.commit()
+    if was_active:
+        full_reindex(db)
     create_processing_log(db, "document", "rejected", "문서 반려", document_id=record.id, detail=review_note)
     create_audit_log(db, "document_rejected", "document", str(record.id), review_note or record.logical_name)
     db.refresh(record)
@@ -509,6 +768,12 @@ def reject_document(db: Session, record: DocumentRecord, review_note: str | None
 
 
 def soft_delete_document(db: Session, record: DocumentRecord, review_note: str | None = None) -> DocumentRecord:
+    if record.parser_type == "faq_json":
+        try:
+            _deactivate_faq_items(db, json.loads(read_text_from_storage(record.json_path) or "[]"))
+        except json.JSONDecodeError:
+            pass
+        sync_faqs_to_file(db)
     record.is_deleted = True
     record.is_active = False
     record.status = "deleted"

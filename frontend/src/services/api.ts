@@ -315,7 +315,12 @@ export const adminApi = {
   uploadFaqMd: async (
     file: File,
     category?: string,
-  ): Promise<{ message: string; document: AdminDocument; faqs: AdminFaq[] }> => {
+  ): Promise<{
+    message: string;
+    document: AdminDocument;
+    faqs: AdminFaq[];
+    conversion: { method: 'ai' | 'fallback'; warnings: string[]; item_count: number };
+  }> => {
     const formData = new FormData();
     formData.append('file', file);
     if (category) formData.append('category', category);
@@ -344,6 +349,30 @@ export const adminApi = {
     return response.data;
   },
 
+  getDocumentPdf: async (documentId: number): Promise<Blob> => {
+    const response = await adminApiClient.get(`/admin/documents/${documentId}/pdf`, { responseType: 'blob' });
+    return response.data;
+  },
+
+  updateDocumentArtifacts: async (
+    documentId: number,
+    payload: { md_content: string; json_content?: string },
+  ): Promise<AdminDocumentDetail & { message: string; chunk_count: number }> => {
+    const response = await adminApiClient.put(`/admin/documents/${documentId}/artifacts`, payload);
+    return response.data;
+  },
+
+  reconvertFaqDocument: async (
+    documentId: number,
+    category?: string,
+  ): Promise<AdminDocumentDetail & {
+    message: string;
+    conversion: { method: 'ai' | 'fallback'; warnings: string[]; item_count: number };
+  }> => {
+    const response = await adminApiClient.post(`/admin/documents/${documentId}/faq/reconvert`, { category });
+    return response.data;
+  },
+
   approveDocument: async (documentId: number, note?: string): Promise<{ message: string; document: AdminDocument }> => {
     const response = await adminApiClient.post(`/admin/documents/${documentId}/approve`, { note });
     return response.data;
@@ -369,8 +398,38 @@ export const adminApi = {
     return response.data;
   },
 
-  reindex: async (): Promise<{ message: string; strategy: string }> => {
-    const response = await adminApiClient.post('/admin/reindex', {});
+  previewReindex: async (): Promise<{
+    changed: boolean;
+    can_rebuild: boolean;
+    fingerprint: string;
+    current_version: string | null;
+    document_count: number;
+    faq_count: number;
+    chunk_count: number;
+    current_vector_count: number;
+    reason: string;
+  }> => {
+    const response = await adminApiClient.get('/admin/reindex/preview');
+    return response.data;
+  },
+
+  reindex: async (expectedFingerprint?: string, force = false): Promise<{
+    message: string;
+    strategy: string;
+    status: 'rebuilt' | 'skipped' | 'cleared';
+    changed: boolean;
+    corpus_fingerprint: string;
+    version: string | null;
+    document_count: number;
+    faq_count: number;
+    chunk_count: number;
+    vector_count: number;
+    storage: string;
+  }> => {
+    const response = await adminApiClient.post('/admin/reindex', {
+      force,
+      expected_fingerprint: expectedFingerprint,
+    });
     return response.data;
   },
 
