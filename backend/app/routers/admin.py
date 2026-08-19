@@ -735,6 +735,42 @@ def get_session_detail(session_id: str, db: Session = Depends(get_db), _: None =
     return SessionDetail(session=summary, messages=decrypted_messages)
 
 
+@router.get("/sessions/{session_id}/export")
+def export_session(session_id: str, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+
+    messages = get_session_messages(db, session_id)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "conversation"
+    sheet.append(["세션 ID", session.id])
+    sheet.append(["사용자", decrypt_if_needed(session.encrypted_user_name) if session.encrypted_user_name else "익명"])
+    sheet.append(["시작 시각", session.created_at.isoformat() if session.created_at else ""])
+    sheet.append(["메시지 수", len(messages)])
+    sheet.append([])
+    sheet.append(["순서", "역할", "내용", "응답 출처", "작성 시각"])
+    for index, message in enumerate(messages, start=1):
+        sheet.append([
+            index,
+            message.role,
+            decrypt_if_needed(message.content) or "",
+            message.source or "",
+            message.created_at.isoformat() if message.created_at else "",
+        ])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    safe_session_id = re.sub(r"[^A-Za-z0-9._-]", "_", session.id)[:64] or "session"
+    filename = f"chat_session_{safe_session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/upload-md")
 async def upload_md(file: UploadFile = File(...), title: str = Form(None), category: str = Form(None), db: Session = Depends(get_db), _: None = Depends(verify_admin)):
     if not file.filename or not file.filename.lower().endswith(".md"):

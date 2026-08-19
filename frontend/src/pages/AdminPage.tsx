@@ -72,7 +72,6 @@ interface StoredAdminView {
   activeTab: TabKey;
   chatStartDate: string;
   chatEndDate: string;
-  chatSessionId: string;
 }
 
 function readStoredAdminView(): StoredAdminView {
@@ -80,7 +79,6 @@ function readStoredAdminView(): StoredAdminView {
     activeTab: 'dashboard',
     chatStartDate: '',
     chatEndDate: '',
-    chatSessionId: '',
   };
   try {
     const raw = window.sessionStorage.getItem(ADMIN_VIEW_STORAGE_KEY);
@@ -91,7 +89,6 @@ function readStoredAdminView(): StoredAdminView {
       activeTab: storedTab === 'data' ? 'db' : storedTab,
       chatStartDate: typeof stored.chatStartDate === 'string' ? stored.chatStartDate : '',
       chatEndDate: typeof stored.chatEndDate === 'string' ? stored.chatEndDate : '',
-      chatSessionId: typeof stored.chatSessionId === 'string' ? stored.chatSessionId : '',
     };
   } catch {
     return fallback;
@@ -321,7 +318,6 @@ export default function AdminPage() {
 
   const [chatStartDate, setChatStartDate] = useState(initialAdminView.chatStartDate);
   const [chatEndDate, setChatEndDate] = useState(initialAdminView.chatEndDate);
-  const [chatSessionId, setChatSessionId] = useState(initialAdminView.chatSessionId);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatExporting, setChatExporting] = useState(false);
 
@@ -428,7 +424,7 @@ export default function AdminPage() {
       setFaqs(faqData.faqs);
       setPrompts(promptData.prompts);
       setProcessingLogs(logData.processing_logs);
-      if (activeTab !== 'chats' || (!chatStartDate && !chatEndDate && !chatSessionId)) {
+      if (activeTab !== 'chats' || (!chatStartDate && !chatEndDate)) {
         setChatLogs(logData.chat_logs);
       }
       setAuditLogs(logData.audit_logs);
@@ -555,12 +551,11 @@ export default function AdminPage() {
       activeTab,
       chatStartDate,
       chatEndDate,
-      chatSessionId,
     } satisfies StoredAdminView));
-  }, [activeTab, authenticated, chatEndDate, chatSessionId, chatStartDate]);
+  }, [activeTab, authenticated, chatEndDate, chatStartDate]);
 
   useEffect(() => {
-    if (!authenticated || activeTab !== 'chats' || (!chatStartDate && !chatEndDate && !chatSessionId)) return;
+    if (!authenticated || activeTab !== 'chats' || (!chatStartDate && !chatEndDate)) return;
     void loadFilteredChatLogs(false);
   }, [activeTab, authenticated]);
 
@@ -856,7 +851,6 @@ export default function AdminPage() {
       const result = await adminApi.getChatLogs({
         start_date: chatStartDate || undefined,
         end_date: chatEndDate || undefined,
-        session_id: chatSessionId || undefined,
       });
       setChatLogs(result.chat_logs);
       if (showNotice) {
@@ -880,7 +874,6 @@ export default function AdminPage() {
       const blob = await adminApi.exportChatLogs({
         start_date: chatStartDate || undefined,
         end_date: chatEndDate || undefined,
-        session_id: chatSessionId || undefined,
       });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -1560,13 +1553,9 @@ export default function AdminPage() {
           <div className="mt-6 space-y-6">
             <section className="rounded-3xl bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-slate-900">대화 로그 조회와 엑셀 다운로드</h2>
-              <div className="mt-4 grid gap-4 md:grid-cols-4">
+              <div className="mt-4 grid gap-4 md:grid-cols-[1fr_1fr_1.2fr]">
                 <input type="date" value={chatStartDate} onChange={(e) => setChatStartDate(e.target.value)} className={INPUT_CLASS} />
                 <input type="date" value={chatEndDate} onChange={(e) => setChatEndDate(e.target.value)} className={INPUT_CLASS} />
-                <div>
-                  <input value={chatSessionId} onChange={(e) => setChatSessionId(e.target.value)} placeholder="세션 ID (선택)" className={INPUT_CLASS} />
-                  <p className="mt-1 text-xs text-slate-400">날짜·세션 ID 모두 선택사항입니다</p>
-                </div>
                 <div className="flex gap-2">
                   <button onClick={() => void handleFilterChatLogs()} disabled={chatLoading} className="flex-1 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{chatLoading ? '조회 중...' : '조회'}</button>
                   <button onClick={() => void handleExportChatLogs()} disabled={chatExporting} className="flex-1 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{chatExporting ? '처리 중...' : '엑셀'}</button>

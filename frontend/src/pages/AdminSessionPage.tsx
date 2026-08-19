@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Calendar, Headphones, MessageCircle, ShieldAlert, UserRound } from 'lucide-react';
+import { ArrowLeft, Calendar, Download, Headphones, MessageCircle, ShieldAlert, UserRound } from 'lucide-react';
 import { adminApi, getAdminToken } from '../services/api';
 import { AdminSessionDetail, OperationsAttentionItem } from '../types';
 
@@ -28,6 +28,8 @@ export default function AdminSessionPage() {
   const [detail, setDetail] = useState<AdminSessionDetail | null>(null);
   const [signals, setSignals] = useState<OperationsAttentionItem[]>([]);
   const [error, setError] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
 
   const returnToAdmin = () => {
     const navigationState = location.state as { fromAdmin?: boolean } | null;
@@ -36,6 +38,28 @@ export default function AdminSessionPage() {
       return;
     }
     navigate('/admin?tab=chats');
+  };
+
+  const handleExportSession = async () => {
+    if (!sessionId) return;
+    setExporting(true);
+    setExportError('');
+    try {
+      const blob = await adminApi.exportSession(sessionId);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const safeSessionId = sessionId.replace(/[^A-Za-z0-9._-]/g, '_') || 'session';
+      link.href = url;
+      link.download = `chat_session_${safeSessionId}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setExportError('세션 엑셀 다운로드에 실패했습니다. 다시 시도해 주세요.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   useEffect(() => {
@@ -75,8 +99,21 @@ export default function AdminSessionPage() {
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-700">Conversation detail</p>
             <h1 className="mt-2 text-2xl font-bold text-slate-950">채팅 세션 상세</h1>
           </div>
-          <p className="text-xs text-slate-500">메시지 {messages.length}개</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-xs text-slate-500">메시지 {messages.length}개</p>
+            <button
+              type="button"
+              onClick={() => void handleExportSession()}
+              disabled={exporting}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              {exporting ? '내보내는 중...' : '이 세션 엑셀 다운로드'}
+            </button>
+          </div>
         </div>
+
+        {exportError && <p className="mt-3 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{exportError}</p>}
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

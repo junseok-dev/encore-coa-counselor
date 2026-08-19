@@ -437,6 +437,13 @@ export const adminApi = {
     return response.data;
   },
 
+  exportSession: async (sessionId: string): Promise<Blob> => {
+    const response = await adminApiClient.get(`/admin/sessions/${encodeURIComponent(sessionId)}/export`, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
   // 커스텀 데이터 테이블
   getDataTables: async (): Promise<{ tables: CustomTableSummary[] }> => {
     const response = await adminApiClient.get('/admin/data-tables');
