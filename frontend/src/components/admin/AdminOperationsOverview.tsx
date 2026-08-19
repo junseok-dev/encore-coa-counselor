@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import {
-  AlertTriangle, Ban, BarChart3, Bell, Bot, CalendarDays, CreditCard, DollarSign,
+  AlertTriangle, Ban, BarChart3, Bell, Bot, CreditCard, DollarSign,
   Globe2, Headphones, MessageCircle, RefreshCw, Server, ShieldAlert, Users, WalletCards,
 } from 'lucide-react';
 import {
   CostManagementData, OpenAiCostData, OperationsAnalyticsData,
-  OperationsDashboardData, OperationsPeriodMode,
+  OperationsDashboardData, OperationsPeriodFilters, OperationsPeriodMode,
 } from '../../types';
 import OperationsAnalytics, { OperationsUsageMetricKey } from './OperationsAnalytics';
+import OperationsPeriodFilter from './OperationsPeriodFilter';
 
 interface Props {
   data: OperationsDashboardData | null;
@@ -15,12 +16,13 @@ interface Props {
   analyticsData: OperationsAnalyticsData | null;
   analyticsLoading: boolean;
   analyticsPeriod: OperationsPeriodMode;
+  analyticsFilters: OperationsPeriodFilters;
   analyticsAnchorDate: string;
   costData: CostManagementData | null;
   openAiCostData: OpenAiCostData | null;
   onRefresh: () => Promise<void>;
   onPeriodChange: (period: OperationsPeriodMode) => void;
-  onAnchorDateChange: (date: string) => void;
+  onFiltersChange: (filters: OperationsPeriodFilters) => void;
   onRefreshAnalytics: () => Promise<void>;
   onOpenReview: () => void;
   onOpenCosts: () => void;
@@ -42,13 +44,6 @@ function usd(value: number | null | undefined) {
   }).format(value);
 }
 
-function periodReference(data: OperationsAnalyticsData | null, period: OperationsPeriodMode) {
-  if (!data) return `${PERIOD_NAMES[period]} 기준을 불러오는 중`;
-  const format = (value: string) => value.replace(/-/g, '.');
-  if (period === 'day') return `${PERIOD_NAMES[period]} · ${format(data.period_start)}`;
-  return `${PERIOD_NAMES[period]} · ${format(data.period_start)} ~ ${format(data.period_end)}`;
-}
-
 function MetricCard({ value, label, caption, icon: Icon, iconClass, iconBg }: { value: string; label: string; caption: string; icon: typeof Users; iconClass: string; iconBg: string }) {
   return <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm"><div className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconBg}`}><Icon className={`h-5 w-5 ${iconClass}`} /></div><div className="mt-4"><p className="text-sm font-medium text-slate-500">{label}</p><p className="mt-1 text-3xl font-bold text-slate-950">{value}</p><p className="mt-2 min-h-8 text-[11px] leading-4 text-slate-400">{caption}</p></div></div>;
 }
@@ -66,7 +61,7 @@ const USAGE_GROUPS: Record<UsageGroup, { label: string; description: string; met
 
 function CostChart({ data, metric }: { data: OperationsAnalyticsData; metric: CostMetric }) {
   const points = data.period_mode === 'year'
-    ? data.monthly.map((item) => ({ label: `${Number(item.month.slice(5))}월`, value: metric === 'aws' ? item.aws_cost_krw : item.openai_estimated_usd }))
+    ? data.monthly.map((item) => ({ label: data.period_months > 12 ? `${item.month.slice(0, 4)}.${Number(item.month.slice(5))}` : `${Number(item.month.slice(5))}월`, value: metric === 'aws' ? item.aws_cost_krw : item.openai_estimated_usd }))
     : data.daily.map((item) => ({ label: `${Number(item.date.slice(5, 7))}/${Number(item.date.slice(8, 10))}`, value: metric === 'aws' ? item.aws_cost_krw ?? 0 : item.openai_estimated_usd ?? 0 }));
   const maxValue = Math.max(metric === 'aws' ? 1 : 0.000001, ...points.map((item) => item.value));
   const minWidth = `${Math.max(420, points.length * 34)}px`;
@@ -74,7 +69,7 @@ function CostChart({ data, metric }: { data: OperationsAnalyticsData; metric: Co
   return <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold text-slate-950">{isAws ? 'AWS 비용 변화' : 'OpenAI 비용 변화'}</h2><p className="mt-1 text-xs text-slate-500">{isAws ? '업로드된 원화 청구 자료입니다.' : '대화 로그에 기록된 사용 추정액입니다.'}</p></div><span className={`h-3 w-3 shrink-0 rounded-full ${isAws ? 'bg-orange-500' : 'bg-emerald-500'}`} /></div><div className="mt-4 overflow-x-auto pb-2"><div className="flex h-60 items-end gap-2 border-b border-slate-200 px-2" style={{ minWidth }}>{points.map((point) => <div key={point.label} className="flex h-full min-w-7 flex-1 flex-col items-center justify-end gap-1"><div className="flex h-48 w-full items-end justify-center" title={`${point.label} · ${isAws ? `${point.value.toLocaleString()}원` : usd(point.value)}`}><span className={`w-[64%] rounded-t ${isAws ? 'bg-orange-500' : 'bg-emerald-500'}`} style={{ height: `${Math.max(point.value ? 3 : 0, point.value / maxValue * 100)}%` }} /></div><span className="whitespace-nowrap text-[9px] text-slate-500">{point.label}</span></div>)}</div></div></section>;
 }
 
-export default function AdminOperationsOverview({ data, loading, analyticsData, analyticsLoading, analyticsPeriod, analyticsAnchorDate, costData, openAiCostData, onRefresh, onPeriodChange, onAnchorDateChange, onRefreshAnalytics, onOpenReview, onOpenCosts }: Props) {
+export default function AdminOperationsOverview({ data, loading, analyticsData, analyticsLoading, analyticsPeriod, analyticsFilters, analyticsAnchorDate, costData, openAiCostData, onRefresh, onPeriodChange, onFiltersChange, onRefreshAnalytics, onOpenReview, onOpenCosts }: Props) {
   const [activeView, setActiveView] = useState<OverviewTab>('usage');
   const [usageGroup, setUsageGroup] = useState<UsageGroup>('traffic');
   const unresolved = (data?.attention ?? []).filter((item) => item.status !== 'resolved');
@@ -97,7 +92,7 @@ export default function AdminOperationsOverview({ data, loading, analyticsData, 
   return <div className="space-y-6">
     <header className="overflow-hidden rounded-2xl bg-[linear-gradient(120deg,#082f49,#0f766e)] px-6 py-5 text-white shadow-lg shadow-cyan-950/10"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex items-center gap-4"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15"><BarChart3 className="h-6 w-6 text-cyan-200" /></span><div><p className="text-sm font-semibold text-cyan-100">{analyticsData?.period_label ?? `${PERIOD_NAMES[analyticsPeriod]} 통계`}</p><h1 className="mt-1 text-2xl font-bold">챗봇 운영 대시보드</h1><p className="mt-1 text-[11px] text-cyan-100">기간과 지표 묶음을 선택해 항목별 변화를 확인합니다.</p></div></div><div className="flex items-center gap-2">{data?.last_conversation_at && <div className="mr-1 hidden rounded-xl bg-white/10 px-3 py-2 ring-1 ring-white/15 sm:block"><p className="text-[10px] text-cyan-100">최근 대화</p><p className="mt-0.5 text-xs font-bold">{formatRelativeTime(data.last_conversation_at)}</p></div>}<button onClick={() => void onRefresh()} disabled={loading || analyticsLoading} title="대시보드 새로고침" className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading || analyticsLoading ? 'animate-spin' : ''}`} /></button><button onClick={onOpenReview} title="개선 검토 알림 열기" className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20"><Bell className="h-4 w-4" />{unresolved.length > 0 && <span className="absolute -right-1.5 -top-1.5 min-w-5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-black text-white ring-2 ring-teal-900">{unresolved.length > 99 ? '99+' : unresolved.length}</span>}</button></div></div></header>
 
-    <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"><div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between"><div className="flex flex-wrap gap-1.5">{([['usage', '이용 현황'], ['analysis', '답변·상담 분석'], ['cost', '비용']] as const).map(([key, label]) => <button key={key} onClick={() => setActiveView(key)} className={`rounded-xl px-4 py-2.5 text-sm font-black ${activeView === key ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{label}</button>)}</div><div className="flex flex-col items-start gap-1.5 sm:items-end"><div className="flex flex-wrap items-center gap-2"><div className="inline-flex rounded-xl bg-slate-100 p-1">{PERIOD_OPTIONS.map((period) => <button key={period} onClick={() => onPeriodChange(period)} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${analyticsPeriod === period ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{PERIOD_NAMES[period]}</button>)}</div><label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600"><CalendarDays className="h-4 w-4 text-slate-400" /><span className="sr-only">통계 기준 날짜</span><input type="date" value={analyticsAnchorDate} onChange={(event) => onAnchorDateChange(event.target.value)} className="bg-transparent outline-none" /></label><button onClick={() => void onRefreshAnalytics()} disabled={analyticsLoading} title="통계 새로고침" className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-600 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${analyticsLoading ? 'animate-spin' : ''}`} /></button></div><p className="px-1 text-[11px] font-medium text-slate-400">참조 · {periodReference(analyticsData, analyticsPeriod)}</p></div></div></section>
+    <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"><div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between"><div className="flex flex-wrap gap-1.5">{([['usage', '이용 현황'], ['analysis', '답변·상담 분석'], ['cost', '비용']] as const).map(([key, label]) => <button key={key} onClick={() => setActiveView(key)} className={`rounded-xl px-4 py-2.5 text-sm font-black ${activeView === key ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{label}</button>)}</div><div className="flex flex-col gap-2 xl:items-end"><div className="inline-flex self-start rounded-xl bg-slate-100 p-1 xl:self-end">{PERIOD_OPTIONS.map((period) => <button key={period} onClick={() => onPeriodChange(period)} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${analyticsPeriod === period ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{PERIOD_NAMES[period]}</button>)}</div><OperationsPeriodFilter data={analyticsData} loading={analyticsLoading} mode={analyticsPeriod} filters={analyticsFilters} onChange={onFiltersChange} onRefresh={onRefreshAnalytics} /></div></div></section>
 
     {highPriorityCount > 0 && <button onClick={onOpenReview} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-left text-rose-900"><span className="flex items-center gap-3"><AlertTriangle className="h-5 w-5 shrink-0 text-rose-600" /><span><b className="block text-sm">우선 확인할 개선 항목 {highPriorityCount}건</b><span className="mt-0.5 block text-xs text-rose-700">대화 맥락과 수정 후 답변을 검증해 주세요.</span></span></span><span className="text-xs font-black">개선 검토 열기</span></button>}
 

@@ -223,8 +223,10 @@ export const adminApi = {
     return response.data;
   },
 
-  getOperationsAnalytics: async (periodMode: OperationsPeriodMode = 'month', anchorDate = new Date().toISOString().slice(0, 10)): Promise<OperationsAnalyticsData> => {
-    const params: Record<string, string> = { period_mode: periodMode, anchor_date: anchorDate };
+  getOperationsAnalytics: async (periodMode?: OperationsPeriodMode, anchorDate?: string): Promise<OperationsAnalyticsData> => {
+    const params: Record<string, string> = {};
+    if (periodMode) params.period_mode = periodMode;
+    if (anchorDate) params.anchor_date = anchorDate;
     const response = await adminApiClient.get<OperationsAnalyticsData>('/admin/operations/analytics', {
       params,
     });

@@ -300,6 +300,13 @@ export interface OperationsHourlyMetric {
 
 export type OperationsPeriodMode = 'year' | 'month' | 'week' | 'day';
 
+export interface OperationsPeriodFilters {
+  year: number | null;
+  month: number | null;
+  weekStart: string | null;
+  day: string | null;
+}
+
 export interface AnalyticsPeak {
   label: string;
   count: number;

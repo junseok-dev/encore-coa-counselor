@@ -109,6 +109,9 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
         result = self.analytics("year")
 
         self.assertEqual(12, len(result["monthly"]))
+        self.assertIn(2026, result["available_years"])
+        self.assertIn(date.today().year, result["available_years"])
+        self.assertIn(date.today().year + 1, result["available_years"])
         august = result["monthly"][7]
         self.assertEqual("2026-08", august["month"])
         self.assertEqual(3, august["chats"])

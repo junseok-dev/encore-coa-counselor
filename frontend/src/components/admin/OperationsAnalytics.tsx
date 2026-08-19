@@ -38,7 +38,7 @@ const METRIC_META: Record<OperationsUsageMetricKey, { label: string; description
 function chartPoints(data: OperationsAnalyticsData): ChartPoint[] {
   if (data.period_mode === 'year') {
     return data.monthly.map((item) => ({
-      label: `${Number(item.month.slice(5))}월`, visitors: item.visitors, chats: item.chats,
+      label: data.period_months > 12 ? `${item.month.slice(0, 4)}.${Number(item.month.slice(5))}` : `${Number(item.month.slice(5))}월`, visitors: item.visitors, chats: item.chats,
       handoffs: item.handoffs, consultationRequests: item.consultation_requests,
       cancels: item.cancels, refunds: item.refunds, homepage: item.homepage_requests,
       safety: item.safety, failed: item.failed,

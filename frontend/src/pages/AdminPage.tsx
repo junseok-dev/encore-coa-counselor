@@ -42,6 +42,7 @@ import {
   OpenAiCostData,
   OperationsDashboardData,
   OperationsAnalyticsData,
+  OperationsPeriodFilters,
   OperationsPeriodMode,
   PermissionAccess,
   PermissionsData,
@@ -55,6 +56,28 @@ type TabKey = 'dashboard' | 'improvements' | 'costs' | 'documents' | 'faqs' | 'p
 
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
 const CHAT_SESSION_PAGE_SIZE = 20;
+const EMPTY_ANALYTICS_FILTERS: OperationsPeriodFilters = { year: null, month: null, weekStart: null, day: null };
+
+function localDateIso(value = new Date()) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function analyticsQuery(filters: OperationsPeriodFilters): { period?: OperationsPeriodMode; anchor?: string } {
+  if (filters.day) return { period: 'day', anchor: filters.day };
+  if (filters.weekStart) return { period: 'week', anchor: filters.weekStart };
+  if (filters.year && filters.month) {
+    return { period: 'month', anchor: `${filters.year}-${String(filters.month).padStart(2, '0')}-01` };
+  }
+  if (filters.year) return { period: 'year', anchor: `${filters.year}-01-01` };
+  return {};
+}
+
+function filtersForMode(filters: OperationsPeriodFilters, mode: OperationsPeriodMode): OperationsPeriodFilters {
+  if (mode === 'year') return { ...filters, month: null, weekStart: null, day: null };
+  if (mode === 'month') return { ...filters, weekStart: null, day: null };
+  if (mode === 'week') return { ...filters, day: null };
+  return filters;
+}
 const ADMIN_TAB_KEYS = new Set<TabKey>([
   'dashboard',
   'improvements',
@@ -294,10 +317,8 @@ export default function AdminPage() {
   const [analyticsData, setAnalyticsData] = useState<OperationsAnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsPeriod, setAnalyticsPeriod] = useState<OperationsPeriodMode>('month');
-  const [analyticsAnchorDate, setAnalyticsAnchorDate] = useState(() => {
-    const today = new Date();
-    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  });
+  const [analyticsFilters, setAnalyticsFilters] = useState<OperationsPeriodFilters>(EMPTY_ANALYTICS_FILTERS);
+  const analyticsAnchorDate = analyticsQuery(analyticsFilters).anchor ?? localDateIso();
   const [dashboardCostData, setDashboardCostData] = useState<CostManagementData | null>(null);
   const [dashboardOpenAiCostData, setDashboardOpenAiCostData] = useState<OpenAiCostData | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
@@ -494,13 +515,14 @@ export default function AdminPage() {
     }
   };
 
-  const loadAnalytics = async (period = analyticsPeriod, anchorDate = analyticsAnchorDate) => {
+  const loadAnalytics = async (filters = analyticsFilters) => {
     setAnalyticsLoading(true);
     try {
-      let result = await adminApi.getOperationsAnalytics(period, anchorDate);
+      const query = analyticsQuery(filters);
+      let result = await adminApi.getOperationsAnalytics(query.period, query.anchor);
       if (result.unclassified_count > 0) {
         const classified = await adminApi.reclassifyQuestionCategories();
-        if (classified.classified > 0) result = await adminApi.getOperationsAnalytics(period, anchorDate);
+        if (classified.classified > 0) result = await adminApi.getOperationsAnalytics(query.period, query.anchor);
       }
       setAnalyticsData(result);
     } catch {
@@ -524,15 +546,18 @@ export default function AdminPage() {
     await Promise.all([loadOperations(), loadSystemHealth(), loadAnalytics(), loadDashboardCosts()]);
   };
 
-  const handleAnalyticsAnchorChange = (anchorDate: string) => {
-    if (!anchorDate) return;
-    setAnalyticsAnchorDate(anchorDate);
-    void Promise.all([loadAnalytics(analyticsPeriod, anchorDate), loadDashboardCosts(anchorDate)]);
+  const handleAnalyticsFiltersChange = (filters: OperationsPeriodFilters) => {
+    setAnalyticsFilters(filters);
+    const anchorDate = analyticsQuery(filters).anchor ?? localDateIso();
+    void Promise.all([loadAnalytics(filters), loadDashboardCosts(anchorDate)]);
   };
 
   const handleAnalyticsPeriodChange = (period: OperationsPeriodMode) => {
+    const nextFilters = filtersForMode(analyticsFilters, period);
     setAnalyticsPeriod(period);
-    void loadAnalytics(period, analyticsAnchorDate);
+    setAnalyticsFilters(nextFilters);
+    const anchorDate = analyticsQuery(nextFilters).anchor ?? localDateIso();
+    void Promise.all([loadAnalytics(nextFilters), loadDashboardCosts(anchorDate)]);
   };
 
   const loadModelSettings = async () => {
@@ -1566,13 +1591,14 @@ export default function AdminPage() {
               analyticsData={analyticsData}
               analyticsLoading={analyticsLoading}
               analyticsPeriod={analyticsPeriod}
+              analyticsFilters={analyticsFilters}
               analyticsAnchorDate={analyticsAnchorDate}
               costData={dashboardCostData}
               openAiCostData={dashboardOpenAiCostData}
               onRefresh={refreshOperationsDashboard}
               onPeriodChange={handleAnalyticsPeriodChange}
-              onAnchorDateChange={handleAnalyticsAnchorChange}
-              onRefreshAnalytics={loadAnalytics}
+              onFiltersChange={handleAnalyticsFiltersChange}
+              onRefreshAnalytics={() => loadAnalytics()}
               onOpenReview={() => setActiveTab('improvements')}
               onOpenCosts={() => setActiveTab('costs')}
             />

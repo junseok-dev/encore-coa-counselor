@@ -1404,7 +1404,8 @@ def get_operations_analytics(
         if latest_values else current_month
     )
     first_available_year = 2026
-    last_available_year = max(today.year, first_available_year)
+    # 기간 필터는 다음 연도 운영 계획도 미리 선택할 수 있어야 한다.
+    last_available_year = max(today.year + 1, latest_data_month.year, first_available_year)
     available_month_starts = [
         date(year, month, 1)
         for year in range(first_available_year, last_available_year + 1)
