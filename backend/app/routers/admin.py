@@ -38,6 +38,7 @@ from app.services.admin_service import (
     approve_document,
     create_audit_log,
     full_reindex,
+    hard_delete_document,
     process_catalog_import,
     process_uploaded_faq_md,
     process_uploaded_md,
@@ -966,7 +967,7 @@ def restore_document_route(document_id: int, db: Session = Depends(get_db), _: N
     if not record:
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
     updated = restore_document(db, record)
-    return {"message": "문서를 복구해 다시 검토 대기 상태로 돌렸습니다.", "document": _serialize_document(updated)}
+    return {"message": "문서를 삭제 이전 상태로 복구했습니다.", "document": _serialize_document(updated)}
 
 
 @router.delete("/documents/{document_id}")
@@ -978,7 +979,21 @@ def delete_document(document_id: int, note: str | None = Query(default=None), db
         updated = soft_delete_document(db, record, note)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"message": "문서를 삭제 처리했습니다.", "document": _serialize_document(updated)}
+    return {"message": "문서를 복구 가능한 삭제 상태로 옮겼습니다.", "document": _serialize_document(updated)}
+
+
+@router.delete("/documents/{document_id}/permanent")
+def permanently_delete_document(document_id: int, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+    record = db.query(DocumentRecord).filter(DocumentRecord.id == document_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    try:
+        hard_delete_document(db, record)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"message": "문서와 저장 파일을 영구 삭제했습니다.", "document_id": document_id}
 
 
 @router.post("/documents/{document_id}/retry")

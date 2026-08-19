@@ -18,3 +18,22 @@
     -webkit-tap-highlight-color: transparent;
   }
 }
+
+@keyframes admin-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.admin-document-drawer {
+  animation: admin-drawer-in 220ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-document-drawer {
+    animation: none;
+  }
+}

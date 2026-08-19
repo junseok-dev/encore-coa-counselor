@@ -294,11 +294,13 @@ export default function AdminPage() {
   const [healthLoading, setHealthLoading] = useState(false);
 
   const [selectedDocument, setSelectedDocument] = useState<AdminDocumentDetail | null>(null);
+  const [documentReviewOpen, setDocumentReviewOpen] = useState(false);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [reviewNote, setReviewNote] = useState('');
   const [documentMdDraft, setDocumentMdDraft] = useState('');
   const [documentJsonDraft, setDocumentJsonDraft] = useState('');
   const [documentArtifactSaving, setDocumentArtifactSaving] = useState(false);
+  const [documentPermanentDeleteBusy, setDocumentPermanentDeleteBusy] = useState(false);
   const [faqReconvertBusy, setFaqReconvertBusy] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [pdfPreviewLoading, setPdfPreviewLoading] = useState(false);
@@ -395,7 +397,6 @@ export default function AdminPage() {
   const faqMdInputRef = useRef<HTMLInputElement>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
   const documentRequestIdRef = useRef(0);
-  const reviewPanelRef = useRef<HTMLElement>(null);
   const navigate = useNavigate();
 
   const setActiveTab = (tab: TabKey) => {
@@ -680,7 +681,9 @@ export default function AdminPage() {
     }
   };
 
-  const openDocument = async (documentId: number, focusReview = false) => {
+  const openDocument = async (documentId: number) => {
+    setDocumentReviewOpen(true);
+    setSelectedDocument(null);
     const requestId = ++documentRequestIdRef.current;
     setDocumentLoading(true);
     setPdfPreviewLoading(false);
@@ -692,11 +695,6 @@ export default function AdminPage() {
       setReviewNote(detail.document.review_note ?? '');
       setDocumentMdDraft(detail.md_content ?? '');
       setDocumentJsonDraft(detail.json_content ?? '');
-      if (focusReview || window.matchMedia('(max-width: 1279px)').matches) {
-        window.requestAnimationFrame(() => {
-          reviewPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-      }
       if (detail.document.has_pdf) {
         setPdfPreviewLoading(true);
         try {
@@ -711,14 +709,19 @@ export default function AdminPage() {
           if (requestId === documentRequestIdRef.current) setPdfPreviewLoading(false);
         }
       }
+    } catch {
+      if (requestId === documentRequestIdRef.current) {
+        setNotice('문서 검토 내용을 불러오지 못했습니다.');
+        setDocumentReviewOpen(false);
+      }
     } finally {
       if (requestId === documentRequestIdRef.current) setDocumentLoading(false);
     }
   };
 
-  const reloadAndOpenDocument = async (documentId: number, focusReview = false) => {
+  const reloadAndOpenDocument = async (documentId: number) => {
     await loadDashboard();
-    await openDocument(documentId, focusReview);
+    await openDocument(documentId);
   };
 
   const handleReindex = async () => {
@@ -761,7 +764,7 @@ export default function AdminPage() {
       setPdfFile(null);
       setDocumentUploadMode(null);
       if (pdfInputRef.current) pdfInputRef.current.value = '';
-      await reloadAndOpenDocument(result.document.id, true);
+      await reloadAndOpenDocument(result.document.id);
     } catch {
       setNotice('PDF 업로드에 실패했습니다.');
     } finally {
@@ -780,7 +783,7 @@ export default function AdminPage() {
       setMdCategory('');
       setDocumentUploadMode(null);
       if (mdInputRef.current) mdInputRef.current.value = '';
-      await reloadAndOpenDocument(result.document.id, true);
+      await reloadAndOpenDocument(result.document.id);
     } catch {
       setNotice('MD 업로드에 실패했습니다.');
     } finally {
@@ -800,7 +803,7 @@ export default function AdminPage() {
       setFaqMdCategory('');
       setDocumentUploadMode(null);
       if (faqMdInputRef.current) faqMdInputRef.current.value = '';
-      await reloadAndOpenDocument(result.document.id, true);
+      await reloadAndOpenDocument(result.document.id);
     } catch {
       setNotice('FAQ용 MD 변환에 실패했습니다.');
     } finally {
@@ -828,7 +831,7 @@ export default function AdminPage() {
   };
 
   const handleDocumentDelete = async (documentId: number) => {
-    if (!window.confirm('이 문서를 삭제 처리할까요?')) return;
+    if (!window.confirm('이 문서를 삭제 상태로 옮길까요? 이후 검토 패널에서 복구하거나 영구 삭제할 수 있습니다.')) return;
     const note = selectedDocument?.document.id === documentId ? reviewNote : undefined;
     try {
       const result = await adminApi.deleteDocument(documentId, note);
@@ -853,6 +856,30 @@ export default function AdminPage() {
     const result = await adminApi.restoreDocument(selectedDocument.document.id);
     setNotice(result.message);
     await reloadAndOpenDocument(selectedDocument.document.id);
+  };
+
+  const handleDocumentPermanentDelete = async () => {
+    if (!selectedDocument?.document.is_deleted) return;
+    const documentId = selectedDocument.document.id;
+    const filename = selectedDocument.document.original_filename;
+    if (!window.confirm(`"${filename}" 문서를 영구 삭제할까요?\n\n원본·변환 파일, 문서 청크와 DB 문서 레코드가 삭제되며 복구할 수 없습니다.`)) return;
+    setDocumentPermanentDeleteBusy(true);
+    try {
+      const result = await adminApi.permanentlyDeleteDocument(documentId);
+      setSelectedDocument(null);
+      setDocumentReviewOpen(false);
+      setReviewNote('');
+      setDocumentMdDraft('');
+      setDocumentJsonDraft('');
+      setPdfPreviewUrl(null);
+      setNotice(result.message);
+      await loadDashboard();
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setNotice(detail || '문서 영구 삭제에 실패했습니다.');
+    } finally {
+      setDocumentPermanentDeleteBusy(false);
+    }
   };
 
   const handleDocumentArtifactSave = async () => {
@@ -1272,10 +1299,35 @@ export default function AdminPage() {
     [documents],
   );
   const selectedIsFaqDocument = selectedDocument?.document.parser_type === 'faq_json';
+  const selectedDocumentCanApprove = selectedDocument?.document.status === 'review'
+    || selectedDocument?.document.status === 'rejected';
   const documentArtifactsDirty = Boolean(selectedDocument) && (
     documentMdDraft !== (selectedDocument?.md_content ?? '')
     || (selectedIsFaqDocument && documentJsonDraft !== (selectedDocument?.json_content ?? ''))
   );
+  const closeDocumentReview = () => {
+    if (documentPermanentDeleteBusy) return;
+    if (documentArtifactsDirty && !window.confirm('저장하지 않은 변환 결과 수정이 있습니다. 검토 창을 닫을까요?')) return;
+    setDocumentReviewOpen(false);
+  };
+
+  useEffect(() => {
+    if (!documentReviewOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDocumentReview();
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [documentReviewOpen, documentPermanentDeleteBusy, documentArtifactsDirty]);
+
+  useEffect(() => {
+    if (activeTab !== 'documents') setDocumentReviewOpen(false);
+  }, [activeTab]);
 
   const visibleDbTables = useMemo(() => {
     const query = dbTableQuery.trim().toLocaleLowerCase('ko-KR');
@@ -1594,8 +1646,8 @@ export default function AdminPage() {
                             <td className="whitespace-nowrap px-4 py-3 text-slate-600">v{doc.version}</td>
                             <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatDate(doc.created_at)}</td>
                             <td className="px-4 py-3 text-right">
-                              <button onClick={() => void openDocument(doc.id, true)} className={`min-h-9 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium ${selected ? 'bg-cyan-700 text-white' : 'bg-slate-900 text-white'}`}>
-                                {selected ? '검토 중' : '검토'}
+                              <button onClick={() => void openDocument(doc.id)} className={`min-h-9 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium ${selected ? 'bg-cyan-700 text-white' : 'bg-slate-900 text-white'}`}>
+                                조회
                               </button>
                             </td>
                           </tr>
@@ -1606,17 +1658,43 @@ export default function AdminPage() {
                 </div>
               </section>
 
-            <section ref={reviewPanelRef} className="min-w-0 scroll-mt-4 rounded-3xl bg-white p-5 shadow-sm sm:p-6">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-900">검토 패널</h2>
-                {documentLoading && <span className="text-sm text-slate-500">불러오는 중...</span>}
-              </div>
+            {documentReviewOpen && (
+              <div
+                className="fixed inset-0 z-[80] flex justify-end bg-slate-950/55 backdrop-blur-[2px]"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="document-review-title"
+                onMouseDown={closeDocumentReview}
+              >
+                <section
+                  className="admin-document-drawer flex h-full w-full max-w-3xl min-w-0 flex-col overflow-hidden bg-white shadow-2xl sm:rounded-l-3xl"
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
+                    <div className="min-w-0">
+                      <h2 id="document-review-title" className="text-lg font-semibold text-slate-900">문서 상세 및 검토</h2>
+                      <p className="mt-1 break-keep text-xs leading-5 text-slate-500">원본과 변환 결과를 확인하고 승인·삭제·복구 작업을 처리합니다.</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      {documentLoading && <span className="hidden text-sm text-slate-500 sm:inline">불러오는 중...</span>}
+                      <button
+                        type="button"
+                        aria-label="문서 검토 닫기"
+                        disabled={documentPermanentDeleteBusy}
+                        onClick={closeDocumentReview}
+                        className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-xl leading-none text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6">
               {!selectedDocument ? (
-                <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                  <p className="break-keep text-sm leading-6 text-slate-600">위 문서 목록에서 검토할 문서를 선택하면 변환 결과와 승인·삭제·복구 작업이 이곳에 표시됩니다.</p>
+                <div className="flex min-h-64 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                  <p className="break-keep text-center text-sm leading-6 text-slate-600">{documentLoading ? '문서 검토 내용을 불러오는 중입니다...' : '문서 검토 내용을 표시할 수 없습니다.'}</p>
                 </div>
               ) : (
-                <div className="mt-4 space-y-5">
+                <div className="space-y-5">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <div className="break-all text-base font-semibold leading-6 text-slate-900">{selectedDocument.document.original_filename}</div>
                     <div className="mt-3 grid grid-cols-[5rem_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm leading-6 text-slate-600">
@@ -1631,33 +1709,16 @@ export default function AdminPage() {
                     <label className="mb-2 block text-sm font-semibold text-slate-900">관리 메모</label>
                     <textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} disabled={selectedDocument.document.is_deleted} className={`${TEXTAREA_CLASS} h-24 disabled:bg-slate-50`} placeholder="승인 또는 삭제 사유를 남겨두세요." />
                   </div>
-                  {selectedDocument.document.is_deleted ? (
-                    <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
-                      <p className="break-keep text-sm leading-6 text-cyan-900">복구하면 삭제된 문서를 다시 검토 대기 상태로 돌립니다. 검색에는 자동 반영되지 않으며, 내용을 확인한 뒤 다시 승인해야 합니다.</p>
-                      <button onClick={() => void handleDocumentRestore()} className="mt-3 min-h-11 whitespace-nowrap rounded-xl bg-cyan-700 px-5 py-2.5 text-sm font-medium text-white">복구</button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-wrap gap-3">
-                      <button
-                        onClick={() => void handleDocumentApprove()}
-                        disabled={selectedDocument.document.status === 'ready' || documentArtifactsDirty || documentArtifactSaving}
-                        className="min-h-11 min-w-24 whitespace-nowrap rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-                      >
-                        {selectedDocument.document.status === 'ready' ? '승인됨' : '승인'}
-                      </button>
-                      <button onClick={() => void handleDocumentDelete(selectedDocument.document.id)} className="min-h-11 min-w-24 whitespace-nowrap rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-medium text-white">삭제</button>
-                    </div>
-                  )}
                   {documentArtifactsDirty && (
                     <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
                       저장하지 않은 수정 내용이 있습니다. 저장이 끝날 때까지 승인할 수 없습니다.
                     </p>
                   )}
-                  <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="grid gap-5">
                     <div>
                       <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                         <h3 className="text-sm font-semibold text-slate-900">원본 PDF</h3>
-                        <span className="text-[11px] text-slate-500">원본과 변환 결과를 나란히 확인하세요.</span>
+                        <span className="text-[11px] text-slate-500">원본을 확인한 뒤 아래 변환 결과와 비교하세요.</span>
                       </div>
                       <div className="h-[30rem] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
                         {pdfPreviewLoading ? (
@@ -1712,18 +1773,59 @@ export default function AdminPage() {
                       <textarea readOnly value={documentJsonDraft} className="h-48 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-700" />
                     </div>
                   )}
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => void handleDocumentArtifactSave()}
-                      disabled={!documentArtifactsDirty || documentArtifactSaving || selectedDocument.document.is_deleted}
-                      className="min-h-11 whitespace-normal break-keep rounded-xl bg-cyan-700 px-5 py-2.5 text-center text-sm font-medium leading-5 text-white disabled:opacity-50"
-                    >
-                      {documentArtifactSaving ? '검증·저장 중...' : '변환 결과 검증 후 저장'}
-                    </button>
-                  </div>
                 </div>
               )}
-            </section>
+                  </div>
+                  {selectedDocument && (
+                    <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 sm:px-6">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="break-keep text-xs leading-5 text-slate-500">
+                          {selectedDocument.document.is_deleted
+                            ? '복구는 삭제 직전 상태로 원복하며, 영구 삭제 후에는 되돌릴 수 없습니다.'
+                            : selectedDocument.document.status === 'ready'
+                              ? '승인되어 검색에 반영된 문서입니다.'
+                              : selectedDocumentCanApprove
+                                ? '내용을 확인하고 수정 사항을 저장한 뒤 승인하세요.'
+                                : '현재 처리 상태에서는 승인할 수 없습니다.'}
+                        </p>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          {selectedDocument.document.is_deleted ? (
+                            <>
+                              <button disabled={documentPermanentDeleteBusy} onClick={() => void handleDocumentRestore()} className="min-h-10 min-w-20 whitespace-nowrap rounded-xl bg-cyan-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">복구</button>
+                              <button disabled={documentPermanentDeleteBusy} onClick={() => void handleDocumentPermanentDelete()} className="min-h-10 min-w-24 whitespace-nowrap rounded-xl bg-rose-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                                {documentPermanentDeleteBusy ? '삭제 중...' : '영구 삭제'}
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {(documentArtifactsDirty || selectedDocumentCanApprove) && (
+                                <button
+                                  onClick={() => void handleDocumentArtifactSave()}
+                                  disabled={!documentArtifactsDirty || documentArtifactSaving}
+                                  className="min-h-10 whitespace-normal break-keep rounded-xl bg-cyan-700 px-4 py-2 text-center text-sm font-medium leading-5 text-white disabled:opacity-40"
+                                >
+                                  {documentArtifactSaving ? '저장 중...' : '변환 결과 저장'}
+                                </button>
+                              )}
+                              <button onClick={() => void handleDocumentDelete(selectedDocument.document.id)} className="min-h-10 min-w-20 whitespace-nowrap rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white">삭제</button>
+                              {selectedDocumentCanApprove && (
+                                <button
+                                  onClick={() => void handleDocumentApprove()}
+                                  disabled={documentArtifactsDirty || documentArtifactSaving}
+                                  className="min-h-10 min-w-20 whitespace-nowrap rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+                                >
+                                  승인
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
+            )}
           </div>
         )}
 

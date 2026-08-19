@@ -395,6 +395,11 @@ export const adminApi = {
     return response.data;
   },
 
+  permanentlyDeleteDocument: async (documentId: number): Promise<{ message: string; document_id: number }> => {
+    const response = await adminApiClient.delete(`/admin/documents/${documentId}/permanent`);
+    return response.data;
+  },
+
   retryDocument: async (documentId: number): Promise<{ message: string }> => {
     const response = await adminApiClient.post(`/admin/documents/${documentId}/retry`, {});
     return response.data;

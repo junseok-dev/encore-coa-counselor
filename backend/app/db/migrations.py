@@ -16,6 +16,9 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
             "approved_at": "TIMESTAMP WITH TIME ZONE",
             "rejected_at": "TIMESTAMP WITH TIME ZONE",
             "deleted_at": "TIMESTAMP WITH TIME ZONE",
+            "pre_delete_status": "VARCHAR(30)",
+            "pre_delete_is_active": "BOOLEAN",
+            "pre_delete_review_note": "TEXT",
         }
         return mapping.get(column_name)
     if table_name == "chat_logs":
@@ -151,7 +154,7 @@ def _decrypt_non_conversation_content(engine: Engine) -> None:
             "search_hints_json", "source_files_json",
         ),
         "prompt_configs": ("content",),
-        "documents": ("original_filename", "review_note", "error_message"),
+        "documents": ("original_filename", "review_note", "pre_delete_review_note", "error_message"),
         "chunks": ("content", "metadata_json"),
         "processing_logs": ("message", "detail"),
         "admin_audit_logs": ("detail",),
@@ -198,7 +201,16 @@ def migrate_database(engine: Engine) -> None:
 
     if "documents" in inspector.get_table_names():
         existing = {column["name"] for column in inspector.get_columns("documents")}
-        for column_name in ("is_deleted", "review_note", "approved_at", "rejected_at", "deleted_at"):
+        for column_name in (
+            "is_deleted",
+            "review_note",
+            "approved_at",
+            "rejected_at",
+            "deleted_at",
+            "pre_delete_status",
+            "pre_delete_is_active",
+            "pre_delete_review_note",
+        ):
             if column_name in existing:
                 continue
             column_sql = _column_sql("documents", column_name)

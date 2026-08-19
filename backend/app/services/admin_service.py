@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import AdminAuditLog, DocumentRecord, FaqRecord, ProcessingLog
+from app.db.models import AdminAuditLog, ChunkRecord, DocumentRecord, FaqRecord, ProcessingLog
 from app.services.faq_service import sync_faqs_to_file
 from app.services.model_settings import get_active_embedding_model
 from app.services.rag_service import get_rag_service
@@ -495,15 +495,46 @@ def delete_document_assets(db: Session, record: DocumentRecord) -> None:
 
     record.is_active = False
     record.status = "deleted"
+    db.query(ChunkRecord).filter(ChunkRecord.document_id == record.id).delete(synchronize_session=False)
     db.query(ProcessingLog).filter(ProcessingLog.document_id == record.id).delete(synchronize_session=False)
     db.commit()
 
 
+def _delete_document_faq_records(db: Session, record: DocumentRecord) -> bool:
+    if record.parser_type != "faq_json":
+        return False
+    try:
+        payload = json.loads(read_text_from_storage(record.json_path) or "[]")
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, list):
+        return False
+    faq_keys = [str(item.get("id") or "").strip() for item in payload if isinstance(item, dict)]
+    faq_keys = [key for key in faq_keys if key]
+    if not faq_keys:
+        return False
+    db.query(FaqRecord).filter(FaqRecord.faq_key.in_(faq_keys)).delete(synchronize_session=False)
+    return True
+
+
 def hard_delete_document(db: Session, record: DocumentRecord) -> None:
+    if not record.is_deleted:
+        raise ValueError("복구 가능한 삭제 상태의 문서만 영구 삭제할 수 있습니다.")
+    document_id = record.id
+    logical_name = record.logical_name
+    faq_records_deleted = _delete_document_faq_records(db, record)
     delete_document_assets(db, record)
     db.delete(record)
     db.commit()
-    get_rag_service().index_all(db)
+    if faq_records_deleted:
+        sync_faqs_to_file(db)
+    create_audit_log(
+        db,
+        "document_permanently_deleted",
+        "document",
+        str(document_id),
+        logical_name,
+    )
 
 
 def retry_document_processing(db: Session, record: DocumentRecord) -> DocumentRecord:
@@ -724,6 +755,8 @@ async def reconvert_faq_document(
 def approve_document(db: Session, record: DocumentRecord, review_note: str | None = None) -> DocumentRecord:
     if getattr(record, "is_deleted", False):
         raise ValueError("삭제된 문서는 승인할 수 없습니다.")
+    if record.status not in {"review", "rejected"}:
+        raise ValueError("검토 대기 상태의 문서만 승인할 수 있습니다.")
 
     if record.parser_type == "faq_json":
         raw_payload = json.loads(read_text_from_storage(record.json_path) or "[]") if record.json_path else []
@@ -769,6 +802,11 @@ def reject_document(db: Session, record: DocumentRecord, review_note: str | None
 
 
 def soft_delete_document(db: Session, record: DocumentRecord, review_note: str | None = None) -> DocumentRecord:
+    if record.is_deleted:
+        return record
+    record.pre_delete_status = record.status
+    record.pre_delete_is_active = bool(record.is_active)
+    record.pre_delete_review_note = record.review_note
     if record.parser_type == "faq_json":
         try:
             _deactivate_faq_items(db, json.loads(read_text_from_storage(record.json_path) or "[]"))
@@ -789,11 +827,30 @@ def soft_delete_document(db: Session, record: DocumentRecord, review_note: str |
 
 
 def restore_document(db: Session, record: DocumentRecord) -> DocumentRecord:
+    if not record.is_deleted:
+        return record
+    restored_status = record.pre_delete_status or "review"
+    restored_is_active = bool(record.pre_delete_is_active)
+    restored_review_note = record.pre_delete_review_note
+    if restored_is_active and record.parser_type == "faq_json":
+        try:
+            for item in json.loads(read_text_from_storage(record.json_path) or "[]"):
+                _upsert_faq_from_payload(db, item)
+        except json.JSONDecodeError:
+            restored_status = "review"
+            restored_is_active = False
+        sync_faqs_to_file(db)
     record.is_deleted = False
     record.deleted_at = None
-    record.status = "review"
-    record.is_active = False
+    record.status = restored_status
+    record.is_active = restored_is_active
+    record.review_note = restored_review_note
+    record.pre_delete_status = None
+    record.pre_delete_is_active = None
+    record.pre_delete_review_note = None
     db.commit()
+    if restored_is_active:
+        full_reindex(db)
     create_processing_log(db, "document", "restored", "문서 복구", document_id=record.id)
     create_audit_log(db, "document_restored", "document", str(record.id), record.logical_name)
     db.refresh(record)
