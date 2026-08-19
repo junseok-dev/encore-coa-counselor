@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Calendar, Headphones, MessageCircle, ShieldAlert, UserRound } from 'lucide-react';
 import { adminApi, getAdminToken } from '../services/api';
 import { AdminSessionDetail, OperationsAttentionItem } from '../types';
@@ -24,9 +24,19 @@ const SIGNAL_LABEL: Record<OperationsAttentionItem['type'], string> = {
 export default function AdminSessionPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [detail, setDetail] = useState<AdminSessionDetail | null>(null);
   const [signals, setSignals] = useState<OperationsAttentionItem[]>([]);
   const [error, setError] = useState('');
+
+  const returnToAdmin = () => {
+    const navigationState = location.state as { fromAdmin?: boolean } | null;
+    if (navigationState?.fromAdmin) {
+      navigate(-1);
+      return;
+    }
+    navigate('/admin');
+  };
 
   useEffect(() => {
     if (!getAdminToken()) {
@@ -52,7 +62,7 @@ export default function AdminSessionPage() {
     <div className="min-h-screen bg-[#f5f7fb]">
       <header className="border-b border-slate-800 bg-[#08111f] text-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
-          <button onClick={() => navigate('/admin')} className="inline-flex items-center gap-2 text-sm font-semibold text-slate-300 hover:text-white">
+          <button onClick={returnToAdmin} className="inline-flex items-center gap-2 text-sm font-semibold text-slate-300 hover:text-white">
             <ArrowLeft className="h-4 w-4" /> 운영 콘솔
           </button>
           <span className="font-mono text-xs text-slate-500">{session.id}</span>

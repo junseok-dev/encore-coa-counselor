@@ -54,6 +54,51 @@ import {
 
 type TabKey = 'dashboard' | 'improvements' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'security' | 'settings' | 'permissions';
 
+const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
+const ADMIN_TAB_KEYS = new Set<TabKey>([
+  'dashboard',
+  'improvements',
+  'costs',
+  'documents',
+  'faqs',
+  'prompts',
+  'chats',
+  'data',
+  'db',
+  'security',
+  'settings',
+  'permissions',
+]);
+
+interface StoredAdminView {
+  activeTab: TabKey;
+  chatStartDate: string;
+  chatEndDate: string;
+  chatSessionId: string;
+}
+
+function readStoredAdminView(): StoredAdminView {
+  const fallback: StoredAdminView = {
+    activeTab: 'dashboard',
+    chatStartDate: '',
+    chatEndDate: '',
+    chatSessionId: '',
+  };
+  try {
+    const raw = window.sessionStorage.getItem(ADMIN_VIEW_STORAGE_KEY);
+    if (!raw) return fallback;
+    const stored = JSON.parse(raw) as Partial<StoredAdminView>;
+    return {
+      activeTab: stored.activeTab && ADMIN_TAB_KEYS.has(stored.activeTab) ? stored.activeTab : 'dashboard',
+      chatStartDate: typeof stored.chatStartDate === 'string' ? stored.chatStartDate : '',
+      chatEndDate: typeof stored.chatEndDate === 'string' ? stored.chatEndDate : '',
+      chatSessionId: typeof stored.chatSessionId === 'string' ? stored.chatSessionId : '',
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 const NAV_GROUPS: { label: string; items: { key: TabKey; label: string; icon: typeof LayoutDashboard }[] }[] = [
   {
     label: '운영',
@@ -223,8 +268,9 @@ export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(() => !!getAdminToken());
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
+  const [initialAdminView] = useState(readStoredAdminView);
 
-  const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabKey>(initialAdminView.activeTab);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState('');
@@ -270,9 +316,9 @@ export default function AdminPage() {
   const [promptForm, setPromptForm] = useState<PromptPayload>(EMPTY_PROMPT);
   const [promptSaving, setPromptSaving] = useState(false);
 
-  const [chatStartDate, setChatStartDate] = useState('');
-  const [chatEndDate, setChatEndDate] = useState('');
-  const [chatSessionId, setChatSessionId] = useState('');
+  const [chatStartDate, setChatStartDate] = useState(initialAdminView.chatStartDate);
+  const [chatEndDate, setChatEndDate] = useState(initialAdminView.chatEndDate);
+  const [chatSessionId, setChatSessionId] = useState(initialAdminView.chatSessionId);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatExporting, setChatExporting] = useState(false);
 
@@ -341,6 +387,12 @@ export default function AdminPage() {
   const importFileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
+  const handleAdminLogout = () => {
+    window.sessionStorage.removeItem(ADMIN_VIEW_STORAGE_KEY);
+    clearAdminToken();
+    setAuthenticated(false);
+  };
+
   const resetFaqForm = () => {
     setFaqForm(EMPTY_FAQ);
     setFaqKeywords('');
@@ -368,7 +420,9 @@ export default function AdminPage() {
       setFaqs(faqData.faqs);
       setPrompts(promptData.prompts);
       setProcessingLogs(logData.processing_logs);
-      setChatLogs(logData.chat_logs);
+      if (activeTab !== 'chats' || (!chatStartDate && !chatEndDate && !chatSessionId)) {
+        setChatLogs(logData.chat_logs);
+      }
       setAuditLogs(logData.audit_logs);
       setOperationsData(operations);
     } catch {
@@ -478,6 +532,21 @@ export default function AdminPage() {
       setActiveTab('dashboard');
     }
   }, [authenticated]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    window.sessionStorage.setItem(ADMIN_VIEW_STORAGE_KEY, JSON.stringify({
+      activeTab,
+      chatStartDate,
+      chatEndDate,
+      chatSessionId,
+    } satisfies StoredAdminView));
+  }, [activeTab, authenticated, chatEndDate, chatSessionId, chatStartDate]);
+
+  useEffect(() => {
+    if (!authenticated || activeTab !== 'chats' || (!chatStartDate && !chatEndDate && !chatSessionId)) return;
+    void loadFilteredChatLogs(false);
+  }, [activeTab, authenticated]);
 
   useEffect(() => {
     if (permissionAccess && !isSuperadmin && ['security', 'permissions'].includes(activeTab)) {
@@ -771,7 +840,7 @@ export default function AdminPage() {
     }
   };
 
-  const handleFilterChatLogs = async () => {
+  const loadFilteredChatLogs = async (showNotice: boolean) => {
     setChatLoading(true);
     try {
       const result = await adminApi.getChatLogs({
@@ -780,13 +849,19 @@ export default function AdminPage() {
         session_id: chatSessionId || undefined,
       });
       setChatLogs(result.chat_logs);
-      if (result.chat_logs.length === 0) setNotice('조회 결과가 없습니다.');
-      else setNotice(`${result.chat_logs.length}건 조회되었습니다.`);
+      if (showNotice) {
+        if (result.chat_logs.length === 0) setNotice('조회 결과가 없습니다.');
+        else setNotice(`${result.chat_logs.length}건 조회되었습니다.`);
+      }
     } catch {
-      setNotice('대화 로그 조회에 실패했습니다.');
+      if (showNotice) setNotice('대화 로그 조회에 실패했습니다.');
     } finally {
       setChatLoading(false);
     }
+  };
+
+  const handleFilterChatLogs = async () => {
+    await loadFilteredChatLogs(true);
   };
 
   const handleExportChatLogs = async () => {
@@ -1168,7 +1243,7 @@ export default function AdminPage() {
               <p className="truncate text-[10px] text-slate-400">보호된 운영 세션</p>
             </div>
           </div>
-          <button onClick={() => { clearAdminToken(); setAuthenticated(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white">
+          <button onClick={handleAdminLogout} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white">
             <LogOut className="h-4 w-4" /> 로그아웃
           </button>
         </div>
@@ -1197,7 +1272,7 @@ export default function AdminPage() {
                 <RefreshCw className={`h-4 w-4 ${loading || operationsLoading ? 'animate-spin' : ''}`} />
                 <span className="hidden sm:inline">새로고침</span>
               </button>
-              <button onClick={() => { clearAdminToken(); setAuthenticated(false); }} className="rounded-xl bg-slate-950 px-3 py-2 text-sm font-semibold text-white lg:hidden">로그아웃</button>
+              <button onClick={handleAdminLogout} className="rounded-xl bg-slate-950 px-3 py-2 text-sm font-semibold text-white lg:hidden">로그아웃</button>
             </div>
           </div>
         </header>
@@ -1557,7 +1632,10 @@ export default function AdminPage() {
                         <td className="px-3 py-3">{formatDate(session.updated_at)}</td>
                         <td className="px-3 py-3">{session.message_count}</td>
                         <td className="px-3 py-3">
-                          <button onClick={() => navigate(`/admin/sessions/${session.id}`)} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white">보기</button>
+                          <button
+                            onClick={() => navigate(`/admin/sessions/${session.id}`, { state: { fromAdmin: true } })}
+                            className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
+                          >보기</button>
                         </td>
                       </tr>
                     ))}
@@ -2079,10 +2157,7 @@ export default function AdminPage() {
                                     setNotice(result.message);
                                     setNewSuperadminEmail('');
                                     // 슈퍼어드민이 바뀌었으므로 로그아웃
-                                    setTimeout(() => {
-                                      clearAdminToken();
-                                      setAuthenticated(false);
-                                    }, 2000);
+                                    setTimeout(handleAdminLogout, 2000);
                                   } catch (err: unknown) {
                                     const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
                                     setNotice(msg ?? '최상위 관리자 변경에 실패했습니다.');
