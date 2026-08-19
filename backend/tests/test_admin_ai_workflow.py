@@ -165,6 +165,27 @@ class AdminAiWorkflowTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("이미", second["message"])
         self.assertEqual(1, self.db.query(OperationsAlert).filter_by(chat_log_id=other_log.id).count())
 
+    def test_keep_current_answer_resolves_without_retest(self):
+        result = admin.keep_operations_alert_answer(
+            self.alert.id,
+            self.db,
+            "admin@example.com",
+        )
+
+        self.db.refresh(self.alert)
+        self.assertEqual("resolved", result["alert"]["status"])
+        self.assertEqual("resolved", self.alert.status)
+        self.assertEqual("과정 추천해줘", self.alert.test_question)
+        self.assertEqual("상담원에게 문의하세요", self.alert.test_answer)
+        self.assertEqual("handoff", self.alert.test_source)
+        self.assertTrue(self.alert.test_passed)
+        history = self.db.query(OperationsAlertHistory).filter_by(
+            alert_id=self.alert.id,
+            action="answer_kept",
+        ).one()
+        self.assertEqual("open", history.from_status)
+        self.assertEqual("resolved", history.to_status)
+
     def test_admin_ai_follow_up_can_return_a_customer_facing_answer(self):
         result = _parse_json_object(json.dumps({
             "reply": "네. 고객에게는 아래처럼 답하면 됩니다.",

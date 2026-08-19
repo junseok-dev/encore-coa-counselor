@@ -225,6 +225,7 @@ export interface OperationsMetricSummary {
   visitors: number;
   chats: number;
   handoffs: number;
+  consultation_requests: number;
   cancels: number;
   refunds: number;
   homepage_requests: number;
@@ -238,11 +239,14 @@ export interface OperationsDailyMetric {
   visitors: number;
   chats: number;
   handoffs: number;
+  consultation_requests: number;
   cancels: number;
   refunds: number;
   homepage_requests: number;
   safety: number;
   failed: number;
+  aws_cost_krw?: number;
+  openai_estimated_usd?: number;
 }
 
 export interface HandoffCategoryMetric {
@@ -269,11 +273,14 @@ export interface OperationsMonthlyMetric {
   visitors: number;
   chats: number;
   handoffs: number;
+  consultation_requests: number;
   cancels: number;
   refunds: number;
   homepage_requests: number;
   safety: number;
   failed: number;
+  aws_cost_krw: number;
+  openai_estimated_usd: number;
 }
 
 export interface OperationsHourlyMetric {
@@ -281,7 +288,17 @@ export interface OperationsHourlyMetric {
   label: string;
   visitors: number;
   chats: number;
+  handoffs: number;
+  consultation_requests: number;
+  cancels: number;
+  refunds: number;
+  homepage_requests: number;
+  safety: number;
+  failed: number;
+  openai_estimated_usd: number;
 }
+
+export type OperationsPeriodMode = 'year' | 'month' | 'week' | 'day';
 
 export interface AnalyticsPeak {
   label: string;
@@ -290,6 +307,10 @@ export interface AnalyticsPeak {
 
 export interface OperationsAnalyticsData {
   period_months: number;
+  period_mode: OperationsPeriodMode;
+  anchor_date: string;
+  period_start: string;
+  period_end: string;
   hourly_days: number;
   selected_year: number | null;
   selected_month: string | null;
@@ -304,6 +325,7 @@ export interface OperationsAnalyticsData {
     visitors: number;
     chats: number;
     handoffs: number;
+    consultation_requests: number;
     cancels: number;
     refunds: number;
     homepage_requests: number;
@@ -319,6 +341,10 @@ export interface OperationsAnalyticsData {
   question_categories_top5: QuestionCategoryMetric[];
   answer_source_summary: AnswerSourceSummary;
   handoff_categories: HandoffCategoryMetric[];
+  cost_summary: {
+    aws_cost_krw: number;
+    openai_estimated_usd: number;
+  };
   unclassified_count: number;
 }
 

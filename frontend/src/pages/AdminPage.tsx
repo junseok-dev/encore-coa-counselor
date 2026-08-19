@@ -42,6 +42,7 @@ import {
   OpenAiCostData,
   OperationsDashboardData,
   OperationsAnalyticsData,
+  OperationsPeriodMode,
   PermissionAccess,
   PermissionsData,
   ProcessingLog,
@@ -292,8 +293,11 @@ export default function AdminPage() {
   const [operationsLoading, setOperationsLoading] = useState(false);
   const [analyticsData, setAnalyticsData] = useState<OperationsAnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [analyticsYear, setAnalyticsYear] = useState('all');
-  const [analyticsMonth, setAnalyticsMonth] = useState('all');
+  const [analyticsPeriod, setAnalyticsPeriod] = useState<OperationsPeriodMode>('month');
+  const [analyticsAnchorDate, setAnalyticsAnchorDate] = useState(() => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  });
   const [dashboardCostData, setDashboardCostData] = useState<CostManagementData | null>(null);
   const [dashboardOpenAiCostData, setDashboardOpenAiCostData] = useState<OpenAiCostData | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
@@ -490,13 +494,13 @@ export default function AdminPage() {
     }
   };
 
-  const loadAnalytics = async (selectedYear = analyticsYear, selectedMonth = analyticsMonth) => {
+  const loadAnalytics = async (period = analyticsPeriod, anchorDate = analyticsAnchorDate) => {
     setAnalyticsLoading(true);
     try {
-      let result = await adminApi.getOperationsAnalytics(selectedYear, selectedMonth);
+      let result = await adminApi.getOperationsAnalytics(period, anchorDate);
       if (result.unclassified_count > 0) {
         const classified = await adminApi.reclassifyQuestionCategories();
-        if (classified.classified > 0) result = await adminApi.getOperationsAnalytics(selectedYear, selectedMonth);
+        if (classified.classified > 0) result = await adminApi.getOperationsAnalytics(period, anchorDate);
       }
       setAnalyticsData(result);
     } catch {
@@ -506,9 +510,8 @@ export default function AdminPage() {
     }
   };
 
-  const loadDashboardCosts = async () => {
-    const now = new Date();
-    const billingMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const loadDashboardCosts = async (anchorDate = analyticsAnchorDate) => {
+    const billingMonth = anchorDate.slice(0, 7);
     const [costResult, openAiResult] = await Promise.allSettled([
       adminApi.getCostManagement(billingMonth, '249173798473'),
       adminApi.getOpenAiCosts(billingMonth),
@@ -521,19 +524,15 @@ export default function AdminPage() {
     await Promise.all([loadOperations(), loadSystemHealth(), loadAnalytics(), loadDashboardCosts()]);
   };
 
-  const handleAnalyticsYearChange = (selectedYear: string) => {
-    setAnalyticsYear(selectedYear);
-    if (selectedYear === 'all') {
-      setAnalyticsMonth('all');
-      void loadAnalytics('all', 'all');
-      return;
-    }
-    void loadAnalytics(selectedYear, analyticsMonth);
+  const handleAnalyticsAnchorChange = (anchorDate: string) => {
+    if (!anchorDate) return;
+    setAnalyticsAnchorDate(anchorDate);
+    void Promise.all([loadAnalytics(analyticsPeriod, anchorDate), loadDashboardCosts(anchorDate)]);
   };
 
-  const handleAnalyticsMonthChange = (selectedMonth: string) => {
-    setAnalyticsMonth(selectedMonth);
-    void loadAnalytics(analyticsYear, selectedMonth);
+  const handleAnalyticsPeriodChange = (period: OperationsPeriodMode) => {
+    setAnalyticsPeriod(period);
+    void loadAnalytics(period, analyticsAnchorDate);
   };
 
   const loadModelSettings = async () => {
@@ -1566,15 +1565,15 @@ export default function AdminPage() {
               loading={loading || operationsLoading}
               analyticsData={analyticsData}
               analyticsLoading={analyticsLoading}
-              analyticsYear={analyticsYear}
-              analyticsMonth={analyticsMonth}
+              analyticsPeriod={analyticsPeriod}
+              analyticsAnchorDate={analyticsAnchorDate}
               costData={dashboardCostData}
               openAiCostData={dashboardOpenAiCostData}
               systemHealth={systemHealth}
               healthLoading={healthLoading}
               onRefresh={refreshOperationsDashboard}
-              onYearChange={handleAnalyticsYearChange}
-              onMonthChange={handleAnalyticsMonthChange}
+              onPeriodChange={handleAnalyticsPeriodChange}
+              onAnchorDateChange={handleAnalyticsAnchorChange}
               onRefreshAnalytics={loadAnalytics}
               onOpenReview={() => setActiveTab('improvements')}
               onOpenCosts={() => setActiveTab('costs')}

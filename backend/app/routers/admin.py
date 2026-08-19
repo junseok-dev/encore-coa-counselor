@@ -553,6 +553,7 @@ def _operations_summary(
     cancels: list[CancelRequest],
 ) -> dict:
     handoffs = [row for row in logs if row.processing_status == "handoff" or row.source == "handoff"]
+    consultation_requests = [row for row in logs if row.processing_status == "handoff_offer"]
     safety = [row for row in logs if row.source == "guardrail"]
     failed = [row for row in logs if row.processing_status == "failed" or bool(row.error)]
     refund_count = sum(1 for row in cancels if _is_refund_request(decrypt_if_needed(row.message)))
@@ -563,6 +564,7 @@ def _operations_summary(
         "visitors": len(sessions),
         "chats": len(logs),
         "handoffs": len(handoffs),
+        "consultation_requests": len(consultation_requests),
         "cancels": len(cancels) - refund_count,
         "refunds": refund_count,
         "homepage_requests": homepage_request_count,
@@ -1384,6 +1386,8 @@ def export_chat_logs(start_date: date | None = None, end_date: date | None = Non
 def get_operations_analytics(
     selected_year: int | None = Query(None, ge=2026, le=2100),
     selected_month: str | None = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    period_mode: str | None = Query(None, pattern=r"^(year|month|week|day)$"),
+    anchor_date: date | None = Query(None),
     db: Session = Depends(get_db),
     _: None = Depends(verify_admin),
 ):
@@ -1408,7 +1412,37 @@ def get_operations_analytics(
     ]
     available_months = [month.strftime("%Y-%m") for month in available_month_starts]
 
-    if selected_month:
+    anchor = anchor_date or today
+    if period_mode:
+        if period_mode == "year":
+            selected_start = date(anchor.year, 1, 1)
+            analysis_start = datetime.combine(selected_start, time.min)
+            analysis_end = datetime.combine(date(anchor.year + 1, 1, 1), time.min)
+            month_starts = [_shift_month(selected_start, offset) for offset in range(12)]
+            selected_year = anchor.year
+            selected_month = None
+        elif period_mode == "month":
+            selected_start = anchor.replace(day=1)
+            analysis_start = datetime.combine(selected_start, time.min)
+            analysis_end = datetime.combine(_shift_month(selected_start, 1), time.min)
+            month_starts = [selected_start]
+            selected_year = anchor.year
+            selected_month = selected_start.strftime("%Y-%m")
+        elif period_mode == "week":
+            selected_start = anchor - timedelta(days=anchor.weekday())
+            analysis_start = datetime.combine(selected_start, time.min)
+            analysis_end = datetime.combine(selected_start + timedelta(days=7), time.min)
+            month_starts = sorted({selected_start.replace(day=1), (analysis_end.date() - timedelta(days=1)).replace(day=1)})
+            selected_year = anchor.year
+            selected_month = None
+        else:
+            selected_start = anchor
+            analysis_start = datetime.combine(selected_start, time.min)
+            analysis_end = datetime.combine(selected_start + timedelta(days=1), time.min)
+            month_starts = [selected_start.replace(day=1)]
+            selected_year = anchor.year
+            selected_month = None
+    elif selected_month:
         selected_start = datetime.strptime(selected_month, "%Y-%m").date()
         if selected_year is not None and selected_start.year != selected_year:
             raise HTTPException(status_code=400, detail="선택한 연도와 월이 일치하지 않습니다.")
@@ -1453,6 +1487,10 @@ def get_operations_analytics(
     analysis_sessions = [row for row in sessions if in_analysis_period(row.created_at)]
     analysis_logs = [row for row in logs if in_analysis_period(row.created_at)]
     analysis_cancels = [row for row in cancels if in_analysis_period(row.created_at)]
+    analysis_costs = db.query(BillingDailyCostRecord).filter(
+        BillingDailyCostRecord.usage_date >= analysis_start.date(),
+        BillingDailyCostRecord.usage_date < analysis_end.date(),
+    ).all()
 
     monthly_map = {
         month_start.strftime("%Y-%m"): {
@@ -1460,34 +1498,44 @@ def get_operations_analytics(
             "visitors": 0,
             "chats": 0,
             "handoffs": 0,
+            "consultation_requests": 0,
             "cancels": 0,
             "refunds": 0,
             "homepage_requests": 0,
             "safety": 0,
             "failed": 0,
+            "aws_cost_krw": 0,
+            "openai_estimated_usd": 0.0,
         }
         for month_start in month_starts
     }
     hourly_map = {
-        hour: {"hour": hour, "label": f"{hour:02d}시", "visitors": 0, "chats": 0}
+        hour: {
+            "hour": hour, "label": f"{hour:02d}시", "visitors": 0, "chats": 0,
+            "handoffs": 0, "consultation_requests": 0, "cancels": 0, "refunds": 0,
+            "homepage_requests": 0, "safety": 0, "failed": 0, "openai_estimated_usd": 0.0,
+        }
         for hour in range(24)
     }
     daily_map: dict[str, dict] = {}
-    if selected_month:
-        _, day_count = calendar.monthrange(selected_start.year, selected_start.month)
+    if selected_month or period_mode in {"month", "week", "day"}:
+        day_count = (analysis_end.date() - analysis_start.date()).days
         daily_map = {
-            date(selected_start.year, selected_start.month, day).isoformat(): {
-                "date": date(selected_start.year, selected_start.month, day).isoformat(),
+            (analysis_start.date() + timedelta(days=offset)).isoformat(): {
+                "date": (analysis_start.date() + timedelta(days=offset)).isoformat(),
                 "visitors": 0,
                 "chats": 0,
                 "handoffs": 0,
+                "consultation_requests": 0,
                 "cancels": 0,
                 "refunds": 0,
                 "homepage_requests": 0,
                 "safety": 0,
                 "failed": 0,
+                "aws_cost_krw": 0,
+                "openai_estimated_usd": 0.0,
             }
-            for day in range(1, day_count + 1)
+            for offset in range(day_count)
         }
 
     for row in analysis_sessions:
@@ -1511,24 +1559,42 @@ def get_operations_analytics(
             monthly_map[month_key]["chats"] += 1
             if row.processing_status == "handoff" or row.source == "handoff":
                 monthly_map[month_key]["handoffs"] += 1
+            if row.processing_status == "handoff_offer":
+                monthly_map[month_key]["consultation_requests"] += 1
             if row.source == "guardrail":
                 monthly_map[month_key]["safety"] += 1
             if row.processing_status == "failed" or bool(decrypt_if_needed(row.error)):
                 monthly_map[month_key]["failed"] += 1
             if _is_homepage_request(decrypt_if_needed(row.question)):
                 monthly_map[month_key]["homepage_requests"] += 1
-        hourly_map[local_created_at.hour]["chats"] += 1
+            monthly_map[month_key]["openai_estimated_usd"] += float(row.embedding_cost or 0) + float(row.llm_cost or 0)
+        hour_bucket = hourly_map[local_created_at.hour]
+        hour_bucket["chats"] += 1
+        if row.processing_status == "handoff" or row.source == "handoff":
+            hour_bucket["handoffs"] += 1
+        if row.processing_status == "handoff_offer":
+            hour_bucket["consultation_requests"] += 1
+        if row.source == "guardrail":
+            hour_bucket["safety"] += 1
+        if row.processing_status == "failed" or bool(decrypt_if_needed(row.error)):
+            hour_bucket["failed"] += 1
+        if _is_homepage_request(decrypt_if_needed(row.question)):
+            hour_bucket["homepage_requests"] += 1
+        hour_bucket["openai_estimated_usd"] += float(row.embedding_cost or 0) + float(row.llm_cost or 0)
         day_key = local_created_at.date().isoformat()
         if day_key in daily_map:
             daily_map[day_key]["chats"] += 1
             if row.processing_status == "handoff" or row.source == "handoff":
                 daily_map[day_key]["handoffs"] += 1
+            if row.processing_status == "handoff_offer":
+                daily_map[day_key]["consultation_requests"] += 1
             if row.source == "guardrail":
                 daily_map[day_key]["safety"] += 1
             if row.processing_status == "failed" or bool(decrypt_if_needed(row.error)):
                 daily_map[day_key]["failed"] += 1
             if _is_homepage_request(decrypt_if_needed(row.question)):
                 daily_map[day_key]["homepage_requests"] += 1
+            daily_map[day_key]["openai_estimated_usd"] += float(row.embedding_cost or 0) + float(row.llm_cost or 0)
 
     for row in analysis_cancels:
         if not row.created_at:
@@ -1537,9 +1603,18 @@ def get_operations_analytics(
         metric_key = "refunds" if _is_refund_request(decrypt_if_needed(row.message)) else "cancels"
         if month_key in monthly_map:
             monthly_map[month_key][metric_key] += 1
+        hourly_map[_analysis_datetime(row.created_at).hour][metric_key] += 1
         day_key = _analysis_datetime(row.created_at).date().isoformat()
         if day_key in daily_map:
             daily_map[day_key][metric_key] += 1
+
+    for row in analysis_costs:
+        month_key = row.usage_date.strftime("%Y-%m")
+        if month_key in monthly_map:
+            monthly_map[month_key]["aws_cost_krw"] += row.amount_krw
+        day_key = row.usage_date.isoformat()
+        if day_key in daily_map:
+            daily_map[day_key]["aws_cost_krw"] += row.amount_krw
 
     question_category_map: dict[str, dict] = {}
     answer_source_summary = {"faq": 0, "llm": 0, "other": 0}
@@ -1598,6 +1673,10 @@ def get_operations_analytics(
 
     monthly = list(monthly_map.values())
     hourly = list(hourly_map.values())
+    daily = list(daily_map.values())
+    for bucket in [*monthly, *daily, *hourly]:
+        if "openai_estimated_usd" in bucket:
+            bucket["openai_estimated_usd"] = round(float(bucket["openai_estimated_usd"]), 6)
     question_categories_top5 = sorted(
         (item for item in question_category_map.values() if item["key"] != "general"),
         key=lambda item: (-item["count"], item["label"]),
@@ -1606,7 +1685,13 @@ def get_operations_analytics(
     handoff_categories.sort(key=lambda item: item["count"], reverse=True)
     chat_count = len(analysis_logs)
     visitor_count = len(analysis_sessions)
-    handoff_count = sum(item["count"] for item in handoff_categories)
+    handoff_count = sum(
+        1 for row in analysis_logs
+        if row.processing_status == "handoff" or row.source == "handoff"
+    )
+    consultation_request_count = sum(
+        1 for row in analysis_logs if row.processing_status == "handoff_offer"
+    )
     failed_count = sum(
         1 for row in analysis_logs
         if row.processing_status == "failed" or bool(decrypt_if_needed(row.error))
@@ -1619,28 +1704,44 @@ def get_operations_analytics(
         "visitors": visitor_count,
         "chats": chat_count,
         "handoffs": handoff_count,
+        "consultation_requests": consultation_request_count,
         "cancels": len(analysis_cancels) - refund_count,
         "refunds": refund_count,
         "homepage_requests": homepage_request_count,
         "safety": sum(1 for row in analysis_logs if row.source == "guardrail"),
         "failed": failed_count,
     }
+    period_label = (
+        f"{anchor.year}년"
+        if period_mode == "year"
+        else f"{anchor.year}년 {anchor.month}월"
+        if period_mode == "month"
+        else f"{analysis_start.date().strftime('%Y.%m.%d')}~{(analysis_end.date() - timedelta(days=1)).strftime('%m.%d')}"
+        if period_mode == "week"
+        else anchor.strftime("%Y년 %m월 %d일")
+        if period_mode == "day"
+        else (
+            f"{selected_start.year}년 {selected_start.month}월"
+            if selected_month
+            else f"{selected_year}년" if selected_year is not None else "전체 기간"
+        )
+    )
 
     return {
         "period_months": len(month_starts),
+        "period_mode": period_mode or ("month" if selected_month else "year"),
+        "anchor_date": anchor.isoformat(),
+        "period_start": analysis_start.date().isoformat(),
+        "period_end": (analysis_end.date() - timedelta(days=1)).isoformat(),
         "hourly_days": max(1, (analysis_end.date() - analysis_start.date()).days),
         "selected_year": selected_year,
         "selected_month": selected_month,
         "available_years": list(range(first_available_year, last_available_year + 1)),
         "available_months": available_months,
-        "period_label": (
-            f"{selected_start.year}년 {selected_start.month}월"
-            if selected_month
-            else f"{selected_year}년" if selected_year is not None else "전체 기간"
-        ),
+        "period_label": period_label,
         "generated_at": datetime.now(),
         "monthly": monthly,
-        "daily": list(daily_map.values()),
+        "daily": daily,
         "hourly": hourly,
         "period_summary": period_summary,
         "highlights": {
@@ -1655,6 +1756,13 @@ def get_operations_analytics(
             "total": sum(answer_source_summary.values()),
         },
         "handoff_categories": handoff_categories,
+        "cost_summary": {
+            "aws_cost_krw": sum(row.amount_krw for row in analysis_costs),
+            "openai_estimated_usd": round(sum(
+                float(row.embedding_cost or 0) + float(row.llm_cost or 0)
+                for row in analysis_logs
+            ), 6),
+        },
         "unclassified_count": unclassified_count,
     }
 
@@ -1845,6 +1953,7 @@ def get_operations_dashboard(
             "visitors": 0,
             "chats": 0,
             "handoffs": 0,
+            "consultation_requests": 0,
             "cancels": 0,
             "refunds": 0,
             "homepage_requests": 0,
@@ -1860,6 +1969,8 @@ def get_operations_dashboard(
         bucket["chats"] += 1
         if row.processing_status == "handoff" or row.source == "handoff":
             bucket["handoffs"] += 1
+        if row.processing_status == "handoff_offer":
+            bucket["consultation_requests"] += 1
         if row.source == "guardrail":
             bucket["safety"] += 1
         if row.processing_status == "failed" or bool(decrypt_if_needed(row.error)):
@@ -3019,6 +3130,49 @@ async def test_operations_alert_answer(
         "source": test_source,
         "tested_by": current_user,
         "tested_at": alert.tested_at,
+    }
+
+
+@router.post("/operations/alerts/{alert_id}/keep-answer")
+def keep_operations_alert_answer(
+    alert_id: int,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    alert = db.query(OperationsAlert).filter(OperationsAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="운영 알림을 찾을 수 없습니다.")
+    chat_log = db.query(ChatLog).filter(ChatLog.id == alert.chat_log_id).first()
+    if not chat_log:
+        raise HTTPException(status_code=404, detail="원래 대화 로그를 찾을 수 없습니다.")
+    original_answer = decrypt_if_needed(chat_log.answer) or ""
+    if not original_answer.strip():
+        raise HTTPException(status_code=400, detail="유지할 원래 답변이 없습니다.")
+
+    previous_status = alert.status
+    alert.test_question = decrypt_if_needed(chat_log.question) or None
+    alert.test_answer = original_answer
+    alert.test_source = chat_log.source
+    alert.test_passed = True
+    alert.tested_by = current_user
+    alert.tested_at = datetime.now()
+    alert.status = "resolved"
+    alert.assigned_to = current_user
+    alert.resolved_at = datetime.now()
+    _add_operations_alert_history(db, alert, "answer_kept", current_user, previous_status)
+    db.commit()
+    db.refresh(alert)
+    create_audit_log(
+        db,
+        "operations_alert_answer_kept",
+        "operations_alert",
+        str(alert.id),
+        f"status=resolved, source={chat_log.source}",
+        actor=current_user,
+    )
+    return {
+        "message": "현재 답변을 유지하고 개선 검토를 완료했습니다.",
+        "alert": _serialize_operations_alert(alert),
     }
 
 

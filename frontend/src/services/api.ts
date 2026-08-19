@@ -20,6 +20,7 @@ import {
   OperationsDashboardData,
   OpenAiCostData,
   OperationsAnalyticsData,
+  OperationsPeriodMode,
   OperationsAlertDetail,
   OperationsAiAnalysis,
   OperationsPromptPreview,
@@ -222,12 +223,8 @@ export const adminApi = {
     return response.data;
   },
 
-  getOperationsAnalytics: async (selectedYear = 'all', selectedMonth = 'all'): Promise<OperationsAnalyticsData> => {
-    const params: Record<string, string | number> = {};
-    if (selectedYear !== 'all') params.selected_year = Number(selectedYear);
-    if (selectedYear !== 'all' && selectedMonth !== 'all') {
-      params.selected_month = `${selectedYear}-${selectedMonth.padStart(2, '0')}`;
-    }
+  getOperationsAnalytics: async (periodMode: OperationsPeriodMode = 'month', anchorDate = new Date().toISOString().slice(0, 10)): Promise<OperationsAnalyticsData> => {
+    const params: Record<string, string> = { period_mode: periodMode, anchor_date: anchorDate };
     const response = await adminApiClient.get<OperationsAnalyticsData>('/admin/operations/analytics', {
       params,
     });
@@ -274,6 +271,11 @@ export const adminApi = {
     const response = await adminApiClient.post<OperationsAlertTestResult>(`/admin/operations/alerts/${alertId}/test`, {
       question,
     });
+    return response.data;
+  },
+
+  keepOperationsAlertAnswer: async (alertId: number): Promise<{ message: string; alert: OperationsAlertUpdateResult }> => {
+    const response = await adminApiClient.post<{ message: string; alert: OperationsAlertUpdateResult }>(`/admin/operations/alerts/${alertId}/keep-answer`);
     return response.data;
   },
 
