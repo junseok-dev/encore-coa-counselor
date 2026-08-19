@@ -51,10 +51,21 @@ from app.services.admin_service import (
 )
 from app.services.rag_service import ReindexInProgressError
 from app.services.faq_service import _serialize_faq, seed_faqs, sync_faqs_to_file
-from app.services.model_settings import get_active_model, set_active_model
+from app.services.model_settings import (
+    get_active_embedding_model,
+    get_active_model,
+    set_active_embedding_model,
+    set_active_model,
+)
 from app.services.prompt_service import PROMPT_DEFAULTS, seed_prompt_configs, serialize_prompt
 from app.services.question_category_service import categorize_question_rule, classify_questions_batch
-from app.services.storage_service import build_s3_uri, read_bytes_from_storage, read_text_from_storage, storage_exists
+from app.services.storage_service import (
+    FAISS_DIR,
+    build_s3_uri,
+    read_bytes_from_storage,
+    read_text_from_storage,
+    storage_exists,
+)
 from app.utils.crypto import ENCRYPTED_PREFIX, decrypt_if_needed, encrypt, maybe_encrypt
 from app.utils.data_names import clean_data_name, data_name_key
 
@@ -110,6 +121,10 @@ class PasswordChangeRequest(BaseModel):
 
 
 class ModelChangeRequest(BaseModel):
+    model_name: str
+
+
+class EmbeddingModelChangeRequest(BaseModel):
     model_name: str
 
 
@@ -3135,6 +3150,22 @@ def _is_chat_model(model_id: str) -> bool:
     return any(model_id.startswith(p) for p in prefixes)
 
 
+AVAILABLE_EMBEDDING_MODELS = (
+    "text-embedding-3-large",
+    "text-embedding-3-small",
+)
+
+
+def _indexed_embedding_model() -> str | None:
+    manifest_path = FAISS_DIR / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    model_name = str(manifest.get("embedding_model") or "").strip()
+    return model_name or None
+
+
 @router.get("/settings/model")
 async def get_model_settings(_: None = Depends(verify_admin)):
     settings = get_settings()
@@ -3149,7 +3180,13 @@ async def get_model_settings(_: None = Depends(verify_admin)):
         available_models = [m.id for m in chat_models]
     except Exception:
         available_models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
-    return {"current_model": get_active_model(), "available_models": available_models}
+    return {
+        "current_model": get_active_model(),
+        "available_models": available_models,
+        "current_embedding_model": get_active_embedding_model(),
+        "available_embedding_models": list(AVAILABLE_EMBEDDING_MODELS),
+        "indexed_embedding_model": _indexed_embedding_model(),
+    }
 
 
 @router.put("/settings/model")
@@ -3165,6 +3202,29 @@ def change_model(body: ModelChangeRequest, db: Session = Depends(get_db), _: Non
     create_audit_log(db, "model_changed", "system", "model_name", model_name)
     return {
         "message": f"모델을 {model_name}으로 변경했습니다. 다음 새 답변부터 적용됩니다.",
+        "model_name": applied_model,
+    }
+
+
+@router.put("/settings/embedding-model")
+def change_embedding_model(
+    body: EmbeddingModelChangeRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_admin),
+):
+    model_name = (body.model_name or "").strip()
+    if model_name not in AVAILABLE_EMBEDDING_MODELS:
+        raise HTTPException(status_code=400, detail="지원하지 않는 임베딩 모델 ID입니다.")
+    set_active_embedding_model(db, model_name)
+    applied_model = get_active_embedding_model()
+    if applied_model != model_name:
+        raise HTTPException(status_code=500, detail="임베딩 모델 설정이 저장되지 않았습니다. 다시 시도해주세요.")
+    create_audit_log(db, "embedding_model_changed", "system", "embedding_model_name", model_name)
+    return {
+        "message": (
+            f"임베딩 모델을 {model_name}으로 저장했습니다. "
+            "문서 검토에서 FAISS 변경 확인 후 재구성해야 검색에 적용됩니다."
+        ),
         "model_name": applied_model,
     }
 

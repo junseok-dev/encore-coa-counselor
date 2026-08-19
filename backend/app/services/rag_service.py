@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.database import SessionLocal
 from app.db.models import ChunkRecord, DocumentRecord, FaqRecord
+from app.services.model_settings import get_active_embedding_model
 from app.services.storage_service import (
     FAISS_DIR,
     clear_faiss_storage,
@@ -120,11 +121,9 @@ def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
 class RAGService:
     def __init__(self, api_key: str):
         FAISS_DIR.mkdir(parents=True, exist_ok=True)
-        settings = get_settings()
-        self._embeddings = OpenAIEmbeddings(
-            model=settings.embedding_model,
-            api_key=api_key,
-        ) if api_key else None
+        self._api_key = api_key
+        self._embedding_model = get_active_embedding_model()
+        self._embeddings = self._create_embeddings(self._embedding_model)
         self._splitter = RecursiveCharacterTextSplitter.from_language(
             language=Language.MARKDOWN,
             chunk_size=1200,
@@ -140,6 +139,10 @@ class RAGService:
         if self._embeddings and not faiss_path.exists():
             download_faiss_from_s3()
         if self._embeddings and faiss_path.exists():
+            manifest_model = str(self._read_current_manifest().get("embedding_model") or "").strip()
+            if manifest_model and manifest_model != self._embedding_model:
+                self._embedding_model = manifest_model
+                self._embeddings = self._create_embeddings(manifest_model)
             self._vectorstore = FAISS.load_local(
                 str(FAISS_DIR),
                 self._embeddings,
@@ -149,6 +152,11 @@ class RAGService:
             self._keyword_index = self._build_keyword_index(self._documents)
             self._doc_position_map = self._build_position_map()
             self._remember_loaded_manifest()
+
+    def _create_embeddings(self, model_name: str):
+        if not self._api_key:
+            return None
+        return OpenAIEmbeddings(model=model_name, api_key=self._api_key)
 
     def _remember_loaded_manifest(self) -> None:
         manifest_path = FAISS_DIR / "manifest.json"
@@ -187,16 +195,24 @@ class RAGService:
             return
         if current_mtime_ns == self._manifest_mtime_ns and current_version == self._index_version:
             return
+        manifest_model = str(current_manifest.get("embedding_model") or self._embedding_model).strip()
+        embeddings = self._embeddings
+        if manifest_model != self._embedding_model:
+            embeddings = self._create_embeddings(manifest_model)
+            if embeddings is None:
+                return
         try:
             vectorstore = FAISS.load_local(
                 str(FAISS_DIR),
-                self._embeddings,
+                embeddings,
                 allow_dangerous_deserialization=True,
             )
             documents = self._load_documents_from_store(vectorstore)
         except Exception:
             # 교체 중인 순간에는 기존 메모리 인덱스를 유지하고 다음 요청에서 다시 시도한다.
             return
+        self._embedding_model = manifest_model
+        self._embeddings = embeddings
         self._vectorstore = vectorstore
         self._documents = documents
         self._keyword_index = self._build_keyword_index(documents)
@@ -475,10 +491,10 @@ class RAGService:
             return {}
 
     @staticmethod
-    def _corpus_fingerprint(documents: list[Document]) -> str:
+    def _corpus_fingerprint(documents: list[Document], embedding_model: str) -> str:
         digest = hashlib.sha256()
         digest.update(f"schema={INDEX_SCHEMA_VERSION}\n".encode("utf-8"))
-        digest.update(f"embedding={get_settings().embedding_model}\n".encode("utf-8"))
+        digest.update(f"embedding={embedding_model}\n".encode("utf-8"))
         for document in documents:
             digest.update(document.page_content.encode("utf-8"))
             digest.update(b"\x00")
@@ -491,7 +507,8 @@ class RAGService:
         db = db or SessionLocal()
         try:
             documents, active_docs, active_faqs = self._collect_index_documents(db)
-            fingerprint = self._corpus_fingerprint(documents)
+            embedding_model = get_active_embedding_model()
+            fingerprint = self._corpus_fingerprint(documents, embedding_model)
             manifest = self._read_current_manifest()
             index_files_ready = all((FAISS_DIR / filename).is_file() for filename in ("index.faiss", "index.pkl"))
             any_index_file = any((FAISS_DIR / filename).is_file() for filename in ("index.faiss", "index.pkl"))
@@ -506,9 +523,13 @@ class RAGService:
             )
             return {
                 "changed": not unchanged,
-                "can_rebuild": self._embeddings is not None,
+                "can_rebuild": bool(self._api_key) or (
+                    self._embeddings is not None and embedding_model == self._embedding_model
+                ),
                 "fingerprint": fingerprint,
                 "current_version": manifest.get("version"),
+                "embedding_model": embedding_model,
+                "indexed_embedding_model": manifest.get("embedding_model"),
                 "document_count": len(active_docs),
                 "faq_count": len(active_faqs),
                 "chunk_count": len(documents),
@@ -526,7 +547,11 @@ class RAGService:
         force: bool = False,
         expected_fingerprint: str | None = None,
     ) -> dict[str, object]:
-        if not self._embeddings:
+        embedding_model = get_active_embedding_model()
+        embeddings = self._embeddings
+        if embedding_model != self._embedding_model:
+            embeddings = self._create_embeddings(embedding_model)
+        if not embeddings:
             raise RuntimeError("OpenAI API 키가 없어 FAISS 임베딩을 생성할 수 없습니다.")
 
         owns_session = db is None
@@ -534,7 +559,7 @@ class RAGService:
         try:
             with _reindex_lock():
                 documents, active_docs, active_faqs = self._collect_index_documents(db)
-                fingerprint = self._corpus_fingerprint(documents)
+                fingerprint = self._corpus_fingerprint(documents, embedding_model)
                 if expected_fingerprint and expected_fingerprint != fingerprint:
                     raise ReindexSourceChangedError(
                         "사전 점검 이후 승인 데이터가 변경되었습니다. 다시 점검해 주세요."
@@ -589,7 +614,7 @@ class RAGService:
                 FAISS_DIR.parent.mkdir(parents=True, exist_ok=True)
                 with TemporaryDirectory(prefix="faiss-build-", dir=str(FAISS_DIR.parent)) as temp_dir_value:
                     temp_dir = Path(temp_dir_value)
-                    new_vectorstore = FAISS.from_documents(documents, self._embeddings)
+                    new_vectorstore = FAISS.from_documents(documents, embeddings)
                     new_vectorstore.save_local(str(temp_dir))
                     vector_count = int(new_vectorstore.index.ntotal)
                     if vector_count != len(documents):
@@ -602,7 +627,7 @@ class RAGService:
                         "status": "rebuilt",
                         "changed": True,
                         "created_at": datetime.now(timezone.utc).isoformat(),
-                        "embedding_model": get_settings().embedding_model,
+                        "embedding_model": embedding_model,
                         "index_schema_version": INDEX_SCHEMA_VERSION,
                         "corpus_fingerprint": fingerprint,
                         "document_count": len(active_docs),
@@ -619,7 +644,7 @@ class RAGService:
                     # 저장한 결과가 실제로 다시 열리는지 확인한 뒤에만 운영 인덱스를 교체한다.
                     verified_vectorstore = FAISS.load_local(
                         str(temp_dir),
-                        self._embeddings,
+                        embeddings,
                         allow_dangerous_deserialization=True,
                     )
                     if int(verified_vectorstore.index.ntotal) != vector_count:
@@ -628,6 +653,8 @@ class RAGService:
                     s3_version = upload_faiss_to_s3(temp_dir)
                     install_faiss_artifacts(temp_dir)
 
+                self._embedding_model = embedding_model
+                self._embeddings = embeddings
                 self._vectorstore = verified_vectorstore
                 self._documents = self._load_documents_from_vectorstore()
                 self._keyword_index = self._build_keyword_index(self._documents)

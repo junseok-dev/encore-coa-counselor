@@ -339,8 +339,10 @@ export const adminApi = {
     return response.data;
   },
 
-  getDocuments: async (): Promise<{ documents: AdminDocument[] }> => {
-    const response = await adminApiClient.get('/admin/documents');
+  getDocuments: async (includeDeleted = false): Promise<{ documents: AdminDocument[] }> => {
+    const response = await adminApiClient.get('/admin/documents', {
+      params: { include_deleted: includeDeleted },
+    });
     return response.data;
   },
 
@@ -403,6 +405,8 @@ export const adminApi = {
     can_rebuild: boolean;
     fingerprint: string;
     current_version: string | null;
+    embedding_model: string;
+    indexed_embedding_model: string | null;
     document_count: number;
     faq_count: number;
     chunk_count: number;
@@ -634,6 +638,11 @@ export const adminApi = {
 
   setModel: async (model_name: string): Promise<{ message: string; model_name: string }> => {
     const response = await adminApiClient.put('/admin/settings/model', { model_name });
+    return response.data;
+  },
+
+  setEmbeddingModel: async (model_name: string): Promise<{ message: string; model_name: string }> => {
+    const response = await adminApiClient.put('/admin/settings/embedding-model', { model_name });
     return response.data;
   },
 

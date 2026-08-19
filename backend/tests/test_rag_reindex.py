@@ -235,6 +235,40 @@ class RagReindexTest(unittest.TestCase):
         self.assertEqual(0, service._embeddings.document_calls)
         self.assertFalse((self.index_dir / ".reindex.lock").exists())
 
+    def test_embedding_model_change_uses_new_model_only_for_verified_rebuild(self):
+        md_path = self.root / "embedding-model.md"
+        md_path.write_text(
+            "# 임베딩 모델 변경\n\n운영자가 임베딩 모델을 바꾸면 새 모델로 전체 인덱스를 검증한 뒤 "
+            "검색 인덱스를 교체해야 합니다.",
+            encoding="utf-8",
+        )
+        self.db.add(DocumentRecord(
+            logical_name="embedding-model",
+            version=1,
+            original_filename="embedding-model.md",
+            md_path=str(md_path),
+            parser_type="markdown",
+            status="ready",
+            is_active=True,
+            is_deleted=False,
+        ))
+        self.db.commit()
+
+        service = self._service()
+        service._embedding_model = "text-embedding-3-large"
+        replacement = DeterministicEmbeddings()
+        with (
+            patch.object(rag_service, "get_active_embedding_model", return_value="text-embedding-3-small"),
+            patch.object(service, "_create_embeddings", return_value=replacement),
+        ):
+            preview = service.preview_reindex(self.db)
+            result = service.index_all(self.db, expected_fingerprint=preview["fingerprint"])
+
+        self.assertEqual("text-embedding-3-small", result["embedding_model"])
+        self.assertEqual("text-embedding-3-small", service._embedding_model)
+        self.assertIs(replacement, service._embeddings)
+        self.assertGreater(replacement.document_calls, 0)
+
     def test_admin_reindex_returns_verified_counts_and_clear_error(self):
         verified = {
             "version": "v1",

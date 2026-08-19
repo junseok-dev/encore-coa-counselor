@@ -1,6 +1,9 @@
 export interface ModelSettings {
   current_model: string;
   available_models: string[];
+  current_embedding_model: string;
+  available_embedding_models: string[];
+  indexed_embedding_model: string | null;
 }
 
 export interface EncryptionCategory {

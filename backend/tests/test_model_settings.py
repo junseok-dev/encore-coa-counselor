@@ -57,6 +57,21 @@ class ModelSettingPersistenceTest(unittest.TestCase):
         with patch.object(model_settings, "SessionLocal", test_session):
             self.assertEqual("gpt-5.4-mini", model_settings.get_active_model())
 
+    def test_changed_embedding_model_is_read_immediately_from_database(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        AppSetting.__table__.create(engine)
+        test_session = sessionmaker(bind=engine)
+
+        with test_session() as db:
+            model_settings.set_active_embedding_model(db, "text-embedding-3-small")
+
+        with patch.object(model_settings, "SessionLocal", test_session):
+            self.assertEqual("text-embedding-3-small", model_settings.get_active_embedding_model())
+
 
 class ActiveModelRequestTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

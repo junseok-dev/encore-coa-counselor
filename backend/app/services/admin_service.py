@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.models import AdminAuditLog, DocumentRecord, FaqRecord, ProcessingLog
 from app.services.faq_service import sync_faqs_to_file
+from app.services.model_settings import get_active_embedding_model
 from app.services.rag_service import get_rag_service
 from app.services.storage_service import (
     MANAGED_CHUNKS_DIR,
@@ -249,7 +250,7 @@ async def _process_md_content(
         embedding_path = MANAGED_EMBEDDINGS_DIR / f"{logical_name}_v{version}.json"
         embedding_payload = {
             "document_id": record.id,
-            "embedding_model": get_settings().embedding_model,
+            "embedding_model": get_active_embedding_model(),
             "strategy": "full_rebuild",
             "chunk_count": len(chunks),
         }
@@ -457,7 +458,7 @@ async def process_uploaded_pdf(db: Session, filename: str, content: bytes) -> Do
         embedding_path = MANAGED_EMBEDDINGS_DIR / f"{logical_name}_v{version}.json"
         embedding_payload = {
             "document_id": record.id,
-            "embedding_model": get_settings().embedding_model,
+            "embedding_model": get_active_embedding_model(),
             "strategy": "full_rebuild",
             "chunk_count": len(chunks),
         }
@@ -649,7 +650,7 @@ def update_document_artifacts(
         )
         embedding_payload = {
             "document_id": record.id,
-            "embedding_model": get_settings().embedding_model,
+            "embedding_model": get_active_embedding_model(),
             "strategy": "full_rebuild_on_approval",
             "chunk_count": chunk_count,
         }

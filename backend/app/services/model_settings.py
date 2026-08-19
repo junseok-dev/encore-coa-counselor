@@ -1,4 +1,4 @@
-"""활성 LLM 모델명을 DB(app_settings)에 저장/조회한다.
+"""활성 답변·임베딩 모델명을 DB(app_settings)에 저장/조회한다.
 
 기존에는 모델 변경을 .env 파일에 기록했는데, 다음 이유로 변경이 유지되지 않았다:
   1. 배포(deploy.yml)가 .env를 통째로 재생성하며 모델명을 덮어씀
@@ -14,6 +14,7 @@ from app.db.database import SessionLocal
 from app.db.models import AppSetting
 
 ACTIVE_MODEL_KEY = "active_model_name"
+ACTIVE_EMBEDDING_MODEL_KEY = "active_embedding_model_name"
 
 
 def get_active_model() -> str:
@@ -34,4 +35,25 @@ def set_active_model(db: Session, model_name: str) -> None:
         row.value = model_name
     else:
         db.add(AppSetting(key=ACTIVE_MODEL_KEY, value=model_name))
+    db.commit()
+
+
+def get_active_embedding_model() -> str:
+    """다음 FAISS 재구성에 사용할 임베딩 모델명."""
+    db = SessionLocal()
+    try:
+        row = db.query(AppSetting).filter(AppSetting.key == ACTIVE_EMBEDDING_MODEL_KEY).first()
+        if row and row.value:
+            return row.value
+    finally:
+        db.close()
+    return get_settings().embedding_model
+
+
+def set_active_embedding_model(db: Session, model_name: str) -> None:
+    row = db.query(AppSetting).filter(AppSetting.key == ACTIVE_EMBEDDING_MODEL_KEY).first()
+    if row:
+        row.value = model_name
+    else:
+        db.add(AppSetting(key=ACTIVE_EMBEDDING_MODEL_KEY, value=model_name))
     db.commit()

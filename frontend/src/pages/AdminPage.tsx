@@ -309,6 +309,7 @@ export default function AdminPage() {
   const [mdCategory, setMdCategory] = useState('');
   const [faqMdFile, setFaqMdFile] = useState<File | null>(null);
   const [faqMdCategory, setFaqMdCategory] = useState('');
+  const [documentWorkspaceTab, setDocumentWorkspaceTab] = useState<'upload' | 'list' | 'review'>('upload');
   const [uploadBusy, setUploadBusy] = useState(false);
   const [reindexBusy, setReindexBusy] = useState(false);
 
@@ -339,6 +340,9 @@ export default function AdminPage() {
   // 모델 설정
   const [modelSettings, setModelSettings] = useState<ModelSettings | null>(null);
   const [modelSaving, setModelSaving] = useState(false);
+  const [embeddingModelSelection, setEmbeddingModelSelection] = useState('');
+  const [embeddingModelSaving, setEmbeddingModelSaving] = useState(false);
+  const [modelSettingsTab, setModelSettingsTab] = useState<'generation' | 'embedding'>('generation');
   const [modelLoadError, setModelLoadError] = useState('');
   const [modelSortKey, setModelSortKey] = useState<ModelSortKey>('recommend');
   const [modelSortDir, setModelSortDir] = useState<'asc' | 'desc'>('desc');
@@ -364,6 +368,7 @@ export default function AdminPage() {
   const [encryptionSettings, setEncryptionSettings] = useState<EncryptionSettings | null>(null);
   const [encryptionLoading, setEncryptionLoading] = useState(false);
   const [migrating, setMigrating] = useState<string | null>(null);
+  const [settingsTab, setSettingsTab] = useState<'encryption' | 'models'>('encryption');
 
   // 데이터 관리
   const [selectedTable, setSelectedTable] = useState<CustomTableDetail | null>(null);
@@ -420,7 +425,7 @@ export default function AdminPage() {
     try {
       const [sessionData, documentData, faqData, promptData, logData, operations] = await Promise.all([
         adminApi.getSessions(),
-        adminApi.getDocuments(),
+        adminApi.getDocuments(true),
         adminApi.getFaqs(),
         adminApi.getPrompts(),
         adminApi.getLogs(),
@@ -525,7 +530,16 @@ export default function AdminPage() {
     setModelLoadError('');
     try {
       const data = await adminApi.getModelSettings();
-      setModelSettings(data);
+      const normalizedData: ModelSettings = {
+        ...data,
+        current_embedding_model: data.current_embedding_model || 'text-embedding-3-large',
+        available_embedding_models: data.available_embedding_models?.length
+          ? data.available_embedding_models
+          : ['text-embedding-3-large', 'text-embedding-3-small'],
+        indexed_embedding_model: data.indexed_embedding_model || null,
+      };
+      setModelSettings(normalizedData);
+      setEmbeddingModelSelection(normalizedData.current_embedding_model);
     } catch {
       setModelLoadError('모델 목록을 불러오지 못했습니다.');
     }
@@ -677,6 +691,7 @@ export default function AdminPage() {
   };
 
   const openDocument = async (documentId: number) => {
+    setDocumentWorkspaceTab('review');
     const requestId = ++documentRequestIdRef.current;
     setDocumentLoading(true);
     setPdfPreviewLoading(false);
@@ -722,12 +737,12 @@ export default function AdminPage() {
       }
       if (!preview.changed) {
         setNotice(
-          `변경 사항이 없습니다. 현재 인덱스를 그대로 사용합니다. 문서 ${preview.document_count}건, FAQ ${preview.faq_count}건, 벡터 ${preview.current_vector_count}건`,
+          `변경 사항이 없습니다. 현재 인덱스를 그대로 사용합니다. 임베딩 ${preview.embedding_model}, 문서 ${preview.document_count}건, FAQ ${preview.faq_count}건, 벡터 ${preview.current_vector_count}건`,
         );
         return;
       }
       const confirmed = window.confirm(
-        `변경 사항이 확인되었습니다.\n\n승인 문서 ${preview.document_count}건\nFAQ ${preview.faq_count}건\n예상 청크 ${preview.chunk_count}건\n\n이 경우에만 임베딩 비용이 발생합니다. 재구성할까요?`,
+        `변경 사항이 확인되었습니다.\n\n임베딩 모델 ${preview.embedding_model}${preview.indexed_embedding_model && preview.indexed_embedding_model !== preview.embedding_model ? `\n현재 인덱스 모델 ${preview.indexed_embedding_model}` : ''}\n승인 문서 ${preview.document_count}건\nFAQ ${preview.faq_count}건\n예상 청크 ${preview.chunk_count}건\n\n이 경우에만 임베딩 비용이 발생합니다. 재구성할까요?`,
       );
       if (!confirmed) {
         setNotice('사전 점검만 완료했고 인덱스는 변경하지 않았습니다.');
@@ -815,18 +830,6 @@ export default function AdminPage() {
     }
   };
 
-  const handleDocumentReject = async () => {
-    if (!selectedDocument) return;
-    try {
-      const result = await adminApi.rejectDocument(selectedDocument.document.id, reviewNote || undefined);
-      setNotice(result.message);
-      await reloadAndOpenDocument(selectedDocument.document.id);
-    } catch (error: unknown) {
-      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setNotice(detail || '문서 반려 처리에 실패했습니다.');
-    }
-  };
-
   const handleDocumentDelete = async (documentId: number) => {
     if (!window.confirm('이 문서를 삭제 처리할까요?')) return;
     const note = selectedDocument?.document.id === documentId ? reviewNote : undefined;
@@ -834,11 +837,12 @@ export default function AdminPage() {
       const result = await adminApi.deleteDocument(documentId, note);
       setNotice(result.message);
       if (selectedDocument?.document.id === documentId) {
-        documentRequestIdRef.current += 1;
-        setSelectedDocument(null);
-        setDocumentMdDraft('');
-        setDocumentJsonDraft('');
-        setPdfPreviewUrl(null);
+        setSelectedDocument({
+          ...selectedDocument,
+          document: result.document,
+        });
+        setDocumentMdDraft(selectedDocument.md_content ?? '');
+        setDocumentJsonDraft(selectedDocument.json_content ?? '');
       }
       await loadDashboard();
     } catch (error: unknown) {
@@ -1473,51 +1477,94 @@ export default function AdminPage() {
         )}
 
         {activeTab === 'documents' && (
-          <div className="mt-6 grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+          <div className="mt-6 space-y-6">
+            <div className="grid gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-3" role="tablist" aria-label="문서 관리 구분">
+              {([
+                ['upload', '업로드와 변환'],
+                ['list', '문서 목록'],
+                ['review', '검토 패널'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={documentWorkspaceTab === key}
+                  onClick={() => setDocumentWorkspaceTab(key)}
+                  className={`min-h-12 whitespace-normal break-keep rounded-xl px-4 py-3 text-center text-sm font-semibold leading-5 transition ${documentWorkspaceTab === key ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {documentWorkspaceTab === 'upload' && (
             <div className="space-y-6">
               <section className="rounded-3xl bg-white p-6 shadow-sm">
                 <h2 className="text-lg font-semibold text-slate-900">업로드와 변환</h2>
-                <div className="mt-5 grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-2xl border border-slate-200 p-4">
-                    <h3 className="text-sm font-semibold text-slate-900">PDF → MD</h3>
-                    <p className="mt-1 text-xs text-slate-500">변환 결과를 만든 뒤 검토 대기 상태로 저장합니다.</p>
-                    <input ref={pdfInputRef} type="file" accept=".pdf" className="mt-4 block w-full text-sm" onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)} />
-                    <button onClick={handlePdfUpload} disabled={!pdfFile || uploadBusy} className="mt-4 w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">업로드</button>
+                <div className="mt-5 grid gap-5 xl:grid-cols-3">
+                  <div className="min-w-0 rounded-2xl border border-slate-200 p-5 sm:p-6">
+                    <h3 className="break-keep text-base font-semibold leading-6 text-slate-900">PDF → MD</h3>
+                    <p className="mt-2 break-keep text-sm leading-6 text-slate-500">변환 결과를 만든 뒤 검토 대기 상태로 저장합니다.</p>
+                    <label className="mt-5 block min-w-0 cursor-pointer">
+                      <input ref={pdfInputRef} type="file" accept=".pdf" className="sr-only" onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)} />
+                      <span className="inline-flex min-h-10 items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">PDF 파일 선택</span>
+                      <span className="mt-2 block break-all text-xs leading-5 text-slate-500">{pdfFile?.name ?? '선택된 파일 없음'}</span>
+                    </label>
+                    <button onClick={handlePdfUpload} disabled={!pdfFile || uploadBusy} className="mt-5 min-h-11 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50">업로드</button>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 p-4">
-                    <h3 className="text-sm font-semibold text-slate-900">일반 MD 등록</h3>
-                    <p className="mt-1 text-xs text-slate-500">문서형 데이터는 승인 후에만 검색에 반영됩니다.</p>
-                    <input ref={mdInputRef} type="file" accept=".md" className="mt-4 block w-full text-sm" onChange={(e) => setMdFile(e.target.files?.[0] ?? null)} />
-                    <input value={mdTitle} onChange={(e) => setMdTitle(e.target.value)} placeholder="문서 제목" className={`${INPUT_CLASS} mt-3`} />
-                    <input value={mdCategory} onChange={(e) => setMdCategory(e.target.value)} placeholder="카테고리" className={`${INPUT_CLASS} mt-3`} />
-                    <button onClick={handleMdUpload} disabled={!mdFile || uploadBusy} className="mt-4 w-full rounded-xl bg-cyan-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">등록</button>
+                  <div className="min-w-0 rounded-2xl border border-slate-200 p-5 sm:p-6">
+                    <h3 className="break-keep text-base font-semibold leading-6 text-slate-900">일반 MD 등록</h3>
+                    <p className="mt-2 break-keep text-sm leading-6 text-slate-500">문서형 데이터는 승인 후에만 검색에 반영됩니다.</p>
+                    <label className="mt-5 block min-w-0 cursor-pointer">
+                      <input ref={mdInputRef} type="file" accept=".md" className="sr-only" onChange={(e) => setMdFile(e.target.files?.[0] ?? null)} />
+                      <span className="inline-flex min-h-10 items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">MD 파일 선택</span>
+                      <span className="mt-2 block break-all text-xs leading-5 text-slate-500">{mdFile?.name ?? '선택된 파일 없음'}</span>
+                    </label>
+                    <input value={mdTitle} onChange={(e) => setMdTitle(e.target.value)} placeholder="문서 제목" className={`${INPUT_CLASS} mt-4 min-w-0`} />
+                    <input value={mdCategory} onChange={(e) => setMdCategory(e.target.value)} placeholder="카테고리" className={`${INPUT_CLASS} mt-3 min-w-0`} />
+                    <button onClick={handleMdUpload} disabled={!mdFile || uploadBusy} className="mt-5 min-h-11 w-full rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50">등록</button>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 p-4">
-                    <h3 className="text-sm font-semibold text-slate-900">MD → FAQ JSON</h3>
-                    <p className="mt-1 text-xs text-slate-500">변환된 FAQ는 승인 전까지 실제 FAQ DB에 반영되지 않습니다.</p>
-                    <input ref={faqMdInputRef} type="file" accept=".md" className="mt-4 block w-full text-sm" onChange={(e) => setFaqMdFile(e.target.files?.[0] ?? null)} />
-                    <input value={faqMdCategory} onChange={(e) => setFaqMdCategory(e.target.value)} placeholder="FAQ 카테고리" className={`${INPUT_CLASS} mt-3`} />
-                    <button onClick={handleFaqMdUpload} disabled={!faqMdFile || uploadBusy} className="mt-4 w-full rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">변환 생성</button>
-                  </div>
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4">
-                    <h3 className="text-sm font-semibold text-slate-900">FAISS 변경 확인</h3>
-                    <p className="mt-1 text-xs text-slate-500">먼저 승인 데이터와 현재 인덱스를 비교합니다. 변경이 없으면 임베딩을 실행하지 않아 비용이 발생하지 않습니다.</p>
-                    <p className="mt-2 text-[11px] text-amber-700">변경이 있을 때만 건수 확인 후 재구성하며, 중복 실행은 서버에서 차단합니다.</p>
-                    <button onClick={handleReindex} disabled={reindexBusy} className="mt-4 w-full rounded-xl bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
-                      {reindexBusy ? '확인/재구성 처리 중...' : '변경 확인 후 재구성'}
-                    </button>
+                  <div className="min-w-0 rounded-2xl border border-slate-200 p-5 sm:p-6">
+                    <h3 className="break-keep text-base font-semibold leading-6 text-slate-900">MD → FAQ JSON</h3>
+                    <p className="mt-2 break-keep text-sm leading-6 text-slate-500">변환된 FAQ는 승인 전까지 실제 FAQ DB에 반영되지 않습니다.</p>
+                    <label className="mt-5 block min-w-0 cursor-pointer">
+                      <input ref={faqMdInputRef} type="file" accept=".md" className="sr-only" onChange={(e) => setFaqMdFile(e.target.files?.[0] ?? null)} />
+                      <span className="inline-flex min-h-10 items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">FAQ용 MD 선택</span>
+                      <span className="mt-2 block break-all text-xs leading-5 text-slate-500">{faqMdFile?.name ?? '선택된 파일 없음'}</span>
+                    </label>
+                    <input value={faqMdCategory} onChange={(e) => setFaqMdCategory(e.target.value)} placeholder="FAQ 카테고리" className={`${INPUT_CLASS} mt-4 min-w-0`} />
+                    <button onClick={handleFaqMdUpload} disabled={!faqMdFile || uploadBusy} className="mt-5 min-h-11 w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50">변환 생성</button>
                   </div>
                 </div>
               </section>
 
+              <section className="rounded-3xl border border-amber-200 bg-amber-50/40 p-5 shadow-sm sm:p-6">
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <h2 className="break-keep text-lg font-semibold leading-7 text-slate-900">FAISS 인덱스 관리</h2>
+                    <p className="mt-2 break-keep text-sm leading-6 text-slate-600">먼저 승인 데이터와 현재 인덱스를 비교합니다. 변경이 없으면 임베딩을 실행하지 않아 비용이 발생하지 않습니다.</p>
+                    <p className="mt-2 break-keep text-xs leading-5 text-amber-700">변경이 있을 때만 건수를 확인하고 재구성하며, 중복 실행은 서버에서 차단합니다.</p>
+                  </div>
+                  <button onClick={handleReindex} disabled={reindexBusy} className="min-h-11 w-full shrink-0 whitespace-normal break-keep rounded-xl bg-amber-600 px-5 py-2.5 text-center text-sm font-medium leading-5 text-white hover:bg-amber-700 disabled:opacity-50 lg:w-auto lg:min-w-52">
+                    {reindexBusy ? '확인/재구성 처리 중...' : '변경 확인 후 재구성'}
+                  </button>
+                </div>
+              </section>
+            </div>
+            )}
+
+            {documentWorkspaceTab === 'list' && (
               <section className="rounded-3xl bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-slate-900">문서 목록</h2>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">문서 목록</h2>
+                    <p className="mt-1 break-keep text-sm leading-6 text-slate-500">삭제된 문서도 표시됩니다. 문서를 조회하면 검토 패널에서 복구할 수 있습니다.</p>
+                  </div>
                   <span className="text-sm text-slate-500">{loading ? '불러오는 중...' : `${documentRows.length}건`}</span>
                 </div>
                 <div className="mt-4 overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50 text-left text-slate-500">
+                  <table className="min-w-[880px] w-full text-sm">
+                    <thead className="whitespace-nowrap bg-slate-50 text-left text-slate-500">
                       <tr>
                         <th className="px-3 py-3">파일명</th>
                         <th className="px-3 py-3">타입</th>
@@ -1531,18 +1578,15 @@ export default function AdminPage() {
                       {documentRows.map((doc) => (
                         <tr key={doc.id} className={doc.is_deleted ? 'bg-rose-50/40' : ''}>
                           <td className="px-3 py-3">
-                            <div className="font-medium text-slate-900">{doc.logical_name}</div>
-                            <div className="text-xs text-slate-500">{doc.original_filename}</div>
+                            <div className="break-all font-medium text-slate-900">{doc.logical_name}</div>
+                            <div className="break-all text-xs leading-5 text-slate-500">{doc.original_filename}</div>
                           </td>
-                          <td className="px-3 py-3">{doc.parser_type ?? '-'}</td>
-                          <td className="px-3 py-3">{doc.status}</td>
-                          <td className="px-3 py-3">v{doc.version}</td>
-                          <td className="px-3 py-3">{formatDate(doc.created_at)}</td>
+                          <td className="whitespace-nowrap px-3 py-3">{doc.parser_type ?? '-'}</td>
+                          <td className="whitespace-nowrap px-3 py-3">{doc.is_deleted ? '삭제됨' : doc.status}</td>
+                          <td className="whitespace-nowrap px-3 py-3">v{doc.version}</td>
+                          <td className="whitespace-nowrap px-3 py-3">{formatDate(doc.created_at)}</td>
                           <td className="px-3 py-3">
-                            <div className="flex gap-2">
-                              <button onClick={() => void openDocument(doc.id)} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white">조회</button>
-                              <button onClick={() => void handleDocumentDelete(doc.id)} className="rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700">삭제</button>
-                            </div>
+                            <button onClick={() => void openDocument(doc.id)} className="whitespace-nowrap rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white">조회</button>
                           </td>
                         </tr>
                       ))}
@@ -1550,38 +1594,52 @@ export default function AdminPage() {
                   </table>
                 </div>
               </section>
-            </div>
+            )}
 
-            <section className="rounded-3xl bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
+            {documentWorkspaceTab === 'review' && (
+            <section className="min-w-0 rounded-3xl bg-white p-5 shadow-sm sm:p-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <h2 className="text-lg font-semibold text-slate-900">검토 패널</h2>
                 {documentLoading && <span className="text-sm text-slate-500">불러오는 중...</span>}
               </div>
               {!selectedDocument ? (
-                <p className="mt-6 text-sm text-slate-500">문서를 선택하면 변환 결과와 승인 액션이 표시됩니다.</p>
+                <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                  <p className="break-keep text-sm leading-6 text-slate-600">문서 목록에서 조회할 문서를 선택하면 변환 결과와 승인·삭제·복구 작업이 표시됩니다.</p>
+                  <button type="button" onClick={() => setDocumentWorkspaceTab('list')} className="mt-3 min-h-10 whitespace-nowrap rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">문서 목록으로 이동</button>
+                </div>
               ) : (
                 <div className="mt-4 space-y-5">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-sm font-semibold text-slate-900">{selectedDocument.document.original_filename}</div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                    <div className="break-all text-base font-semibold leading-6 text-slate-900">{selectedDocument.document.original_filename}</div>
+                    <div className="mt-3 grid grid-cols-[5rem_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm leading-6 text-slate-600">
                       <span>상태</span><span>{selectedDocument.document.status}</span>
                       <span>타입</span><span>{selectedDocument.document.parser_type ?? '-'}</span>
                       <span>활성</span><span>{selectedDocument.document.is_active ? 'Y' : 'N'}</span>
                       <span>삭제</span><span>{selectedDocument.document.is_deleted ? 'Y' : 'N'}</span>
-                      <span>승인 시각</span><span>{formatDate(selectedDocument.document.approved_at)}</span>
-                      <span>반려 시각</span><span>{formatDate(selectedDocument.document.rejected_at)}</span>
+                      <span>승인 시각</span><span className="break-all">{formatDate(selectedDocument.document.approved_at)}</span>
                     </div>
                   </div>
                   <div>
-                    <label className="mb-2 block text-sm font-semibold text-slate-900">검토 메모</label>
-                    <textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} className={`${TEXTAREA_CLASS} h-24`} placeholder="승인/반려/삭제 사유를 남겨두세요." />
+                    <label className="mb-2 block text-sm font-semibold text-slate-900">관리 메모</label>
+                    <textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} disabled={selectedDocument.document.is_deleted} className={`${TEXTAREA_CLASS} h-24 disabled:bg-slate-50`} placeholder="승인 또는 삭제 사유를 남겨두세요." />
                   </div>
-                  <div className="flex flex-wrap gap-3">
-                    <button onClick={() => void handleDocumentApprove()} disabled={selectedDocument.document.is_deleted || documentArtifactsDirty || documentArtifactSaving} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">승인</button>
-                    <button onClick={() => void handleDocumentReject()} disabled={selectedDocument.document.is_deleted} className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">반려</button>
-                    <button onClick={() => void handleDocumentDelete(selectedDocument.document.id)} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white">삭제</button>
-                    <button onClick={() => void handleDocumentRestore()} disabled={!selectedDocument.document.is_deleted} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50">복구</button>
-                  </div>
+                  {selectedDocument.document.is_deleted ? (
+                    <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
+                      <p className="break-keep text-sm leading-6 text-cyan-900">복구하면 삭제된 문서를 다시 검토 대기 상태로 돌립니다. 검색에는 자동 반영되지 않으며, 내용을 확인한 뒤 다시 승인해야 합니다.</p>
+                      <button onClick={() => void handleDocumentRestore()} className="mt-3 min-h-11 whitespace-nowrap rounded-xl bg-cyan-700 px-5 py-2.5 text-sm font-medium text-white">복구</button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        onClick={() => void handleDocumentApprove()}
+                        disabled={selectedDocument.document.status === 'ready' || documentArtifactsDirty || documentArtifactSaving}
+                        className="min-h-11 min-w-24 whitespace-nowrap rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        {selectedDocument.document.status === 'ready' ? '승인됨' : '승인'}
+                      </button>
+                      <button onClick={() => void handleDocumentDelete(selectedDocument.document.id)} className="min-h-11 min-w-24 whitespace-nowrap rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-medium text-white">삭제</button>
+                    </div>
+                  )}
                   {documentArtifactsDirty && (
                     <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
                       저장하지 않은 수정 내용이 있습니다. 저장이 끝날 때까지 승인할 수 없습니다.
@@ -1589,7 +1647,7 @@ export default function AdminPage() {
                   )}
                   <div className="grid gap-4 lg:grid-cols-2">
                     <div>
-                      <div className="mb-2 flex items-center justify-between">
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                         <h3 className="text-sm font-semibold text-slate-900">원본 PDF</h3>
                         <span className="text-[11px] text-slate-500">원본과 변환 결과를 나란히 확인하세요.</span>
                       </div>
@@ -1606,7 +1664,7 @@ export default function AdminPage() {
                       </div>
                     </div>
                     <div>
-                      <div className="mb-2 flex items-center justify-between gap-3">
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                         <h3 className="text-sm font-semibold text-slate-900">변환된 MD 편집</h3>
                         <span className="text-[11px] text-slate-500">표·제목·누락 문장을 확인하세요.</span>
                       </div>
@@ -1628,7 +1686,7 @@ export default function AdminPage() {
                         <button
                           onClick={() => void handleFaqReconvert()}
                           disabled={faqReconvertBusy || documentArtifactSaving || selectedDocument.document.is_deleted || documentMdDraft !== (selectedDocument.md_content ?? '')}
-                          className="rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-xs font-medium text-cyan-800 disabled:opacity-50"
+                          className="min-h-10 whitespace-normal break-keep rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-center text-xs font-medium leading-5 text-cyan-800 disabled:opacity-50"
                         >
                           {faqReconvertBusy ? '재변환 중...' : '저장된 MD에서 다시 변환'}
                         </button>
@@ -1650,7 +1708,7 @@ export default function AdminPage() {
                     <button
                       onClick={() => void handleDocumentArtifactSave()}
                       disabled={!documentArtifactsDirty || documentArtifactSaving || selectedDocument.document.is_deleted}
-                      className="rounded-xl bg-cyan-700 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+                      className="min-h-11 whitespace-normal break-keep rounded-xl bg-cyan-700 px-5 py-2.5 text-center text-sm font-medium leading-5 text-white disabled:opacity-50"
                     >
                       {documentArtifactSaving ? '검증·저장 중...' : '변환 결과 검증 후 저장'}
                     </button>
@@ -1658,6 +1716,7 @@ export default function AdminPage() {
                 </div>
               )}
             </section>
+            )}
           </div>
         )}
 
@@ -2491,9 +2550,30 @@ export default function AdminPage() {
 
         {activeTab === 'settings' && (
           <div className="mt-6 space-y-6">
+            <div className="grid gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-2" role="tablist" aria-label="설정 구분">
+              {([
+                ['encryption', '암호화 설정'],
+                ['models', '모델 설정'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={settingsTab === key}
+                  onClick={() => {
+                    setSettingsTab(key);
+                    if (key === 'models' && !modelSettings) void loadModelSettings();
+                  }}
+                  className={`min-h-12 whitespace-normal break-keep rounded-xl px-4 py-3 text-center text-sm font-semibold leading-5 transition ${settingsTab === key ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {settingsTab === 'encryption' && (
             <section className="rounded-3xl bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h2 className="text-lg font-semibold text-slate-900">암호화 설정</h2>
                     <InfoTooltip
@@ -2507,7 +2587,7 @@ export default function AdminPage() {
                   </div>
                   <p className="mt-1 text-sm text-slate-500">카테고리별 암호화 ON/OFF와 기존 데이터 일괄 변환을 관리합니다.</p>
                 </div>
-                <button onClick={() => { setEncryptionSettings(null); void loadEncryptionSettings(); }} className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600">새로고침</button>
+                <button onClick={() => { setEncryptionSettings(null); void loadEncryptionSettings(); }} className="min-h-10 shrink-0 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600">새로고침</button>
               </div>
 
               {encryptionLoading && <p className="mt-4 text-sm text-slate-400">불러오는 중...</p>}
@@ -2516,8 +2596,8 @@ export default function AdminPage() {
                 <div className="mt-5 space-y-4">
                   {/* 항상 암호화 카테고리 안내 */}
                   <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium text-slate-700">채팅 내용 (메시지·세션)</p>
                           <InfoTooltip
@@ -2633,14 +2713,34 @@ export default function AdminPage() {
                 </div>
               )}
             </section>
+            )}
 
+            {settingsTab === 'models' && (
             <section className="rounded-3xl bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">답변 생성 모델</h2>
-                  <p className="mt-1 text-sm text-slate-500">변경하면 다음 새 답변 생성부터 즉시 적용됩니다. 진행 중인 답변과 분류·검증 모델은 변경되지 않습니다.</p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold text-slate-900">모델 설정</h2>
+                  <p className="mt-1 break-keep text-sm leading-6 text-slate-500">답변 생성과 검색 임베딩에 사용하는 모델을 각각 설정합니다.</p>
                 </div>
-                <button onClick={() => { setModelSettings(null); void loadModelSettings(); }} className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600">새로고침</button>
+                <button onClick={() => { setModelSettings(null); void loadModelSettings(); }} className="min-h-10 shrink-0 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600">새로고침</button>
+              </div>
+
+              <div className="mt-5 grid gap-2 rounded-2xl bg-slate-100 p-2 sm:grid-cols-2" role="tablist" aria-label="모델 설정 구분">
+                {([
+                  ['generation', '답변 생성 모델'],
+                  ['embedding', '임베딩 모델'],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={modelSettingsTab === key}
+                    onClick={() => setModelSettingsTab(key)}
+                    className={`min-h-11 whitespace-normal break-keep rounded-xl px-4 py-2.5 text-center text-sm font-semibold leading-5 transition ${modelSettingsTab === key ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:bg-white/70'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
               {modelLoadError && (
@@ -2651,16 +2751,16 @@ export default function AdminPage() {
                 <p className="mt-4 text-sm text-slate-400">불러오는 중...</p>
               )}
 
-              {modelSettings && (() => {
+              {modelSettingsTab === 'generation' && modelSettings && (() => {
                 const allModels = [
                   ...modelSettings.available_models,
                   ...(modelSettings.available_models.includes(modelSettings.current_model) ? [] : [modelSettings.current_model]),
                 ].filter((m) => !getModelMeta(m).legacy || m === modelSettings.current_model);
                 return (
                   <div className="mt-5 space-y-5">
-                    <div className="flex items-center gap-2 rounded-2xl bg-cyan-50 px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-cyan-50 px-4 py-3">
                       <span className="text-xs font-medium text-cyan-600">현재 적용 모델</span>
-                      <span className="font-mono text-sm font-semibold text-cyan-800">{modelSettings.current_model}</span>
+                      <span className="break-all font-mono text-sm font-semibold text-cyan-800">{modelSettings.current_model}</span>
                     </div>
 
                     <div className="space-y-2">
@@ -2710,7 +2810,7 @@ export default function AdminPage() {
                             <input type="radio" name="model-select" value={m} defaultChecked={isCurrent} className="mt-0.5 accent-cyan-600" />
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className={`font-mono text-sm font-semibold ${info.legacy ? 'text-slate-400' : 'text-slate-800'}`}>{m}</span>
+                                <span className={`break-all font-mono text-sm font-semibold ${info.legacy ? 'text-slate-400' : 'text-slate-800'}`}>{m}</span>
                                 {info.badge && (
                                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badgeColor[info.badge] ?? 'bg-slate-100 text-slate-600'}`}>{info.badge}</span>
                                 )}
@@ -2756,14 +2856,80 @@ export default function AdminPage() {
                           setModelSaving(false);
                         }
                       }}
-                      className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+                      className="min-h-11 w-full whitespace-normal break-keep rounded-xl bg-slate-900 px-5 py-2.5 text-center text-sm font-medium leading-5 text-white disabled:opacity-50 sm:w-auto"
                     >
                       {modelSaving ? '저장 중...' : '선택한 모델로 적용'}
                     </button>
                   </div>
                 );
               })()}
+
+              {modelSettingsTab === 'embedding' && modelSettings && (
+                <div className="mt-5">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">임베딩 모델</h3>
+                    <p className="mt-1 break-keep text-sm leading-6 text-slate-500">문서와 FAQ를 검색 벡터로 변환할 모델입니다. 저장 후 문서 검토에서 FAISS 변경 확인·재구성을 완료해야 검색에 적용됩니다.</p>
+                  </div>
+                  <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                    {modelSettings.available_embedding_models.map((modelName) => {
+                      const isSelected = embeddingModelSelection === modelName;
+                      const isIndexed = modelSettings.indexed_embedding_model === modelName;
+                      const isLarge = modelName === 'text-embedding-3-large';
+                      return (
+                        <label key={modelName} className={`flex min-w-0 cursor-pointer items-start gap-3 rounded-2xl border p-4 ${isSelected ? 'border-cyan-300 bg-cyan-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                          <input
+                            type="radio"
+                            name="embedding-model-select"
+                            value={modelName}
+                            checked={isSelected}
+                            onChange={() => setEmbeddingModelSelection(modelName)}
+                            className="mt-1 accent-cyan-600"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="break-all font-mono text-sm font-semibold text-slate-800">{modelName}</span>
+                              {isLarge && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">품질 추천</span>}
+                              {isIndexed && <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700">현재 인덱스</span>}
+                            </div>
+                            <p className="mt-2 break-keep text-xs leading-5 text-slate-500">
+                              {isLarge ? '한국어를 포함한 검색 품질을 우선할 때 적합합니다. 현재 기본 모델입니다.' : '임베딩 비용과 처리량을 우선할 때 적합합니다.'}
+                            </p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {modelSettings.indexed_embedding_model && modelSettings.indexed_embedding_model !== embeddingModelSelection && (
+                    <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+                      선택 모델과 현재 인덱스 모델이 다릅니다. 저장만으로 기존 검색은 바뀌지 않으며, 문서 검토의 FAISS 인덱스 관리에서 재구성을 확인해야 합니다.
+                    </p>
+                  )}
+                  {!modelSettings.indexed_embedding_model && (
+                    <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">현재 인덱스의 임베딩 모델 기록이 없습니다. 다음 재구성부터 선택 모델이 기록됩니다.</p>
+                  )}
+                  <button
+                    type="button"
+                    disabled={embeddingModelSaving || !embeddingModelSelection || embeddingModelSelection === modelSettings.current_embedding_model}
+                    onClick={async () => {
+                      setEmbeddingModelSaving(true);
+                      try {
+                        const result = await adminApi.setEmbeddingModel(embeddingModelSelection);
+                        setModelSettings({ ...modelSettings, current_embedding_model: result.model_name });
+                        setNotice(result.message);
+                      } catch {
+                        setNotice('임베딩 모델 변경에 실패했습니다.');
+                      } finally {
+                        setEmbeddingModelSaving(false);
+                      }
+                    }}
+                    className="mt-4 min-h-11 w-full whitespace-normal break-keep rounded-xl bg-cyan-700 px-5 py-2.5 text-center text-sm font-medium leading-5 text-white disabled:opacity-50 sm:w-auto"
+                  >
+                    {embeddingModelSaving ? '저장 중...' : embeddingModelSelection === modelSettings.current_embedding_model ? '저장된 임베딩 모델' : '선택한 임베딩 모델 저장'}
+                  </button>
+                </div>
+              )}
             </section>
+            )}
           </div>
         )}
 
