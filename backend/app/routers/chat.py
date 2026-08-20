@@ -28,12 +28,23 @@ from app.services.intent_service import classify_intent
 from app.services.openai_service import restyle_faq_answer, stream_ai_response
 from app.services.router_service import route
 from app.services.question_category_service import categorize_question_rule
+from app.services.response_review_service import evaluate_chat_log
 from app.services.prompt_service import get_prompt_value
 from app.services.response_formatter import apply_link_tracking, course_link_for, format_chat_response, _strip_meta_disclaimer
 from app.services.website_course_service import is_live_course_fact_query
 from app.utils.crypto import maybe_encrypt
 
 router = APIRouter()
+_response_review_tasks: set[asyncio.Task] = set()
+
+
+def _schedule_response_review(chat_log_id: int) -> None:
+    task = asyncio.create_task(
+        evaluate_chat_log(chat_log_id),
+        name=f"response-review-{chat_log_id}",
+    )
+    _response_review_tasks.add(task)
+    task.add_done_callback(_response_review_tasks.discard)
 
 
 def _is_internal_session(session_id: str) -> bool:
@@ -411,23 +422,24 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             source = "fallback"
         answer = format_chat_response(EMPTY_FALLBACK_ANSWER, max_bubbles=2)
     save_message(db, request.session_id, "assistant", answer, source=source)
-    db.add(
-        ChatLog(
-            session_id=request.session_id,
-            question=maybe_encrypt(request.message),
-            retrieval_chunks=json.dumps(retrieval_chunks, ensure_ascii=False),
-            answer=maybe_encrypt(answer),
-            source=source,
-            error=error_message,
-            processing_status=processing_status,
-            question_category=question_category.key,
-            question_category_label=question_category.label,
-            question_category_source=question_category.source,
-            embedding_cost=0.0,
-            llm_cost=llm_cost,
-        )
+    chat_log = ChatLog(
+        session_id=request.session_id,
+        question=maybe_encrypt(request.message),
+        retrieval_chunks=json.dumps(retrieval_chunks, ensure_ascii=False),
+        answer=maybe_encrypt(answer),
+        source=source,
+        error=error_message,
+        processing_status=processing_status,
+        question_category=question_category.key,
+        question_category_label=question_category.label,
+        question_category_source=question_category.source,
+        embedding_cost=0.0,
+        llm_cost=llm_cost,
     )
+    db.add(chat_log)
     db.commit()
+    db.refresh(chat_log)
+    _schedule_response_review(chat_log.id)
 
     handoff_url: str | None = None
     if source == "handoff":
@@ -624,23 +636,24 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
         yield _sse({"done": True, "source": source, "handoff_url": handoff_url})
 
         save_message(db, request.session_id, "assistant", full_answer, source=source)
-        db.add(
-            ChatLog(
-                session_id=request.session_id,
-                question=maybe_encrypt(request.message),
-                retrieval_chunks=json.dumps(retrieval_chunks, ensure_ascii=False),
-                answer=maybe_encrypt(full_answer),
-                source=source,
-                error=error_message,
-                processing_status=processing_status,
-                question_category=question_category.key,
-                question_category_label=question_category.label,
-                question_category_source=question_category.source,
-                embedding_cost=0.0,
-                llm_cost=0.0,
-            )
+        chat_log = ChatLog(
+            session_id=request.session_id,
+            question=maybe_encrypt(request.message),
+            retrieval_chunks=json.dumps(retrieval_chunks, ensure_ascii=False),
+            answer=maybe_encrypt(full_answer),
+            source=source,
+            error=error_message,
+            processing_status=processing_status,
+            question_category=question_category.key,
+            question_category_label=question_category.label,
+            question_category_source=question_category.source,
+            embedding_cost=0.0,
+            llm_cost=0.0,
         )
+        db.add(chat_log)
         db.commit()
+        db.refresh(chat_log)
+        _schedule_response_review(chat_log.id)
 
     return StreamingResponse(
         generate(),

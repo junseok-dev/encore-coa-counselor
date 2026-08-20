@@ -26,6 +26,11 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
             "question_category": "VARCHAR(64)",
             "question_category_label": "VARCHAR(100)",
             "question_category_source": "VARCHAR(20)",
+            "response_review_status": "VARCHAR(20) NOT NULL DEFAULT 'pending'",
+            "response_review_type": "VARCHAR(40)",
+            "response_review_reason": "TEXT",
+            "response_review_confidence": "DOUBLE PRECISION",
+            "response_reviewed_at": "TIMESTAMP WITH TIME ZONE",
         }
         return mapping.get(column_name)
     if table_name == "chat_sessions":
@@ -247,7 +252,11 @@ def migrate_database(engine: Engine) -> None:
 
     if "chat_logs" in inspector.get_table_names():
         existing = {column["name"] for column in inspector.get_columns("chat_logs")}
-        for column_name in ("question_category", "question_category_label", "question_category_source"):
+        for column_name in (
+            "question_category", "question_category_label", "question_category_source",
+            "response_review_status", "response_review_type", "response_review_reason",
+            "response_review_confidence", "response_reviewed_at",
+        ):
             if column_name in existing:
                 continue
             column_sql = _column_sql("chat_logs", column_name)

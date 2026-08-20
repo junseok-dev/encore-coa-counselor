@@ -34,7 +34,10 @@ const VIEWS: { key: OperationsDashboardView; label: string; description: string 
 
 const SIGNAL_LABEL = {
   handoff: '상담 연결', cancel: '취소 문의', refund: '환불 요청',
-  safety: '안전 감지', error: '처리 오류', quality: '답변 품질',
+  safety: '안전 감지', error: '처리 오류', quality: '직접 등록',
+  intent_deviation: '의도 이탈', context_mismatch: '문맥 불일치',
+  user_complaint: '답변 불만', repeated_failure: '반복 실패',
+  safety_failure: '안전 처리 실패',
 };
 
 function formatRelativeTime(value: string) {

@@ -33,7 +33,12 @@ const SIGNAL_CONFIG: Record<OperationsSignalType, { label: string; badge: string
   refund: { label: '환불 요청', badge: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
   safety: { label: '안전 확인', badge: 'bg-amber-50 text-amber-800 ring-amber-200', dot: 'bg-amber-500' },
   error: { label: '처리 오류', badge: 'bg-slate-100 text-slate-700 ring-slate-200', dot: 'bg-slate-500' },
-  quality: { label: '답변 품질', badge: 'bg-cyan-50 text-cyan-800 ring-cyan-200', dot: 'bg-cyan-500' },
+  quality: { label: '직접 등록', badge: 'bg-cyan-50 text-cyan-800 ring-cyan-200', dot: 'bg-cyan-500' },
+  intent_deviation: { label: '의도 이탈', badge: 'bg-violet-50 text-violet-700 ring-violet-200', dot: 'bg-violet-500' },
+  context_mismatch: { label: '문맥 불일치', badge: 'bg-orange-50 text-orange-800 ring-orange-200', dot: 'bg-orange-500' },
+  user_complaint: { label: '답변 불만', badge: 'bg-rose-50 text-rose-700 ring-rose-200', dot: 'bg-rose-500' },
+  repeated_failure: { label: '반복 실패', badge: 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200', dot: 'bg-fuchsia-500' },
+  safety_failure: { label: '안전 처리 실패', badge: 'bg-red-50 text-red-800 ring-red-200', dot: 'bg-red-500' },
 };
 
 function formatDateTime(value: string) {
@@ -108,12 +113,13 @@ export default function OperationsReview({ data, loading, systemHealth, healthLo
   const developerRequiredCount = items.filter((item) => item.status === 'developer_required').length;
   const filters: { key: 'all' | OperationsSignalType; label: string }[] = [
     { key: 'all', label: '전체' },
-    { key: 'handoff', label: '상담 연결' },
-    { key: 'cancel', label: '취소 요청' },
-    { key: 'refund', label: '환불 요청' },
-    { key: 'safety', label: '안전 확인' },
     { key: 'error', label: '처리 오류' },
-    { key: 'quality', label: '답변 품질' },
+    { key: 'intent_deviation', label: '의도 이탈' },
+    { key: 'context_mismatch', label: '문맥 불일치' },
+    { key: 'user_complaint', label: '답변 불만' },
+    { key: 'repeated_failure', label: '반복 실패' },
+    { key: 'safety_failure', label: '안전 처리 실패' },
+    { key: 'quality', label: '직접 등록' },
   ];
 
   useEffect(() => {

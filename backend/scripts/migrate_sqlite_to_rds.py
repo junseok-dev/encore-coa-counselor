@@ -37,7 +37,7 @@ DATETIME_COLUMNS = {
     "chat_messages": {"created_at"},
     "documents": {"created_at", "updated_at", "approved_at", "rejected_at", "deleted_at"},
     "chunks": {"created_at"},
-    "chat_logs": {"created_at"},
+    "chat_logs": {"created_at", "response_reviewed_at"},
     "cancel_requests": {"created_at"},
     "course_link_events": {"created_at"},
     "processing_logs": {"created_at"},
@@ -53,7 +53,7 @@ BOOLEAN_COLUMNS = {
 }
 
 FLOAT_COLUMNS = {
-    "chat_logs": {"embedding_cost", "llm_cost"},
+    "chat_logs": {"embedding_cost", "llm_cost", "response_review_confidence"},
 }
 
 INTEGER_COLUMNS = {

@@ -19,7 +19,12 @@ const SIGNAL_LABEL: Record<OperationsAttentionItem['type'], string> = {
   refund: '환불 요청',
   safety: '안전 확인',
   error: '처리 오류',
-  quality: '답변 품질',
+  quality: '직접 등록',
+  intent_deviation: '의도 이탈',
+  context_mismatch: '문맥 불일치',
+  user_complaint: '답변 불만',
+  repeated_failure: '반복 실패',
+  safety_failure: '안전 처리 실패',
 };
 
 export default function AdminSessionPage() {

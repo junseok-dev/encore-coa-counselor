@@ -196,7 +196,7 @@ class OperationsContextDashboardTest(unittest.TestCase):
         self.assertTrue(future_session.is_internal)
         self.assertEqual(client_id, future_session.analytics_client_id)
 
-    def test_old_safety_and_error_stay_in_review_until_resolved(self):
+    def test_only_failed_safety_handling_and_errors_stay_in_review_until_resolved(self):
         old_at = datetime.now() - timedelta(days=365)
         self.db.add(ChatSession(id="old-risk", message_count=2, created_at=old_at))
         self.db.add_all([
@@ -207,6 +207,18 @@ class OperationsContextDashboardTest(unittest.TestCase):
                 source="guardrail",
                 processing_status="ready",
                 created_at=old_at,
+            ),
+            ChatLog(
+                session_id="old-risk",
+                question="위험 신호가 포함된 질문",
+                answer="부적절한 답변",
+                source="document",
+                processing_status="ready",
+                response_review_status="flagged",
+                response_review_type="safety_failure",
+                response_review_reason="위험 신호를 놓치고 일반 답변을 제공했습니다.",
+                response_review_confidence=0.97,
+                created_at=old_at + timedelta(seconds=30),
             ),
             ChatLog(
                 session_id="old-risk",
@@ -222,15 +234,42 @@ class OperationsContextDashboardTest(unittest.TestCase):
 
         result = admin.get_operations_dashboard(days=7, attention_limit=500, db=self.db, _=None)
 
-        self.assertEqual({"safety", "error"}, {item["type"] for item in result["attention"]})
+        self.assertEqual({"safety_failure", "error"}, {item["type"] for item in result["attention"]})
         self.assertTrue(all(item["status"] == "open" for item in result["attention"]))
 
-        safety_alert = self.db.query(OperationsAlert).filter_by(signal_type="safety").one()
+        safety_alert = self.db.query(OperationsAlert).filter_by(signal_type="safety_failure").one()
         safety_alert.status = "resolved"
         self.db.commit()
         refreshed = admin.get_operations_dashboard(days=7, attention_limit=500, db=self.db, _=None)
-        resolved = next(item for item in refreshed["attention"] if item["type"] == "safety")
+        resolved = next(item for item in refreshed["attention"] if item["type"] == "safety_failure")
         self.assertEqual("resolved", resolved["status"])
+
+    def test_normal_cancel_refund_and_guardrail_are_not_improvement_items(self):
+        created_at = datetime.now()
+        self.db.add(ChatSession(id="normal-operations", message_count=3, created_at=created_at))
+        self.db.add_all([
+            ChatLog(
+                session_id="normal-operations",
+                question="수강 취소 방법을 알려주세요",
+                answer="취소 접수 방법을 안내해 드릴게요.",
+                source="handoff",
+                processing_status="handoff",
+                created_at=created_at,
+            ),
+            ChatLog(
+                session_id="normal-operations",
+                question="위험한 요청",
+                answer="도와드릴 수 없는 요청입니다.",
+                source="guardrail",
+                processing_status="ready",
+                created_at=created_at + timedelta(minutes=1),
+            ),
+        ])
+        self.db.commit()
+
+        result = admin.get_operations_dashboard(days=7, attention_limit=500, db=self.db, _=None)
+
+        self.assertEqual([], result["attention"])
 
     def test_course_link_event_only_accepts_campus_domain(self):
         result = chat.record_course_link_event(
@@ -252,6 +291,21 @@ class OperationsContextDashboardTest(unittest.TestCase):
         columns = {column["name"] for column in inspect(legacy_engine).get_columns("chat_sessions")}
         self.assertIn("is_internal", columns)
         self.assertIn("analytics_client_id", columns)
+        legacy_engine.dispose()
+
+    def test_legacy_chat_logs_gain_response_review_columns(self):
+        legacy_engine = create_engine("sqlite://", poolclass=StaticPool)
+        with legacy_engine.begin() as connection:
+            connection.execute(text("CREATE TABLE chat_logs (id INTEGER PRIMARY KEY)"))
+        migrate_database(legacy_engine)
+        columns = {column["name"] for column in inspect(legacy_engine).get_columns("chat_logs")}
+        self.assertTrue({
+            "response_review_status",
+            "response_review_type",
+            "response_review_reason",
+            "response_review_confidence",
+            "response_reviewed_at",
+        }.issubset(columns))
         legacy_engine.dispose()
 
 

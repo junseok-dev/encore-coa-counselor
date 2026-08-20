@@ -2399,14 +2399,21 @@ def get_operations_dashboard(
         severity = "medium"
         if alert and alert.signal_type == "quality":
             signal_type, severity, reason = alert.signal_type, alert.severity, alert.reason
-        elif request_signal == "refund":
-            signal_type, severity, reason = "refund", "medium", "환불 요청 접수"
-        elif request_signal == "cancel":
-            signal_type, severity, reason = "cancel", "medium", "취소 요청 접수"
-        elif row.source == "guardrail":
-            signal_type, severity, reason = "safety", "high", "안전 가드레일 감지"
         elif row.processing_status == "failed" or error:
-            signal_type, severity, reason = "error", "high", "응답 처리 오류"
+            signal_type, severity, reason = "error", "high", "답변 처리 오류"
+        elif (
+            row.response_review_status == "flagged"
+            and row.response_review_type in {
+                "intent_deviation",
+                "context_mismatch",
+                "user_complaint",
+                "repeated_failure",
+                "safety_failure",
+            }
+        ):
+            signal_type = row.response_review_type
+            severity = "medium" if signal_type == "user_complaint" else "high"
+            reason = decrypt_if_needed(row.response_review_reason) or "답변 흐름에 즉시 확인할 문제가 감지되었습니다."
         if signal_type:
             if alert is None:
                 alert = OperationsAlert(
