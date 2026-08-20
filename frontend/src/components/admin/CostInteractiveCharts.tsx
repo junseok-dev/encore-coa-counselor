@@ -75,21 +75,23 @@ function ChartTooltip({ point, pinned = false }: { point: TooltipPoint | null; p
   );
 }
 
-interface ServiceSelectionProps {
-  selectedService: string | null;
-  onSelectService: (serviceName: string | null) => void;
+interface ServiceVisibilityProps {
+  hiddenServices: Set<string>;
+  onToggleService: (serviceName: string) => void;
 }
 
-export function ServiceDonut({ data, selectedService, onSelectService }: { data: CostManagementData } & ServiceSelectionProps) {
+export function ServiceDonut({ data, hiddenServices, onToggleService }: { data: CostManagementData } & ServiceVisibilityProps) {
   const [hovered, setHovered] = useState<ServicePoint | null>(null);
+  const [pinned, setPinned] = useState<ServicePoint | null>(null);
   const total = Math.max(1, data.usage_total_krw);
+  const visibleTotal = Math.max(1, data.service_totals.filter((service) => !hiddenServices.has(service.service_name)).reduce((sum, service) => sum + service.amount_krw, 0));
   const radius = 66;
   const circumference = Math.PI * 2 * radius;
   const points = useMemo(() => {
     let offset = 0;
     let angleOffset = 0;
-    return data.service_totals.map((service, index) => {
-      const ratio = service.amount_krw / total;
+    return data.service_totals.map((service, index) => ({ service, index })).filter(({ service }) => !hiddenServices.has(service.service_name)).map(({ service, index }) => {
+      const ratio = service.amount_krw / visibleTotal;
       const length = ratio * circumference;
       const midAngle = -90 + angleOffset + ratio * 180;
       const radians = (midAngle * Math.PI) / 180;
@@ -98,7 +100,7 @@ export function ServiceDonut({ data, selectedService, onSelectService }: { data:
         serviceName: service.service_name,
         title: `${data.is_all_period ? '전체 기간' : data.billing_month} 서비스 비용`,
         rows: [{ label: service.service_name, value: krw(service.amount_krw), color: SERVICE_COLORS[index % SERVICE_COLORS.length] }],
-        note: `전체 비용의 ${(ratio * 100).toFixed(1)}%`,
+        note: `현재 표시 항목의 ${(ratio * 100).toFixed(1)}%`,
         left: 50 + Math.cos(radians) * 38,
         top: 50 + Math.sin(radians) * 38,
         ratio,
@@ -112,12 +114,28 @@ export function ServiceDonut({ data, selectedService, onSelectService }: { data:
       angleOffset += ratio * 360;
       return point;
     });
-  }, [circumference, data.billing_month, data.is_all_period, data.service_totals, total]);
-  const selectedPoint = points.find((point) => point.serviceName === selectedService) ?? null;
-  const activePoint = hovered ?? selectedPoint;
+  }, [circumference, data.billing_month, data.is_all_period, data.service_totals, hiddenServices, visibleTotal]);
+  const activePoint = hovered ?? pinned;
 
-  const toggleService = (point: ServicePoint) => {
-    onSelectService(selectedService === point.serviceName ? null : point.serviceName);
+  useEffect(() => {
+    setPinned((current) => current && !hiddenServices.has(current.serviceName) ? current : null);
+  }, [hiddenServices]);
+
+  const togglePoint = (point: ServicePoint) => {
+    setPinned((current) => current?.key === point.key ? null : point);
+  };
+
+  const legendPoint = (serviceName: string, amount: number, index: number): ServicePoint => {
+    const ratio = amount / total;
+    return {
+      key: serviceName,
+      serviceName,
+      title: `${data.is_all_period ? '전체 기간' : data.billing_month} 서비스 비용`,
+      rows: [{ label: serviceName, value: krw(amount), color: SERVICE_COLORS[index % SERVICE_COLORS.length] }],
+      note: `전체 비용의 ${(ratio * 100).toFixed(1)}%`,
+      left: 50,
+      top: 50,
+    };
   };
 
   return (
@@ -126,7 +144,6 @@ export function ServiceDonut({ data, selectedService, onSelectService }: { data:
         <svg viewBox="0 0 180 180" className="h-full w-full">
           <circle cx="90" cy="90" r={radius} fill="none" stroke="#f1f5f9" strokeWidth="28" />
           {points.map((point) => {
-            const active = !selectedService || selectedService === point.serviceName;
             return (
               <circle
                 key={point.key}
@@ -135,11 +152,10 @@ export function ServiceDonut({ data, selectedService, onSelectService }: { data:
                 r={radius}
                 fill="none"
                 stroke={point.color}
-                strokeWidth={selectedService === point.serviceName || hovered?.serviceName === point.serviceName ? 32 : 28}
+                strokeWidth={pinned?.serviceName === point.serviceName || hovered?.serviceName === point.serviceName ? 32 : 28}
                 strokeDasharray={`${point.length} ${circumference - point.length}`}
                 strokeDashoffset={-point.offset}
                 transform="rotate(-90 90 90)"
-                opacity={active ? 1 : 0.25}
                 className="cursor-pointer transition-all outline-none"
                 role="button"
                 tabIndex={0}
@@ -147,8 +163,8 @@ export function ServiceDonut({ data, selectedService, onSelectService }: { data:
                 onMouseEnter={() => setHovered(point)}
                 onFocus={() => setHovered(point)}
                 onBlur={() => setHovered(null)}
-                onClick={() => toggleService(point)}
-                onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') toggleService(point); }}
+                onClick={() => togglePoint(point)}
+                onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') togglePoint(point); }}
               />
             );
           })}
@@ -157,43 +173,48 @@ export function ServiceDonut({ data, selectedService, onSelectService }: { data:
           ) : null)}
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"><span className="text-sm font-medium text-slate-500">Total</span><strong className="mt-1 text-2xl font-black tracking-tight text-red-500">{data.usage_total_krw.toLocaleString()}</strong><span className="mt-0.5 text-[11px] font-bold text-slate-400">KRW</span></div>
-        <ChartTooltip point={activePoint} pinned={!hovered && Boolean(selectedPoint)} />
+        <ChartTooltip point={activePoint} pinned={!hovered && Boolean(pinned)} />
       </div>
-      <div className="grid min-w-0 content-center gap-1.5">
-        {points.map((point) => (
+      <div className="grid max-h-64 min-w-0 content-start gap-1 overflow-y-auto pr-2">
+        {data.service_totals.map((service, index) => {
+          const hidden = hiddenServices.has(service.service_name);
+          return (
           <button
             type="button"
-            key={point.key}
-            onMouseEnter={() => setHovered({ ...point, left: 50, top: 50 })}
+            key={service.service_name}
+            onMouseEnter={() => setHovered(legendPoint(service.service_name, service.amount_krw, index))}
             onMouseLeave={() => setHovered(null)}
-            onFocus={() => setHovered({ ...point, left: 50, top: 50 })}
+            onFocus={() => setHovered(legendPoint(service.service_name, service.amount_krw, index))}
             onBlur={() => setHovered(null)}
-            onClick={() => toggleService(point)}
-            className={`flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition ${selectedService === point.serviceName ? 'bg-blue-50 text-blue-800 ring-1 ring-blue-200' : 'text-slate-600 hover:bg-slate-50'} ${selectedService && selectedService !== point.serviceName ? 'opacity-40' : ''}`}
+            onClick={() => onToggleService(service.service_name)}
+            className={`flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition hover:bg-slate-50 ${hidden ? 'text-slate-400 opacity-45' : 'text-slate-600'}`}
+            title={hidden ? `${service.service_name} 다시 표시` : `${service.service_name} 숨기기`}
           >
-            <span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: point.color }} />
-            <span className="min-w-0 flex-1 break-words font-medium leading-4">{point.serviceName}</span>
-            <span className="shrink-0 tabular-nums text-slate-400">{point.rows[0].value}</span>
+            <span className={`h-3 w-3 shrink-0 rounded-full ${hidden ? 'ring-1 ring-slate-300' : ''}`} style={{ background: hidden ? 'white' : SERVICE_COLORS[index % SERVICE_COLORS.length] }} />
+            <span className={`min-w-0 flex-1 break-words font-medium leading-4 ${hidden ? 'line-through' : ''}`}>{service.service_name}</span>
           </button>
-        ))}
-        {points.length === 0 && <p className="py-10 text-center text-sm text-slate-400">업로드된 서비스 비용이 없습니다.</p>}
+          );
+        })}
+        {data.service_totals.length === 0 && <p className="py-10 text-center text-sm text-slate-400">업로드된 서비스 비용이 없습니다.</p>}
       </div>
     </div>
   );
 }
 
-export function DailyStackedChart({ data, selectedService, onSelectService }: { data: CostManagementData } & ServiceSelectionProps) {
+export function DailyStackedChart({ data, hiddenServices, onToggleService }: { data: CostManagementData } & ServiceVisibilityProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<ServicePoint | null>(null);
   const [pinned, setPinned] = useState<ServicePoint | null>(null);
-  const maxValue = Math.max(1, ...data.daily_totals.map((item) => item.total_krw));
+  const serviceEntries = data.service_totals.map((item, index) => ({ ...item, index }));
+  const visibleServices = serviceEntries.filter((item) => !hiddenServices.has(item.service_name));
+  const visibleDayTotal = (day: CostDailyTotal) => visibleServices.reduce((sum, service) => sum + (day.services[service.service_name] ?? 0), 0);
+  const maxValue = Math.max(1, ...data.daily_totals.map(visibleDayTotal));
   const scaleMax = Math.ceil(maxValue / 1000) * 1000 || 1000;
   const ticks = Array.from({ length: 6 }, (_, index) => Math.round(scaleMax - (scaleMax / 5) * index));
-  const services = data.service_totals.map((item) => item.service_name);
 
   useEffect(() => {
-    setPinned((current) => current && current.serviceName === selectedService ? current : null);
-  }, [selectedService]);
+    setPinned((current) => current && !hiddenServices.has(current.serviceName) ? current : null);
+  }, [hiddenServices]);
 
   const pointFor = (day: CostDailyTotal, service: string, index: number, position: { left: number; top: number }): ServicePoint => {
     const value = day.services[service] ?? 0;
@@ -203,20 +224,18 @@ export function DailyStackedChart({ data, selectedService, onSelectService }: { 
       serviceName: service,
       title: `${day.day}일 (${weekday.replace('요일', '')})`,
       rows: [{ label: service, value: krw(value), color: SERVICE_COLORS[index % SERVICE_COLORS.length] }],
-      note: `당일 총 ${krw(day.total_krw)} · ${(value / Math.max(1, day.total_krw) * 100).toFixed(1)}%`,
+      note: `당일 전체 사용 금액 ${krw(day.total_krw)}`,
       ...position,
     };
   };
 
   const togglePoint = (point: ServicePoint) => {
-    const next = pinned?.key === point.key ? null : point;
-    setPinned(next);
-    onSelectService(next?.serviceName ?? null);
+    setPinned((current) => current?.key === point.key ? null : point);
   };
 
   return (
     <div className="max-w-full overflow-x-auto pb-1">
-      <div className="grid min-w-[640px] grid-cols-[44px_minmax(570px,1fr)] gap-3">
+      <div className="grid min-w-[790px] grid-cols-[44px_minmax(570px,1fr)_150px] gap-3">
         <div className="flex h-56 flex-col justify-between pb-0 text-right text-[10px] tabular-nums text-slate-500">{ticks.map((tick) => <span key={tick}>{tick.toLocaleString()}</span>)}</div>
         <div ref={chartRef} className="relative h-64" onMouseLeave={() => setHovered(null)}>
           <div className="absolute inset-x-0 top-0 h-56 border-b border-slate-300">
@@ -225,25 +244,25 @@ export function DailyStackedChart({ data, selectedService, onSelectService }: { 
           <div className="absolute inset-0 flex items-end gap-1.5">
             {data.daily_totals.map((day, dayIndex) => {
               const weekday = new Intl.DateTimeFormat('ko-KR', { weekday: 'short' }).format(new Date(`${day.date}T00:00:00`));
+              const displayedTotal = visibleDayTotal(day);
               return (
                 <div key={day.date} className="flex h-full min-w-4 flex-1 flex-col items-center justify-end">
-                  <div className="flex w-full max-w-7 flex-col-reverse overflow-hidden rounded-t-sm" style={{ height: `${Math.max(day.total_krw ? 4 : 0, (day.total_krw / scaleMax) * 224)}px` }}>
-                    {services.map((service, index) => {
-                      const value = day.services[service] ?? 0;
-                      if (!value || !day.total_krw) return null;
-                      const dimmed = selectedService && selectedService !== service;
+                  <div className="flex w-full max-w-7 flex-col-reverse overflow-hidden rounded-t-sm" style={{ height: `${Math.max(displayedTotal ? 4 : 0, (displayedTotal / scaleMax) * 224)}px` }}>
+                    {visibleServices.map((service) => {
+                      const value = day.services[service.service_name] ?? 0;
+                      if (!value || !displayedTotal) return null;
                       return (
                         <button
                           type="button"
-                          key={service}
-                          aria-label={`${day.day}일 ${service} ${krw(value)}`}
+                          key={service.service_name}
+                          aria-label={`${day.day}일 ${service.service_name} ${krw(value)}`}
                           className="w-full shrink-0 cursor-pointer border-0 p-0 transition-opacity focus:relative focus:z-10 focus:outline-none focus:ring-2 focus:ring-white"
-                          style={{ minHeight: '2px', height: `${(value / day.total_krw) * 100}%`, background: SERVICE_COLORS[index % SERVICE_COLORS.length], opacity: dimmed ? 0.22 : 1 }}
-                          onMouseEnter={(event) => setHovered(pointFor(day, service, index, positionFromEvent(event, chartRef.current)))}
-                          onMouseMove={(event) => setHovered(pointFor(day, service, index, positionFromEvent(event, chartRef.current)))}
-                          onFocus={() => setHovered(pointFor(day, service, index, { left: ((dayIndex + 0.5) / data.daily_totals.length) * 100, top: 42 }))}
+                          style={{ minHeight: '2px', height: `${(value / displayedTotal) * 100}%`, background: SERVICE_COLORS[service.index % SERVICE_COLORS.length] }}
+                          onMouseEnter={(event) => setHovered(pointFor(day, service.service_name, service.index, positionFromEvent(event, chartRef.current)))}
+                          onMouseMove={(event) => setHovered(pointFor(day, service.service_name, service.index, positionFromEvent(event, chartRef.current)))}
+                          onFocus={() => setHovered(pointFor(day, service.service_name, service.index, { left: ((dayIndex + 0.5) / data.daily_totals.length) * 100, top: 42 }))}
                           onBlur={() => setHovered(null)}
-                          onClick={(event) => togglePoint(pointFor(day, service, index, positionFromEvent(event, chartRef.current)))}
+                          onClick={(event) => togglePoint(pointFor(day, service.service_name, service.index, positionFromEvent(event, chartRef.current)))}
                         />
                       );
                     })}
@@ -255,13 +274,27 @@ export function DailyStackedChart({ data, selectedService, onSelectService }: { 
           </div>
           <ChartTooltip point={hovered ?? pinned} pinned={!hovered && Boolean(pinned)} />
         </div>
-      </div>
-      <div className="mt-3 flex min-w-[640px] flex-wrap gap-1.5 pl-14">
-        {services.map((service, index) => (
-          <button key={service} type="button" onClick={() => onSelectService(selectedService === service ? null : service)} className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-semibold ${selectedService === service ? 'bg-blue-100 text-blue-800 ring-1 ring-blue-200' : 'bg-slate-50 text-slate-500'} ${selectedService && selectedService !== service ? 'opacity-40' : ''}`}>
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} />{service}
-          </button>
-        ))}
+        <div className="max-h-56 overflow-y-auto pr-2">
+          {serviceEntries.map((service) => {
+            const hidden = hiddenServices.has(service.service_name);
+            return (
+              <button
+                key={service.service_name}
+                type="button"
+                onMouseEnter={() => setHovered({ key: service.service_name, serviceName: service.service_name, title: data.billing_month, rows: [{ label: service.service_name, value: krw(service.amount_krw), color: SERVICE_COLORS[service.index % SERVICE_COLORS.length] }], note: '월 서비스 합계', left: 78, top: 48 })}
+                onMouseLeave={() => setHovered(null)}
+                onFocus={() => setHovered({ key: service.service_name, serviceName: service.service_name, title: data.billing_month, rows: [{ label: service.service_name, value: krw(service.amount_krw), color: SERVICE_COLORS[service.index % SERVICE_COLORS.length] }], note: '월 서비스 합계', left: 78, top: 48 })}
+                onBlur={() => setHovered(null)}
+                onClick={() => onToggleService(service.service_name)}
+                className={`flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[10px] transition hover:bg-slate-50 ${hidden ? 'text-slate-400 opacity-45' : 'text-slate-600'}`}
+                title={hidden ? `${service.service_name} 다시 표시` : `${service.service_name} 숨기기`}
+              >
+                <span className={`h-3 w-3 shrink-0 rounded-sm ${hidden ? 'ring-1 ring-slate-300' : ''}`} style={{ background: hidden ? 'white' : SERVICE_COLORS[service.index % SERVICE_COLORS.length] }} />
+                <span className={`min-w-0 break-words leading-4 ${hidden ? 'line-through' : ''}`}>{service.service_name}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -332,12 +365,11 @@ interface OpenAiMonthlyChartProps {
 export function OpenAiMonthlyChart({ history, maxValue, onSelectMonth }: OpenAiMonthlyChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<TooltipPoint | null>(null);
-  const [pinned, setPinned] = useState<TooltipPoint | null>(null);
   const pointFor = (item: { billing_month: string; amount_usd: number }, position: { left: number; top: number }): TooltipPoint => ({
     key: item.billing_month,
     title: item.billing_month,
     rows: [{ label: 'OpenAI 실제 비용', value: usd(item.amount_usd), color: '#10b981' }],
-    note: '선택한 막대를 한 번 더 누르면 해당 월 입력 내역으로 이동합니다.',
+    note: '막대를 누르면 해당 월 비용 입력 내역으로 이동합니다.',
     ...position,
   });
   return (
@@ -351,19 +383,15 @@ export function OpenAiMonthlyChart({ history, maxValue, onSelectMonth }: OpenAiM
             onMouseMove={(event) => setHovered(pointFor(item, positionFromEvent(event, chartRef.current)))}
             onFocus={() => setHovered(pointFor(item, { left: ((index + 0.5) / history.length) * 100, top: 42 }))}
             onBlur={() => setHovered(null)}
-            onClick={(event) => {
-              const point = pointFor(item, positionFromEvent(event, chartRef.current));
-              if (pinned?.key === point.key) onSelectMonth(item.billing_month);
-              else setPinned(point);
-            }}
-            className={`flex h-full min-w-14 flex-1 flex-col items-center justify-end gap-1 transition ${pinned?.key && pinned.key !== item.billing_month ? 'opacity-40' : ''}`}
+            onClick={() => onSelectMonth(item.billing_month)}
+            className="flex h-full min-w-14 flex-1 flex-col items-center justify-end gap-1"
           >
             <span className="text-[9px] font-bold text-slate-600">{usd(item.amount_usd)}</span>
-            <span className={`w-8 rounded-t transition ${pinned?.key === item.billing_month ? 'bg-emerald-700' : 'bg-emerald-500 hover:bg-emerald-600'}`} style={{ height: `${Math.max(5, item.amount_usd / maxValue * 88)}px` }} />
+            <span className="w-8 rounded-t bg-emerald-500 transition hover:bg-emerald-600" style={{ height: `${Math.max(5, item.amount_usd / maxValue * 88)}px` }} />
             <span className="whitespace-nowrap text-[9px] text-slate-500">{item.billing_month}</span>
           </button>
         ))}
-        <ChartTooltip point={hovered ?? pinned} pinned={!hovered && Boolean(pinned)} />
+        <ChartTooltip point={hovered} />
       </div>
     </div>
   );

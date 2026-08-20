@@ -34,7 +34,7 @@ function dateTime(value: string) {
 
 export default function CostManagement() {
   const [costTab, setCostTab] = useState<'aws' | 'openai'>('aws');
-  const [selectedService, setSelectedService] = useState<string | null>(null);
+  const [hiddenServices, setHiddenServices] = useState<Set<string>>(new Set());
   const [billingMonth, setBillingMonth] = useState(currentMonth);
   const [data, setData] = useState<CostManagementData | null>(null);
   const [openAiData, setOpenAiData] = useState<OpenAiManualCostData | null>(null);
@@ -83,8 +83,17 @@ export default function CostManagement() {
   }, [billingMonth]);
 
   useEffect(() => {
-    setSelectedService(null);
+    setHiddenServices(new Set());
   }, [billingMonth, costTab]);
+
+  const toggleServiceVisibility = (serviceName: string) => {
+    setHiddenServices((current) => {
+      const next = new Set(current);
+      if (next.has(serviceName)) next.delete(serviceName);
+      else next.add(serviceName);
+      return next;
+    });
+  };
 
   const importFile = async () => {
     if (!file) return;
@@ -216,8 +225,8 @@ export default function CostManagement() {
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-blue-600" /><div><h2 className="font-bold text-slate-950">월별 사용 비용</h2><p className="mt-1 text-xs text-slate-500">막대에 마우스를 올리면 금액을 확인하고, 누르면 해당 월 상세로 이동합니다.</p></div></div>{history.length ? <MonthlyCostChart history={history} maxValue={monthlyMax} selectedMonth={billingMonth} onSelectMonth={setBillingMonth} /> : <p className="py-14 text-center text-sm text-slate-400">업로드된 월별 비용 데이터가 없습니다.</p>}</section>
 
       <div className={`grid min-w-0 gap-5 ${isAllPeriod ? '' : 'xl:grid-cols-[minmax(460px,0.85fr)_minmax(0,1.35fr)]'}`}>
-        <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">{isAllPeriod ? '전체 기간' : billingMonth} 서비스별 사용 금액</h2><p className="mt-1 text-[11px] text-slate-500">조각이나 범례를 누르면 해당 서비스를 고정해서 볼 수 있습니다.</p></div><div className="min-w-0 p-5">{data && <ServiceDonut data={data} selectedService={selectedService} onSelectService={setSelectedService} />}</div></section>
-        {!isAllPeriod && <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">일자별 사용금액 그래프</h2><p className="mt-1 text-[11px] text-slate-500">막대 항목에 마우스를 올리거나 누르면 날짜별 서비스 금액을 확인할 수 있습니다.</p></div><div className="min-w-0 p-5">{data && <DailyStackedChart data={data} selectedService={selectedService} onSelectService={setSelectedService} />}</div></section>}
+        <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">{isAllPeriod ? '전체 기간' : billingMonth} 서비스별 사용 금액</h2><p className="mt-1 text-[11px] text-slate-500">차트 항목은 상세 금액을 표시하고, 우측 범례를 누르면 서비스를 표시하거나 숨깁니다.</p></div><div className="min-w-0 p-5">{data && <ServiceDonut data={data} hiddenServices={hiddenServices} onToggleService={toggleServiceVisibility} />}</div></section>
+        {!isAllPeriod && <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">일자별 사용금액 그래프</h2><p className="mt-1 text-[11px] text-slate-500">n·Xavis와 같이 막대 상세 툴팁과 스크롤 범례를 함께 제공합니다.</p></div><div className="min-w-0 p-5">{data && <DailyStackedChart data={data} hiddenServices={hiddenServices} onToggleService={toggleServiceVisibility} />}</div></section>}
       </div>
 
       {!isAllPeriod && <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3"><div className="flex items-center gap-3"><h2 className="font-bold text-slate-950">서비스별 사용금액 리스트</h2><span className="rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-black text-white">KRW</span></div><p className="hidden text-xs text-slate-500 sm:block">{billingMonth} · {TARGET_ACCOUNT_NAME}</p></div><div className="overflow-x-auto p-4"><table className="min-w-max border-separate border-spacing-0 text-xs"><thead><tr className="text-slate-700"><th className="sticky left-0 z-10 min-w-44 border-y border-l border-slate-300 bg-slate-100 px-4 py-3 text-left">서비스</th><th className="min-w-24 border-y border-l border-slate-300 bg-slate-100 px-3 py-3 text-right">합계</th>{data?.daily_totals.map((day, index) => <th key={day.date} className={`min-w-20 border-y border-l border-slate-300 bg-slate-100 px-3 py-3 text-right ${index === data.daily_totals.length - 1 ? 'border-r' : ''}`}>{String(day.day).padStart(2, '0')}일</th>)}</tr></thead><tbody><tr className="font-black text-cyan-950"><td className="sticky left-0 border-b border-l border-cyan-200 bg-cyan-200 px-4 py-3">Total</td><td className="border-b border-l border-cyan-200 bg-cyan-200 px-3 py-3 text-right tabular-nums">{data?.usage_total_krw.toLocaleString()}</td>{data?.daily_totals.map((day, index) => <td key={day.date} className={`border-b border-l border-cyan-200 bg-cyan-200 px-3 py-3 text-right tabular-nums ${index === data.daily_totals.length - 1 ? 'border-r' : ''}`}>{day.total_krw.toLocaleString()}</td>)}</tr>{data?.service_daily_rows.map((row, rowIndex) => <tr key={row.service_name} className="hover:bg-blue-50"><td className={`sticky left-0 border-b border-l border-slate-200 px-4 py-3 font-semibold text-slate-700 ${rowIndex % 2 ? 'bg-slate-50' : 'bg-white'}`}>{row.service_name}</td><td className={`border-b border-l border-slate-200 px-3 py-3 text-right font-bold tabular-nums ${rowIndex % 2 ? 'bg-slate-50' : 'bg-white'}`}>{row.total_krw.toLocaleString()}</td>{data.daily_totals.map((day, index) => <td key={day.date} className={`border-b border-l border-slate-200 px-3 py-3 text-right tabular-nums text-slate-700 ${rowIndex % 2 ? 'bg-slate-50' : 'bg-white'} ${index === data.daily_totals.length - 1 ? 'border-r' : ''}`}>{(row.daily[String(day.day).padStart(2, '0')] ?? 0).toLocaleString()}</td>)}</tr>)}</tbody></table></div></section>}
