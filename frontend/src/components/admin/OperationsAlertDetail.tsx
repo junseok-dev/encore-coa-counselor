@@ -37,7 +37,7 @@ const HISTORY_LABELS: Record<string, string> = {
   prompt_published: '운영 프롬프트 반영',
   prompt_rolled_back: '운영 프롬프트 복구',
   answer_tested: '수정 후 답변 테스트',
-  answer_kept: '현재 답변 유지',
+  answer_kept: '문제 없음 확인',
   resolved: '처리 완료',
 };
 
@@ -193,7 +193,7 @@ export default function OperationsAlertDetailPanel({
   };
 
   const keepCurrentAnswer = async () => {
-    if (!window.confirm('현재 답변을 수정 없이 유지하고 이 검토를 완료할까요?')) return;
+    if (!window.confirm('문제 없는 정상 처리로 확인하고 완료할까요? 현재 답변은 유지되며 알림과 미확인 목록에서 제외됩니다.')) return;
     setKeeping(true);
     setError('');
     try {
@@ -565,7 +565,7 @@ export default function OperationsAlertDetailPanel({
                   <div key={history.id} className="rounded-xl border border-slate-200 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-black text-slate-800">{HISTORY_LABELS[history.action] || history.action}</p><p className="text-[11px] text-slate-400">{history.actor} · {formatDateTime(history.created_at)}</p></div>
                     {history.action === 'resolved' && <p className="mt-3 text-xs leading-5 text-slate-600"><b className="text-slate-800">검증된 답변</b><br />{history.test_answer || '-'}</p>}
-                    {history.action === 'answer_kept' && <p className="mt-3 text-xs leading-5 text-slate-600"><b className="text-slate-800">유지한 기존 답변</b><br />{history.test_answer || '-'}</p>}
+                    {history.action === 'answer_kept' && <p className="mt-3 text-xs leading-5 text-slate-600"><b className="text-slate-800">정상으로 확인한 기존 답변</b><br />{history.test_answer || '-'}</p>}
                     {history.action === 'answer_tested' && <p className="mt-2 line-clamp-2 text-xs text-slate-500">질문: {history.test_question}<br />답변: {history.test_answer}</p>}
                   </div>
                 )) : <p className="rounded-xl bg-slate-50 py-8 text-center text-sm text-slate-400">아직 저장된 처리 이력이 없습니다.</p>}
@@ -578,7 +578,7 @@ export default function OperationsAlertDetailPanel({
                 <button onClick={() => void saveWorkflow('open')} disabled={saving} className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">다시 열기</button>
               ) : (
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <button onClick={() => void keepCurrentAnswer()} disabled={saving || keeping} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50">{keeping ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />}답변 유지</button>
+                  <button onClick={() => void keepCurrentAnswer()} disabled={saving || keeping} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50">{keeping ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />}문제 없음 · 확인 완료</button>
                   <button onClick={() => void complete()} disabled={saving || keeping || !testPassed} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}검증 완료 및 처리 완료</button>
                 </div>
               )}

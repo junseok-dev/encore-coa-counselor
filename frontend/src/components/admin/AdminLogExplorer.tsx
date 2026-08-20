@@ -148,7 +148,7 @@ function auditSentence(action: string, target: string): string {
     operations_prompt_previewed: `${target}의 변경 전·후 답변을 비교했습니다.`,
     operations_prompt_published: `${target}의 개선 프롬프트를 운영에 반영했습니다.`,
     operations_prompt_rolled_back: `${target}의 프롬프트를 이전 버전으로 복구했습니다.`,
-    operations_alert_answer_kept: `${target}의 기존 답변을 유지하기로 했습니다.`,
+    operations_alert_answer_kept: `${target}을 문제 없는 정상 처리로 확인했습니다.`,
     operations_alert_updated: `${target}의 처리 상태를 변경했습니다.`,
     question_categories_reclassified: '질문 유형을 다시 분류했습니다.',
     openai_cost_created: `${target}을 등록했습니다.`,

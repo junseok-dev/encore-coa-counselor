@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, BarChart3, Bell, CalendarRange, CreditCard, Headphones,
+  AlertTriangle, ArrowRight, BarChart3, Bell, CalendarRange, CreditCard, Headphones,
   MessageCircle, RefreshCw, ShieldAlert, Users,
 } from 'lucide-react';
 import {
@@ -42,10 +42,11 @@ function formatRelativeTime(value: string) {
   return `${Math.floor(minutes / 1440)}일 전`;
 }
 
-function SummaryCard({ title, icon: Icon, iconClass, iconBg, values }: { title: string; icon: typeof Users; iconClass: string; iconBg: string; values: { label: string; value: number; unit: string }[] }) {
-  return <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
+function SummaryCard({ title, icon: Icon, iconClass, iconBg, values, guidance }: { title: string; icon: typeof Users; iconClass: string; iconBg: string; values: { label: string; value: number; unit: string }[]; guidance?: { message: string; pending: number; onOpen?: () => void } }) {
+  return <div className="flex h-full flex-col rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
     <div className="flex items-center gap-2.5"><span className={`flex h-9 w-9 items-center justify-center rounded-xl ${iconBg}`}><Icon className={`h-4 w-4 ${iconClass}`} /></span><h2 className="text-sm font-black text-slate-800">{title}</h2></div>
     <div className="mt-4 grid grid-cols-2 divide-x divide-slate-100">{values.map((item) => <div key={item.label} className="px-3 first:pl-0 last:pr-0"><p className="text-[11px] font-bold text-slate-400">{item.label}</p><p className="mt-1 text-2xl font-black tracking-tight text-slate-950">{item.value.toLocaleString()}<span className="ml-1 text-xs font-bold text-slate-400">{item.unit}</span></p></div>)}</div>
+    {guidance && <div className="mt-3 border-t border-slate-100 pt-3"><p className="text-[10px] leading-4 text-slate-500">{guidance.message}</p>{guidance.pending > 0 && guidance.onOpen ? <button type="button" onClick={guidance.onOpen} className="mt-2 flex w-full items-center justify-between rounded-lg bg-rose-50 px-2.5 py-2 text-[11px] font-black text-rose-700 hover:bg-rose-100"><span>미확인 안정성 {guidance.pending}건</span><span className="flex items-center gap-1">검토하기<ArrowRight className="h-3.5 w-3.5" /></span></button> : <p className="mt-2 text-[10px] font-bold text-emerald-600">현재 미확인 문제 없음</p>}</div>}
   </div>;
 }
 
@@ -58,13 +59,19 @@ export default function AdminOperationsOverview({ data, loading, analyticsData, 
     if (a.severity !== b.severity) return a.severity === 'high' ? -1 : 1;
     return dateTimeMillis(b.created_at) - dateTimeMillis(a.created_at);
   }), [unresolved]);
+  const stabilityNotifications = useMemo(
+    () => notifications.filter((item) => ['safety', 'error', 'repeated_failure', 'safety_failure'].includes(item.type)),
+    [notifications],
+  );
+  const unresolvedSafetyCount = stabilityNotifications.filter((item) => ['safety', 'safety_failure'].includes(item.type)).length;
+  const unresolvedErrorCount = stabilityNotifications.filter((item) => ['error', 'repeated_failure'].includes(item.type)).length;
   const highPriorityCount = unresolved.filter((item) => item.severity === 'high').length;
   const summary = analyticsData?.period_summary;
   const cards: Parameters<typeof SummaryCard>[0][] = [
     { title: '이용 현황', icon: MessageCircle, iconClass: 'text-cyan-700', iconBg: 'bg-cyan-50', values: [{ label: '방문자', value: summary?.visitors ?? 0, unit: '명' }, { label: '채팅', value: summary?.chats ?? 0, unit: '건' }] },
     { title: '사람 상담', icon: Headphones, iconClass: 'text-violet-700', iconBg: 'bg-violet-50', values: [{ label: '상담 요청', value: summary?.handoffs ?? 0, unit: '건' }, { label: '연결 클릭', value: summary?.handoff_clicks ?? 0, unit: '건' }] },
     { title: '취소·환불', icon: CreditCard, iconClass: 'text-amber-700', iconBg: 'bg-amber-50', values: [{ label: '취소 요청', value: summary?.cancels ?? 0, unit: '건' }, { label: '환불 요청', value: summary?.refunds ?? 0, unit: '건' }] },
-    { title: '안전성', icon: ShieldAlert, iconClass: 'text-rose-700', iconBg: 'bg-rose-50', values: [{ label: '안전 감지', value: summary?.safety ?? 0, unit: '건' }, { label: '처리 오류', value: summary?.failed ?? 0, unit: '건' }] },
+    { title: '안전성', icon: ShieldAlert, iconClass: 'text-rose-700', iconBg: 'bg-rose-50', values: [{ label: '미확인 안전', value: unresolvedSafetyCount, unit: '건' }, { label: '미확인 오류', value: unresolvedErrorCount, unit: '건' }], guidance: { message: '해결 완료하거나 문제 없음으로 확인하면 카드와 알림에서 제외됩니다.', pending: stabilityNotifications.length, onOpen: stabilityNotifications[0] ? () => onOpenReview(stabilityNotifications[0]) : undefined } },
   ];
 
   useEffect(() => {

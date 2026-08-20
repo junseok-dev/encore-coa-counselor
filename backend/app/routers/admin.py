@@ -3720,7 +3720,7 @@ def keep_operations_alert_answer(
         actor=current_user,
     )
     return {
-        "message": "현재 답변을 유지하고 개선 검토를 완료했습니다.",
+        "message": "문제 없는 정상 처리로 확인하고 개선 검토를 완료했습니다.",
         "alert": _serialize_operations_alert(alert),
     }
 

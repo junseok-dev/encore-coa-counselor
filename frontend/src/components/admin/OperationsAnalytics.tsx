@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { BarChart3, Bot, ChevronDown } from 'lucide-react';
 import { OperationsAnalyticsData, QuestionCategoryMetric } from '../../types';
 
@@ -98,22 +98,30 @@ function MetricTrend({
 }
 
 function SourceDonut({ data }: { data: OperationsAnalyticsData }) {
-  const [hoveredSource, setHoveredSource] = useState<'faq' | 'llm' | null>(null);
+  const [sourceTooltip, setSourceTooltip] = useState<{ source: 'faq' | 'llm'; x: number; y: number } | null>(null);
   const faq = data.answer_source_summary.faq;
   const llm = data.answer_source_summary.llm;
   const total = faq + llm;
   const faqRate = total ? Math.round(faq / total * 100) : 0;
-  const activeCount = hoveredSource === 'faq' ? faq : hoveredSource === 'llm' ? llm : total;
-  const activeRate = hoveredSource === 'faq' ? faqRate : hoveredSource === 'llm' ? 100 - faqRate : null;
-  const activeLabel = hoveredSource === 'faq' ? 'FAQ 직접답변' : hoveredSource === 'llm' ? 'LLM 상담답변' : '정상 응답';
+  const showSourceTooltip = (source: 'faq' | 'llm', event: ReactMouseEvent<SVGCircleElement>) => {
+    const bounds = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
+    if (!bounds) return;
+    setSourceTooltip({ source, x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+  };
+  const tooltipDetails = sourceTooltip?.source === 'faq'
+    ? { label: 'FAQ 직접답변', count: faq, rate: faqRate }
+    : sourceTooltip?.source === 'llm'
+      ? { label: 'LLM 상담답변', count: llm, rate: 100 - faqRate }
+      : null;
   return <div className="grid min-h-72 place-items-center gap-6 py-2 sm:grid-cols-[minmax(220px,0.8fr)_1fr]">
     <div className="relative h-48 w-48">
       <svg viewBox="0 0 120 120" className="h-full w-full" role="img" aria-label="FAQ와 LLM 답변 비율 도넛 그래프">
         <circle cx="60" cy="60" r="46" fill="none" stroke="#e2e8f0" strokeWidth="22" />
-        {total > 0 && <circle cx="60" cy="60" r="46" fill="none" stroke={llm > 0 ? '#2563eb' : '#0891b2'} strokeWidth="22" pathLength="100" transform="rotate(-90 60 60)" className="cursor-pointer" tabIndex={0} aria-label={`${llm > 0 ? 'LLM 상담답변' : 'FAQ 직접답변'} ${(llm > 0 ? llm : faq).toLocaleString()}건`} onMouseEnter={() => setHoveredSource(llm > 0 ? 'llm' : 'faq')} onMouseLeave={() => setHoveredSource(null)} onFocus={() => setHoveredSource(llm > 0 ? 'llm' : 'faq')} onBlur={() => setHoveredSource(null)} />}
-        {faq > 0 && llm > 0 && <circle cx="60" cy="60" r="46" fill="none" stroke="#0891b2" strokeWidth="22" pathLength="100" strokeDasharray={`${faqRate} ${100 - faqRate}`} transform="rotate(-90 60 60)" className="cursor-pointer" tabIndex={0} aria-label={`FAQ 직접답변 ${faq.toLocaleString()}건`} onMouseEnter={() => setHoveredSource('faq')} onMouseLeave={() => setHoveredSource(null)} onFocus={() => setHoveredSource('faq')} onBlur={() => setHoveredSource(null)} />}
+        {total > 0 && <circle cx="60" cy="60" r="46" fill="none" stroke={llm > 0 ? '#2563eb' : '#0891b2'} strokeWidth="22" pathLength="100" transform="rotate(-90 60 60)" className="cursor-pointer" tabIndex={0} aria-label={`${llm > 0 ? 'LLM 상담답변' : 'FAQ 직접답변'} ${(llm > 0 ? llm : faq).toLocaleString()}건`} onMouseEnter={(event) => showSourceTooltip(llm > 0 ? 'llm' : 'faq', event)} onMouseMove={(event) => showSourceTooltip(llm > 0 ? 'llm' : 'faq', event)} onMouseLeave={() => setSourceTooltip(null)} onFocus={() => setSourceTooltip({ source: llm > 0 ? 'llm' : 'faq', x: 96, y: 28 })} onBlur={() => setSourceTooltip(null)} />}
+        {faq > 0 && llm > 0 && <circle cx="60" cy="60" r="46" fill="none" stroke="#0891b2" strokeWidth="22" pathLength="100" strokeDasharray={`${faqRate} ${100 - faqRate}`} transform="rotate(-90 60 60)" className="cursor-pointer" tabIndex={0} aria-label={`FAQ 직접답변 ${faq.toLocaleString()}건`} onMouseEnter={(event) => showSourceTooltip('faq', event)} onMouseMove={(event) => showSourceTooltip('faq', event)} onMouseLeave={() => setSourceTooltip(null)} onFocus={() => setSourceTooltip({ source: 'faq', x: 96, y: 28 })} onBlur={() => setSourceTooltip(null)} />}
       </svg>
-      <div className="pointer-events-none absolute inset-8 flex flex-col items-center justify-center rounded-full bg-white text-center"><span className="text-[11px] font-bold text-slate-400">{activeLabel}</span><strong className="mt-1 text-2xl font-black text-slate-950">{activeCount.toLocaleString()}건</strong><span className="mt-0.5 text-[10px] font-bold text-slate-400">{activeRate === null ? '전체' : `${activeRate}%`}</span></div>
+      <div className="pointer-events-none absolute inset-8 flex flex-col items-center justify-center rounded-full bg-white text-center"><span className="text-[11px] font-bold text-slate-400">정상 응답</span><strong className="mt-1 text-2xl font-black text-slate-950">{total.toLocaleString()}건</strong><span className="mt-0.5 text-[10px] font-bold text-slate-400">전체</span></div>
+      {sourceTooltip && tooltipDetails && <div className="pointer-events-none absolute z-20 whitespace-nowrap rounded-lg bg-slate-950 px-3 py-2 text-left text-white shadow-xl" style={{ left: Math.max(64, Math.min(128, sourceTooltip.x)), top: sourceTooltip.y < 72 ? sourceTooltip.y + 14 : sourceTooltip.y - 10, transform: sourceTooltip.y < 72 ? 'translateX(-50%)' : 'translate(-50%, -100%)' }}><p className="text-[10px] font-semibold text-slate-300">{tooltipDetails.label}</p><p className="mt-0.5 text-xs font-black">{tooltipDetails.count.toLocaleString()}건 <span className="ml-1 text-[10px] font-bold text-slate-300">{tooltipDetails.rate}%</span></p></div>}
     </div>
     <div className="w-full max-w-sm space-y-3">
       <div className="flex items-center justify-between rounded-xl bg-cyan-50 px-4 py-3"><span className="flex items-center gap-2 text-sm font-bold text-cyan-900"><i className="h-3 w-3 rounded-full bg-cyan-600" />FAQ 직접답변</span><strong className="text-lg text-cyan-900">{faq.toLocaleString()}건</strong></div>
