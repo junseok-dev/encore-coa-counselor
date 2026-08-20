@@ -27,6 +27,7 @@ import {
   SystemHealthData,
   SystemHealthStatus,
 } from '../../types';
+import { dateTimeMillis, formatKoreaDateTime } from '../../utils/dateTime';
 import OperationsAlertDetailPanel from './OperationsAlertDetail';
 
 interface OperationsDashboardProps {
@@ -54,26 +55,15 @@ const SIGNAL_CONFIG: Record<OperationsSignalType, { label: string; badge: string
 };
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString('ko-KR', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatKoreaDateTime(value, { year: undefined });
 }
 
 function formatLastConversation(value: string) {
-  return new Date(value).toLocaleString('ko-KR', {
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatKoreaDateTime(value, { month: 'numeric', day: 'numeric' });
 }
 
 function formatRelativeTime(value: string) {
-  const diffSeconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+  const diffSeconds = Math.max(0, Math.floor((Date.now() - dateTimeMillis(value)) / 1000));
   if (diffSeconds < 60) return '방금 전';
   const minutes = Math.floor(diffSeconds / 60);
   if (minutes < 60) return `${minutes}분 전`;

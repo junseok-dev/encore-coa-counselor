@@ -13,7 +13,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
@@ -79,6 +78,7 @@ from app.services.storage_service import (
     storage_exists,
 )
 from app.utils.crypto import ENCRYPTED_PREFIX, decrypt_if_needed, encrypt, maybe_encrypt
+from app.utils.datetime_utils import KOREA_TIMEZONE, UTC_TIMEZONE, as_korea, korea_now, utc_now
 from app.utils.data_names import clean_data_name, data_name_key
 
 router = APIRouter()
@@ -356,7 +356,7 @@ def _create_vault_token(current_user: str, db: Session) -> str:
             "sub": current_user,
             "scope": "admin_security_vault",
             "vault_version": _vault_token_version(db),
-            "exp": datetime.now(tz=ZoneInfo("UTC")) + timedelta(minutes=VAULT_TOKEN_MINUTES),
+            "exp": utc_now() + timedelta(minutes=VAULT_TOKEN_MINUTES),
         },
         get_settings().jwt_secret,
         algorithm="HS256",
@@ -783,9 +783,7 @@ def _shift_month(month_start: date, offset: int) -> date:
 
 
 def _analysis_datetime(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(ZoneInfo("Asia/Seoul"))
+    return as_korea(value)
 
 
 def _peak_item(items: list[dict], key: str, label_key: str) -> dict | None:
@@ -797,7 +795,7 @@ def _peak_item(items: list[dict], key: str, label_key: str) -> dict | None:
 
 def _ec2_health_check() -> dict:
     settings = get_settings()
-    checked_at = datetime.now()
+    checked_at = korea_now()
     if not settings.aws_ec2_instance_id:
         return {
             "key": "ec2",
@@ -944,7 +942,7 @@ def _build_workbook(rows: list[dict]) -> bytes:
                 row["processing_status"],
                 row["embedding_cost"],
                 row["llm_cost"],
-                row["created_at"].isoformat() if row["created_at"] else "",
+                _analysis_datetime(row["created_at"]).isoformat() if row["created_at"] else "",
             ]
         )
     buffer = io.BytesIO()
@@ -956,13 +954,12 @@ def _build_workbook(rows: list[dict]) -> bytes:
 def _date_filter_bounds(start_date: date | None, end_date: date | None) -> tuple[datetime | None, datetime | None]:
     if start_date and end_date and start_date > end_date:
         raise HTTPException(status_code=400, detail="시작일은 종료일보다 늦을 수 없습니다.")
-    local_timezone = ZoneInfo("Asia/Seoul")
     start_at = (
-        datetime.combine(start_date, time.min, tzinfo=local_timezone).astimezone(ZoneInfo("UTC"))
+        datetime.combine(start_date, time.min, tzinfo=KOREA_TIMEZONE).astimezone(UTC_TIMEZONE)
         if start_date else None
     )
     end_before = (
-        datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=local_timezone).astimezone(ZoneInfo("UTC"))
+        datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=KOREA_TIMEZONE).astimezone(UTC_TIMEZONE)
         if end_date else None
     )
     return start_at, end_before
@@ -1057,7 +1054,7 @@ def export_session(session_id: str, db: Session = Depends(get_db), _: None = Dep
     sheet.title = "conversation"
     sheet.append(["세션 ID", session.id])
     sheet.append(["사용자", decrypt_if_needed(session.encrypted_user_name) if session.encrypted_user_name else "익명"])
-    sheet.append(["시작 시각", session.created_at.isoformat() if session.created_at else ""])
+    sheet.append(["시작 시각", _analysis_datetime(session.created_at).isoformat() if session.created_at else ""])
     sheet.append(["메시지 수", len(messages)])
     sheet.append([])
     sheet.append(["순서", "역할", "내용", "응답 출처", "작성 시각"])
@@ -1067,13 +1064,13 @@ def export_session(session_id: str, db: Session = Depends(get_db), _: None = Dep
             message.role,
             decrypt_if_needed(message.content) or "",
             message.source or "",
-            message.created_at.isoformat() if message.created_at else "",
+            _analysis_datetime(message.created_at).isoformat() if message.created_at else "",
         ])
 
     buffer = io.BytesIO()
     workbook.save(buffer)
     safe_session_id = re.sub(r"[^A-Za-z0-9._-]", "_", session.id)[:64] or "session"
-    filename = f"chat_session_{safe_session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"chat_session_{safe_session_id}_{korea_now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return Response(
         content=buffer.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1580,7 +1577,7 @@ def create_manual_operations_review(
 def export_chat_logs(start_date: date | None = None, end_date: date | None = None, session_id: str | None = None, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
     rows = [_serialize_chat_log(row) for row in _filter_chat_logs(db, start_date=start_date, end_date=end_date, session_id=session_id, limit=None)]
     payload = _build_workbook(rows)
-    filename = f"chat_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"chat_logs_{korea_now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return Response(
         content=payload,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1597,7 +1594,7 @@ def get_operations_analytics(
     db: Session = Depends(get_db),
     _: None = Depends(verify_admin),
 ):
-    today = datetime.now().date()
+    today = korea_now().date()
     current_month = today.replace(day=1)
     internal_ids = _internal_session_ids(db)
 
@@ -2011,7 +2008,7 @@ def get_operations_analytics(
         "available_years": list(range(first_available_year, last_available_year + 1)),
         "available_months": available_months,
         "period_label": period_label,
-        "generated_at": datetime.now(),
+        "generated_at": korea_now(),
         "monthly": monthly,
         "daily": daily,
         "hourly": hourly,
@@ -2100,7 +2097,7 @@ async def reclassify_question_categories(
 @router.get("/operations/health")
 def get_operations_health(_: None = Depends(verify_admin)):
     """Check API availability, a real application-table read, a committed write, and EC2 status."""
-    checked_at = datetime.now()
+    checked_at = korea_now()
     checks = [{
         "key": "application",
         "label": "백엔드 API",
@@ -2260,10 +2257,14 @@ def get_operations_dashboard(
     _: None = Depends(verify_admin),
 ):
     """운영 대시보드용 지표, 상담 사유, 주의 대화를 한 번에 반환한다."""
-    today = datetime.now().date()
+    today = korea_now().date()
     start_date = today - timedelta(days=days - 1)
     previous_start_date = start_date - timedelta(days=days)
-    previous_start = datetime.combine(previous_start_date, time.min)
+    previous_start = datetime.combine(
+        previous_start_date,
+        time.min,
+        tzinfo=KOREA_TIMEZONE,
+    ).astimezone(UTC_TIMEZONE)
     internal_ids = _internal_session_ids(db)
 
     sessions = db.query(ChatSession).filter(ChatSession.created_at >= previous_start, ChatSession.is_internal.is_(False)).all()
@@ -2278,14 +2279,14 @@ def get_operations_dashboard(
     cancels = cancel_query.order_by(CancelRequest.created_at.desc()).all()
     link_events = link_query.all()
 
-    current_sessions = [row for row in sessions if row.created_at and row.created_at.date() >= start_date]
-    previous_sessions = [row for row in sessions if row.created_at and previous_start_date <= row.created_at.date() < start_date]
-    current_logs = [row for row in logs if row.created_at and row.created_at.date() >= start_date]
-    previous_logs = [row for row in logs if row.created_at and previous_start_date <= row.created_at.date() < start_date]
-    current_cancels = [row for row in cancels if row.created_at and row.created_at.date() >= start_date]
-    previous_cancels = [row for row in cancels if row.created_at and previous_start_date <= row.created_at.date() < start_date]
-    current_link_events = [row for row in link_events if row.created_at and row.created_at.date() >= start_date]
-    previous_link_events = [row for row in link_events if row.created_at and previous_start_date <= row.created_at.date() < start_date]
+    current_sessions = [row for row in sessions if row.created_at and start_date <= _analysis_datetime(row.created_at).date() <= today]
+    previous_sessions = [row for row in sessions if row.created_at and previous_start_date <= _analysis_datetime(row.created_at).date() < start_date]
+    current_logs = [row for row in logs if row.created_at and start_date <= _analysis_datetime(row.created_at).date() <= today]
+    previous_logs = [row for row in logs if row.created_at and previous_start_date <= _analysis_datetime(row.created_at).date() < start_date]
+    current_cancels = [row for row in cancels if row.created_at and start_date <= _analysis_datetime(row.created_at).date() <= today]
+    previous_cancels = [row for row in cancels if row.created_at and previous_start_date <= _analysis_datetime(row.created_at).date() < start_date]
+    current_link_events = [row for row in link_events if row.created_at and start_date <= _analysis_datetime(row.created_at).date() <= today]
+    previous_link_events = [row for row in link_events if row.created_at and previous_start_date <= _analysis_datetime(row.created_at).date() < start_date]
 
     summary = _operations_summary(current_sessions, current_logs, current_cancels, current_link_events)
     previous_summary = _operations_summary(previous_sessions, previous_logs, previous_cancels, previous_link_events)
@@ -2311,9 +2312,9 @@ def get_operations_dashboard(
         for offset in range(days)
     }
     for row in current_sessions:
-        daily_map[row.created_at.date().isoformat()]["visitors"] += 1
+        daily_map[_analysis_datetime(row.created_at).date().isoformat()]["visitors"] += 1
     for row in current_logs:
-        bucket = daily_map[row.created_at.date().isoformat()]
+        bucket = daily_map[_analysis_datetime(row.created_at).date().isoformat()]
         bucket["chats"] += 1
         if row.processing_status == "handoff" or row.source == "handoff":
             bucket["handoffs"] += 1
@@ -2327,25 +2328,27 @@ def get_operations_dashboard(
             bucket["homepage_requests"] += 1
     for row in current_cancels:
         key = "refunds" if _is_refund_request(decrypt_if_needed(row.message)) else "cancels"
-        daily_map[row.created_at.date().isoformat()][key] += 1
+        daily_map[_analysis_datetime(row.created_at).date().isoformat()][key] += 1
 
     context_metrics = _session_context_metrics(current_logs)
     for row in context_metrics["first_course_log"].values():
         if row.created_at:
-            daily_map[row.created_at.date().isoformat()]["course_inquiries"] += 1
+            daily_map[_analysis_datetime(row.created_at).date().isoformat()]["course_inquiries"] += 1
     for row in current_link_events:
         if row.created_at:
-            daily_map[row.created_at.date().isoformat()]["course_page_views"] += 1
+            daily_map[_analysis_datetime(row.created_at).date().isoformat()]["course_page_views"] += 1
     for session_id in context_metrics["risk_sessions"]:
         session_rows = [row for row in current_logs if row.session_id == session_id and row.created_at]
         if session_rows:
-            daily_map[min(row.created_at for row in session_rows).date().isoformat()]["affected_sessions"] += 1
+            first_at = min(_analysis_datetime(row.created_at) for row in session_rows)
+            daily_map[first_at.date().isoformat()]["affected_sessions"] += 1
     for session_id in context_metrics["potential_loss_sessions"]:
         session_rows = [row for row in current_logs if row.session_id == session_id and row.created_at]
         if session_rows:
-            daily_map[max(row.created_at for row in session_rows).date().isoformat()]["potential_inquiry_loss"] += 1
+            last_at = max(_analysis_datetime(row.created_at) for row in session_rows)
+            daily_map[last_at.date().isoformat()]["potential_inquiry_loss"] += 1
 
-    review_log_query = db.query(ChatLog)
+    review_log_query = db.query(ChatLog).filter(ChatLog.review_eligible.is_(True))
     review_cancel_query = db.query(CancelRequest)
     if internal_ids:
         review_log_query = review_log_query.filter(ChatLog.session_id.notin_(internal_ids))
@@ -2501,7 +2504,7 @@ def get_operations_dashboard(
     last_conversation_at = last_message_query.scalar()
     return {
         "period_days": days,
-        "generated_at": datetime.now(),
+        "generated_at": korea_now(),
         "last_conversation_at": last_conversation_at,
         "summary": summary,
         "previous_summary": previous_summary,
@@ -2663,7 +2666,7 @@ def get_openai_costs(
     _: None = Depends(verify_admin),
 ):
     settings = get_settings()
-    fetched_at = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+    fetched_at = korea_now().isoformat()
     project_name = settings.openai_project_name.strip() or "AIcampus_Chatbot"
     if not settings.openai_admin_key:
         return {
@@ -2685,8 +2688,8 @@ def get_openai_costs(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="청구 월은 YYYY-MM 형식이어야 합니다.") from exc
     month_end = _shift_month(month_start, 1)
-    start_time = int(datetime.combine(month_start, time.min, tzinfo=ZoneInfo("UTC")).timestamp())
-    end_time = int(datetime.combine(month_end, time.min, tzinfo=ZoneInfo("UTC")).timestamp())
+    start_time = int(datetime.combine(month_start, time.min, tzinfo=UTC_TIMEZONE).timestamp())
+    end_time = int(datetime.combine(month_end, time.min, tzinfo=UTC_TIMEZONE).timestamp())
 
     daily_map: dict[str, float] = {}
     line_item_map: dict[str, float] = {}
@@ -2720,7 +2723,7 @@ def get_openai_costs(
                 payload = json.loads(response.read().decode("utf-8"))
 
             for bucket in payload.get("data", []):
-                bucket_date = datetime.fromtimestamp(bucket["start_time"], tz=ZoneInfo("UTC")).date().isoformat()
+                bucket_date = datetime.fromtimestamp(bucket["start_time"], tz=UTC_TIMEZONE).date().isoformat()
                 for result in bucket.get("results", []):
                     amount = result.get("amount") or {}
                     value = float(amount.get("value") or 0)
@@ -2898,7 +2901,7 @@ def download_cost_template(
     billing_month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
     _: None = Depends(verify_admin),
 ):
-    template_month = billing_month or datetime.now().strftime("%Y-%m")
+    template_month = billing_month or korea_now().strftime("%Y-%m")
     try:
         datetime.strptime(template_month, "%Y-%m")
     except ValueError as exc:
@@ -3371,7 +3374,7 @@ def save_operations_prompt_draft(
     alert.draft_prompt_key = RESPONSE_IMPROVEMENT_PROMPT_KEY
     alert.draft_prompt_content = content
     alert.draft_updated_by = current_user
-    alert.draft_updated_at = datetime.now()
+    alert.draft_updated_at = utc_now()
     alert.draft_preview_hash = None
     alert.draft_previewed_at = None
     alert.status = "checking"
@@ -3434,9 +3437,9 @@ async def preview_operations_prompt(
     alert.draft_prompt_key = RESPONSE_IMPROVEMENT_PROMPT_KEY
     alert.draft_prompt_content = content
     alert.draft_updated_by = current_user
-    alert.draft_updated_at = datetime.now()
+    alert.draft_updated_at = utc_now()
     alert.draft_preview_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    alert.draft_previewed_at = datetime.now()
+    alert.draft_previewed_at = utc_now()
     alert.status = "checking"
     alert.assigned_to = current_user
     db.commit()
@@ -3596,7 +3599,7 @@ async def test_operations_alert_answer(
     alert.test_source = test_source
     alert.test_passed = False
     alert.tested_by = current_user
-    alert.tested_at = datetime.now()
+    alert.tested_at = utc_now()
     if alert.status == "open":
         previous_status = alert.status
         alert.status = "checking"
@@ -3635,10 +3638,10 @@ def keep_operations_alert_answer(
     alert.test_source = chat_log.source
     alert.test_passed = True
     alert.tested_by = current_user
-    alert.tested_at = datetime.now()
+    alert.tested_at = utc_now()
     alert.status = "resolved"
     alert.assigned_to = current_user
-    alert.resolved_at = datetime.now()
+    alert.resolved_at = utc_now()
     _add_operations_alert_history(db, alert, "answer_kept", current_user, previous_status)
     db.commit()
     db.refresh(alert)
@@ -3709,7 +3712,7 @@ def update_operations_alert(
 
     alert.status = body.status
     alert.assigned_to = current_user if body.status in {"checking", "developer_required", "resolved"} else None
-    alert.resolved_at = datetime.now() if body.status == "resolved" else None
+    alert.resolved_at = utc_now() if body.status == "resolved" else None
     action = (
         "resolved" if body.status == "resolved"
         else "developer_required" if body.status == "developer_required"
@@ -3865,7 +3868,7 @@ def export_all_data_tables(db: Session = Depends(get_db), _: None = Depends(veri
             except Exception:
                 rows = []
 
-        ws_index.append([t.name, t.description or "", len(rows), t.created_at.isoformat() if t.created_at else ""])
+        ws_index.append([t.name, t.description or "", len(rows), _analysis_datetime(t.created_at).isoformat() if t.created_at else ""])
 
         # 시트 이름 충돌 방지
         sheet_name = t.name[:28]
@@ -3877,13 +3880,13 @@ def export_all_data_tables(db: Session = Depends(get_db), _: None = Depends(veri
         ws.append(["ID"] + col_names + ["생성일시"])
         for r in rows:
             row_vals = list(r[1:-1]) if col_names else []
-            created = r[-1].isoformat() if r[-1] else ""
+            created = _analysis_datetime(r[-1]).isoformat() if isinstance(r[-1], datetime) else (str(r[-1]) if r[-1] else "")
             ws.append([r[0]] + row_vals + [created])
 
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    filename = f"all_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"all_data_{korea_now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return Response(
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -4190,11 +4193,12 @@ def export_data_table(table_id: int, db: Session = Depends(get_db), _: None = De
     ws.append(["ID"] + col_names + ["생성일시"])
     for r in raw_rows:
         row_values = list(r[1:-1]) if col_names else []
-        ws.append([r[0]] + row_values + [r[-1].isoformat() if r[-1] else ""])
+        created = _analysis_datetime(r[-1]).isoformat() if isinstance(r[-1], datetime) else (str(r[-1]) if r[-1] else "")
+        ws.append([r[0]] + row_values + [created])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    filename = f"{table.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"{table.name}_{korea_now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return Response(
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -4755,7 +4759,7 @@ def list_permissions(db: Session = Depends(get_db), current_user: str = Depends(
             {
                 "email": u.email,
                 "added_by": u.added_by,
-                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "created_at": _analysis_datetime(u.created_at).isoformat() if u.created_at else None,
             }
             for u in users
         ],

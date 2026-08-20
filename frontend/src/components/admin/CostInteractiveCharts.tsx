@@ -1,5 +1,6 @@
 import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { CostDailyTotal, CostManagementData, CostMonthlyTotal } from '../../types';
+import { KOREA_TIME_ZONE } from '../../utils/dateTime';
 
 export const SERVICE_COLORS = ['#7dd3fc', '#2563eb', '#06b6d4', '#10b981', '#f59e0b', '#94a3b8', '#f43f5e', '#6366f1', '#8b5cf6', '#14b8a6'];
 
@@ -218,7 +219,7 @@ export function DailyStackedChart({ data, hiddenServices, onToggleService }: { d
 
   const pointFor = (day: CostDailyTotal, service: string, index: number, position: { left: number; top: number }): ServicePoint => {
     const value = day.services[service] ?? 0;
-    const weekday = new Intl.DateTimeFormat('ko-KR', { weekday: 'short' }).format(new Date(`${day.date}T00:00:00`));
+    const weekday = new Intl.DateTimeFormat('ko-KR', { weekday: 'short', timeZone: KOREA_TIME_ZONE }).format(new Date(`${day.date}T00:00:00Z`));
     return {
       key: `${day.date}-${service}`,
       serviceName: service,
@@ -243,7 +244,7 @@ export function DailyStackedChart({ data, hiddenServices, onToggleService }: { d
           </div>
           <div className="absolute inset-0 flex items-end gap-1.5">
             {data.daily_totals.map((day, dayIndex) => {
-              const weekday = new Intl.DateTimeFormat('ko-KR', { weekday: 'short' }).format(new Date(`${day.date}T00:00:00`));
+              const weekday = new Intl.DateTimeFormat('ko-KR', { weekday: 'short', timeZone: KOREA_TIME_ZONE }).format(new Date(`${day.date}T00:00:00Z`));
               const displayedTotal = visibleDayTotal(day);
               return (
                 <div key={day.date} className="flex h-full min-w-4 flex-1 flex-col items-center justify-end">

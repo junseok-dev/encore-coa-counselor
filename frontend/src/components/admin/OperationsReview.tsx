@@ -12,6 +12,7 @@ import {
   OperationsSignalType,
   SystemHealthData,
 } from '../../types';
+import { formatKoreaDateTime } from '../../utils/dateTime';
 import OperationsAlertDetailPanel from './OperationsAlertDetail';
 import SystemHealthPanel from './SystemHealthPanel';
 
@@ -42,12 +43,7 @@ const SIGNAL_CONFIG: Record<OperationsSignalType, { label: string; badge: string
 };
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString('ko-KR', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatKoreaDateTime(value, { year: undefined });
 }
 
 function AttentionRow({ item, onOpenDetail }: { item: OperationsAttentionItem; onOpenDetail: () => void }) {

@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, CalendarDays, Download, ExternalLink, FileSpreadsheet, Info, RefreshCw, Upload, WalletCards } from 'lucide-react';
 import { adminApi } from '../../services/api';
 import { CostManagementData, OpenAiManualCostData } from '../../types';
+import { formatKoreaDateTime, koreaCurrentMonth } from '../../utils/dateTime';
 import { DailyStackedChart, MonthlyCostChart, OpenAiMonthlyChart, ServiceDonut } from './CostInteractiveCharts';
 const TARGET_ACCOUNT_ID = '249173798473';
 const TARGET_ACCOUNT_NAME = '엔코아 동작 캠퍼스 5반 30번 학생';
 
 function currentMonth() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  return koreaCurrentMonth();
 }
 
 function krw(value: number | null | undefined) {
@@ -27,9 +27,7 @@ function fileSize(value: number) {
 }
 
 function dateTime(value: string) {
-  return new Intl.DateTimeFormat('ko-KR', {
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).format(new Date(value));
+  return formatKoreaDateTime(value);
 }
 
 export default function CostManagement() {

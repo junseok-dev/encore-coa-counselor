@@ -1,5 +1,6 @@
 import { Activity, AlertTriangle, CheckCircle2, Database, Save, Server, XCircle } from 'lucide-react';
 import { SystemHealthData, SystemHealthStatus } from '../../types';
+import { formatKoreaDateTime } from '../../utils/dateTime';
 
 interface Props {
   data: SystemHealthData | null;
@@ -17,7 +18,7 @@ const STATUS_STYLE: Record<SystemHealthStatus, { label: string; className: strin
 const HEALTH_ICONS = { application: Server, database_read: Database, database_write: Save, ec2: Activity };
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return formatKoreaDateTime(value, { year: undefined });
 }
 
 export default function SystemHealthPanel({ data, loading }: Props) {

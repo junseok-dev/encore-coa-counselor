@@ -271,6 +271,39 @@ class OperationsContextDashboardTest(unittest.TestCase):
 
         self.assertEqual([], result["attention"])
 
+    def test_review_ignores_historical_logs_but_includes_new_logs(self):
+        created_at = datetime.now()
+        self.db.add_all([
+            ChatSession(id="historical-review", message_count=1, created_at=created_at),
+            ChatSession(id="new-review", message_count=1, created_at=created_at),
+            ChatLog(
+                session_id="historical-review",
+                question="과거 처리 오류",
+                answer="다시 시도해 주세요.",
+                source="fallback",
+                processing_status="failed",
+                error="historical failure",
+                review_eligible=False,
+                created_at=created_at,
+            ),
+            ChatLog(
+                session_id="new-review",
+                question="신규 처리 오류",
+                answer="다시 시도해 주세요.",
+                source="fallback",
+                processing_status="failed",
+                error="new failure",
+                created_at=created_at,
+            ),
+        ])
+        self.db.commit()
+
+        result = admin.get_operations_dashboard(days=7, attention_limit=500, db=self.db, _=None)
+
+        self.assertEqual({"new-review"}, {item["session_id"] for item in result["attention"]})
+        new_log = self.db.query(ChatLog).filter_by(session_id="new-review").one()
+        self.assertTrue(new_log.review_eligible)
+
     def test_course_link_event_only_accepts_campus_domain(self):
         result = chat.record_course_link_event(
             chat.CourseLinkEventRequest(session_id="session-1", url="https://encorecampus.ai/orchestration"),
@@ -297,6 +330,7 @@ class OperationsContextDashboardTest(unittest.TestCase):
         legacy_engine = create_engine("sqlite://", poolclass=StaticPool)
         with legacy_engine.begin() as connection:
             connection.execute(text("CREATE TABLE chat_logs (id INTEGER PRIMARY KEY)"))
+            connection.execute(text("INSERT INTO chat_logs (id) VALUES (1)"))
         migrate_database(legacy_engine)
         columns = {column["name"] for column in inspect(legacy_engine).get_columns("chat_logs")}
         self.assertTrue({
@@ -305,7 +339,13 @@ class OperationsContextDashboardTest(unittest.TestCase):
             "response_review_reason",
             "response_review_confidence",
             "response_reviewed_at",
+            "review_eligible",
         }.issubset(columns))
+        with legacy_engine.connect() as connection:
+            historical_review_eligible = connection.execute(
+                text("SELECT review_eligible FROM chat_logs WHERE id = 1")
+            ).scalar_one()
+        self.assertFalse(bool(historical_review_eligible))
         legacy_engine.dispose()
 
 

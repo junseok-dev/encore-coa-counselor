@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from app.db.models import ChatSession, ChatMessage
 from app.utils.crypto import maybe_encrypt
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def create_session(db: Session, session_id: str, encrypted_user_name: str = None) -> ChatSession:
@@ -47,7 +47,7 @@ def save_message(
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if session:
         session.message_count = (session.message_count or 0) + 1
-        session.updated_at = datetime.utcnow()
+        session.updated_at = datetime.now(timezone.utc)
 
     db.commit()
     db.refresh(message)

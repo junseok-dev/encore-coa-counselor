@@ -53,6 +53,7 @@ import {
   PromptPayload,
   SystemHealthData,
 } from '../types';
+import { dateTimeMillis, formatKoreaDate, formatKoreaDateTime, koreaDateStamp } from '../utils/dateTime';
 
 type TabKey = 'dashboard' | 'improvements' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'security' | 'settings' | 'permissions';
 type NavGroupKey = 'operations' | 'content' | 'tools';
@@ -288,7 +289,7 @@ function joinCsv(values: string[]): string {
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return '-';
-  return new Date(value).toLocaleString('ko-KR');
+  return formatKoreaDateTime(value);
 }
 
 export default function AdminPage() {
@@ -1174,7 +1175,7 @@ export default function AdminPage() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `chat_logs_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      link.download = `chat_logs_${koreaDateStamp()}.xlsx`;
       link.click();
       window.URL.revokeObjectURL(url);
       setNotice('대화 데이터를 엑셀로 내보냈습니다.');
@@ -1442,7 +1443,7 @@ export default function AdminPage() {
   };
 
   const documentRows = useMemo(
-    () => [...documents].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    () => [...documents].sort((a, b) => dateTimeMillis(b.created_at) - dateTimeMillis(a.created_at)),
     [documents],
   );
   const selectedIsFaqDocument = selectedDocument?.document.parser_type === 'faq_json';
@@ -2847,7 +2848,7 @@ export default function AdminPage() {
                                 </div>
                                 <p className="mt-0.5 text-xs text-slate-400">
                                   {admin.added_by ? `${admin.added_by}이 추가` : '시스템 추가'}
-                                  {admin.created_at && ` · ${new Date(admin.created_at).toLocaleDateString('ko-KR')}`}
+                                  {admin.created_at && ` · ${formatKoreaDate(admin.created_at)}`}
                                 </p>
                               </div>
                               <button

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -770,7 +770,7 @@ def approve_document(db: Session, record: DocumentRecord, review_note: str | Non
     record.status = "ready"
     record.is_active = True
     record.review_note = review_note
-    record.approved_at = datetime.utcnow()
+    record.approved_at = datetime.now(timezone.utc)
     record.rejected_at = None
     db.commit()
     full_reindex(db)
@@ -791,7 +791,7 @@ def reject_document(db: Session, record: DocumentRecord, review_note: str | None
     record.status = "rejected"
     record.is_active = False
     record.review_note = review_note
-    record.rejected_at = datetime.utcnow()
+    record.rejected_at = datetime.now(timezone.utc)
     db.commit()
     if was_active:
         full_reindex(db)
@@ -816,7 +816,7 @@ def soft_delete_document(db: Session, record: DocumentRecord, review_note: str |
     record.is_deleted = True
     record.is_active = False
     record.status = "deleted"
-    record.deleted_at = datetime.utcnow()
+    record.deleted_at = datetime.now(timezone.utc)
     record.review_note = review_note
     db.commit()
     full_reindex(db)

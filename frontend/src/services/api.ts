@@ -42,6 +42,7 @@ import {
   SecurityVaultStatus,
   SuggestedQuestionsResponse,
 } from '../types';
+import { koreaDateStamp } from '../utils/dateTime';
 
 const API_BASE_URL = '/api';
 
@@ -770,7 +771,7 @@ export const adminApi = {
     const url = window.URL.createObjectURL(response.data);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${tableName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    link.download = `${tableName}_${koreaDateStamp()}.xlsx`;
     link.click();
     window.URL.revokeObjectURL(url);
   },
@@ -780,7 +781,7 @@ export const adminApi = {
     const url = window.URL.createObjectURL(response.data);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `all_data_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    link.download = `all_data_${koreaDateStamp()}.xlsx`;
     link.click();
     window.URL.revokeObjectURL(url);
   },

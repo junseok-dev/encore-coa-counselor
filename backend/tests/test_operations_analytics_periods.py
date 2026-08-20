@@ -19,7 +19,8 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
         )
         Base.metadata.create_all(self.engine)
         self.db = sessionmaker(bind=self.engine)()
-        created_at = datetime(2026, 8, 19, 14, 0)
+        # Database timestamps are stored as UTC; this is 14:00 in Korea.
+        created_at = datetime(2026, 8, 19, 5, 0)
         self.db.add(ChatSession(id="session-period", message_count=3, created_at=created_at))
         self.db.add_all([
             ChatLog(
@@ -40,7 +41,7 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
                 processing_status="handoff_offer",
                 embedding_cost=0.002,
                 llm_cost=0.008,
-                created_at=datetime(2026, 8, 19, 15, 0),
+                created_at=datetime(2026, 8, 19, 6, 0),
             ),
             ChatLog(
                 session_id="session-period",
@@ -50,20 +51,20 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
                 processing_status="ready",
                 embedding_cost=0.001,
                 llm_cost=0,
-                created_at=datetime(2026, 8, 19, 16, 0),
+                created_at=datetime(2026, 8, 19, 7, 0),
             ),
         ])
         self.db.add(CancelRequest(
             session_id="session-period",
             message="수강 취소 요청",
             status="requested",
-            created_at=datetime(2026, 8, 19, 17, 0),
+            created_at=datetime(2026, 8, 19, 8, 0),
         ))
         self.db.add(CancelRequest(
             session_id="session-period",
             message="수강료 환불 요청",
             status="requested",
-            created_at=datetime(2026, 8, 19, 18, 0),
+            created_at=datetime(2026, 8, 19, 9, 0),
         ))
         self.db.add(BillingDailyCostRecord(
             usage_date=date(2026, 8, 19),

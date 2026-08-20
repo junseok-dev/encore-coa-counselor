@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { adminApi } from '../../services/api';
 import { OperationsAiAnalysis, OperationsAlertDetail, OperationsAlertStatus, OperationsAttentionItem, OperationsPromptPreview } from '../../types';
+import { formatKoreaDateTime } from '../../utils/dateTime';
 
 interface OperationsAlertDetailProps {
   item: OperationsAttentionItem;
@@ -42,7 +43,7 @@ const HISTORY_LABELS: Record<string, string> = {
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '-';
-  return new Date(value).toLocaleString('ko-KR');
+  return formatKoreaDateTime(value);
 }
 
 function errorMessage(error: unknown) {

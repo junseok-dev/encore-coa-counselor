@@ -48,6 +48,7 @@ DATETIME_COLUMNS = {
 
 BOOLEAN_COLUMNS = {
     "chat_sessions": {"is_internal"},
+    "chat_logs": {"review_eligible"},
     "documents": {"is_active", "is_deleted"},
     "faqs": {"direct_answer", "is_active"},
 }

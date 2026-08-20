@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, MessageSquare, Search, X } from 'lucide-react';
 import { Conversation, Message } from '../../types';
 import { useConversations } from '../../hooks/useChat';
+import { dateTimeMillis, formatKoreaDate, formatKoreaTime, koreaDateStamp } from '../../utils/dateTime';
 
 interface Props {
   open: boolean;
@@ -43,11 +44,8 @@ const buildSnippet = (text: string, keyword: string): string => {
 };
 
 const formatDate = (iso: string) => {
-  const d = new Date(iso);
-  const now = new Date();
-  if (d.toDateString() === now.toDateString())
-    return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-  return d.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+  if (koreaDateStamp(iso) === koreaDateStamp()) return formatKoreaTime(iso);
+  return formatKoreaDate(iso, { year: undefined, month: 'short', day: 'numeric' });
 };
 
 const HistoryDropdown: React.FC<Props> = ({ open, onClose, onSelect, currentConvId, anchorRef }) => {
@@ -95,7 +93,7 @@ const HistoryDropdown: React.FC<Props> = ({ open, onClose, onSelect, currentConv
       }
     }
     // 최신순
-    out.sort((a, b) => new Date(b.message.timestamp).getTime() - new Date(a.message.timestamp).getTime());
+    out.sort((a, b) => dateTimeMillis(b.message.timestamp) - dateTimeMillis(a.message.timestamp));
     return out;
   }, [convs, keyword]);
 

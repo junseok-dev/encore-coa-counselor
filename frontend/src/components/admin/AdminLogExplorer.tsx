@@ -11,6 +11,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { AdminDocument, AdminFaq, AuditLog, ProcessingLog, PromptConfig } from '../../types';
+import { dateTimeMillis, formatKoreaDateTime } from '../../utils/dateTime';
 
 type ProcessingFilter = 'all' | 'issue' | 'waiting' | 'complete';
 type AuditCategory = 'all' | 'content' | 'operations' | 'cost' | 'security' | 'system';
@@ -38,7 +39,7 @@ interface ProcessingGroup {
 const INPUT_CLASS = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100';
 
 function formatDate(value: string): string {
-  return new Date(value).toLocaleString('ko-KR');
+  return formatKoreaDateTime(value);
 }
 
 function processingState(log: ProcessingLog): Exclude<ProcessingFilter, 'all'> | 'neutral' {
@@ -244,14 +245,14 @@ export default function AdminLogExplorer({
     return [...grouped.entries()].map(([key, logs]): ProcessingGroup => {
       const documentId = logs[0]?.document_id ?? null;
       const document = documentId ? documentMap.get(documentId) : null;
-      const orderedLogs = [...logs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      const orderedLogs = [...logs].sort((a, b) => dateTimeMillis(a.created_at) - dateTimeMillis(b.created_at));
       return {
         key,
         documentId,
         title: document?.original_filename ?? (documentId ? `삭제되었거나 찾을 수 없는 문서 #${documentId}` : '문서와 연결되지 않은 처리'),
         subtitle: document ? `${document.logical_name} · v${document.version}` : `${logs.length}개의 시스템 처리 기록`,
         logs: orderedLogs,
-        latestAt: Math.max(...logs.map((log) => new Date(log.created_at).getTime())),
+        latestAt: Math.max(...logs.map((log) => dateTimeMillis(log.created_at))),
         hasIssue: logs.some((log) => processingState(log) === 'issue'),
       };
     }).sort((a, b) => Number(b.hasIssue) - Number(a.hasIssue) || b.latestAt - a.latestAt);

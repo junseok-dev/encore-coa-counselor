@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { chatApi } from '../../services/api';
 import { Message } from '../../types';
+import { formatKoreaTime } from '../../utils/dateTime';
 
 interface Props {
   message: Message;
@@ -32,10 +33,7 @@ const normalizeEmphasis = (text: string): string => {
 const MessageBubble: React.FC<Props> = ({ message, isStreaming = false, sessionId }) => {
   const isUser = message.role === 'user';
   const [statusIndex, setStatusIndex] = useState(0);
-  const timeString = new Date(message.timestamp).toLocaleTimeString('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const timeString = formatKoreaTime(message.timestamp);
   const assistantBubbles = message.content
     .split(/\n{2,}/)
     .map((part) => part.trim())

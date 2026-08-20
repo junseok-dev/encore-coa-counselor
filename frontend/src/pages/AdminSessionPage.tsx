@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Calendar, Download, Headphones, MessageCircle, ShieldAlert, UserRound } from 'lucide-react';
 import { adminApi, getAdminToken } from '../services/api';
 import { AdminSessionDetail, OperationsAttentionItem } from '../types';
+import { formatKoreaDateTime, formatKoreaTime, koreaDateStamp } from '../utils/dateTime';
 
 const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
   faq: { label: 'FAQ', className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
@@ -58,7 +59,7 @@ export default function AdminSessionPage() {
       const link = document.createElement('a');
       const safeSessionId = sessionId.replace(/[^A-Za-z0-9._-]/g, '_') || 'session';
       link.href = url;
-      link.download = `chat_session_${safeSessionId}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      link.download = `chat_session_${safeSessionId}_${koreaDateStamp()}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -145,7 +146,7 @@ export default function AdminSessionPage() {
           </div>
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-700"><Calendar className="h-5 w-5" /></span>
-            <div><p className="text-xs text-slate-400">시작 시각</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{new Date(session.created_at).toLocaleString('ko-KR')}</p></div>
+            <div><p className="text-xs text-slate-400">시작 시각</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{formatKoreaDateTime(session.created_at)}</p></div>
           </div>
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700"><MessageCircle className="h-5 w-5" /></span>
@@ -186,7 +187,7 @@ export default function AdminSessionPage() {
                     <div className={`whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${isUser ? 'rounded-br-md bg-slate-950 text-white' : 'rounded-bl-md border border-slate-200 bg-white text-slate-800 shadow-sm'}`}>
                       {msg.content}
                     </div>
-                    <span className="text-[11px] text-slate-400">{new Date(msg.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span className="text-[11px] text-slate-400">{formatKoreaTime(msg.created_at)}</span>
                     {!isUser && relatedQuestion && (
                       <button
                         type="button"

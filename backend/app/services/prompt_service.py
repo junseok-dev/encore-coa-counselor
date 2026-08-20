@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -49,7 +49,7 @@ def _ensure_published_version(db: Session, prompt: PromptConfig) -> PromptVersio
         status="published",
         change_reason="기존 운영 프롬프트 버전 등록",
         created_by="system",
-        published_at=datetime.now(),
+        published_at=datetime.now(timezone.utc),
     )
     db.add(version)
     db.flush()
@@ -169,7 +169,7 @@ def publish_prompt(
         status="published",
         change_reason=(change_reason or "운영 프롬프트 수정").strip(),
         created_by=actor,
-        published_at=datetime.now(),
+        published_at=datetime.now(timezone.utc),
     )
     db.add(version)
     db.commit()

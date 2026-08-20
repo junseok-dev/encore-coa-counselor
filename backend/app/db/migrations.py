@@ -31,6 +31,7 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
             "response_review_reason": "TEXT",
             "response_review_confidence": "DOUBLE PRECISION",
             "response_reviewed_at": "TIMESTAMP WITH TIME ZONE",
+            "review_eligible": "BOOLEAN NOT NULL DEFAULT FALSE",
         }
         return mapping.get(column_name)
     if table_name == "chat_sessions":
@@ -255,7 +256,7 @@ def migrate_database(engine: Engine) -> None:
         for column_name in (
             "question_category", "question_category_label", "question_category_source",
             "response_review_status", "response_review_type", "response_review_reason",
-            "response_review_confidence", "response_reviewed_at",
+            "response_review_confidence", "response_reviewed_at", "review_eligible",
         ):
             if column_name in existing:
                 continue

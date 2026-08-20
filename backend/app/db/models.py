@@ -1,5 +1,5 @@
 from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, Text, String, UniqueConstraint
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, true
 
 from app.db.database import Base
 
@@ -133,6 +133,7 @@ class ChatLog(Base):
     response_review_reason = Column(Text, nullable=True)
     response_review_confidence = Column(Float, nullable=True)
     response_reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    review_eligible = Column(Boolean, default=True, server_default=true(), nullable=False, index=True)
     embedding_cost = Column(Float, default=0.0, nullable=False)
     llm_cost = Column(Float, default=0.0, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

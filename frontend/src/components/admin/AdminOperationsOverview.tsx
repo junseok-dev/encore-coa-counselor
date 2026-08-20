@@ -6,6 +6,7 @@ import {
 import {
   OperationsAnalyticsData, OperationsAttentionItem, OperationsDashboardData, OperationsPeriodFilters, OperationsPeriodMode,
 } from '../../types';
+import { dateTimeMillis, formatKoreaDateTime } from '../../utils/dateTime';
 import OperationsAnalytics, { OperationsDashboardView } from './OperationsAnalytics';
 import OperationsPeriodFilter from './OperationsPeriodFilter';
 
@@ -41,7 +42,7 @@ const SIGNAL_LABEL = {
 };
 
 function formatRelativeTime(value: string) {
-  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
+  const minutes = Math.max(0, Math.floor((Date.now() - dateTimeMillis(value)) / 60000));
   if (minutes < 1) return '방금 전';
   if (minutes < 60) return `${minutes}분 전`;
   if (minutes < 1440) return `${Math.floor(minutes / 60)}시간 전`;
@@ -63,7 +64,7 @@ export default function AdminOperationsOverview({ data, loading, analyticsData, 
   const unresolved = useMemo(() => (data?.attention ?? []).filter((item) => item.status !== 'resolved'), [data?.attention]);
   const notifications = useMemo(() => [...unresolved].sort((a, b) => {
     if (a.severity !== b.severity) return a.severity === 'high' ? -1 : 1;
-    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    return dateTimeMillis(b.created_at) - dateTimeMillis(a.created_at);
   }), [unresolved]);
   const highPriorityCount = unresolved.filter((item) => item.severity === 'high').length;
   const summary = analyticsData?.period_summary;
@@ -116,7 +117,7 @@ export default function AdminOperationsOverview({ data, loading, analyticsData, 
           <button onClick={() => void onRefresh()} disabled={loading || analyticsLoading} title="대시보드 새로고침" className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading || analyticsLoading ? 'animate-spin' : ''}`} /></button>
           <div ref={notificationPopoverRef} className="relative">
             <button onClick={() => setNotificationsOpen((open) => !open)} title="개선 검토 알림 열기" aria-expanded={notificationsOpen} className={`relative flex h-10 w-10 items-center justify-center rounded-xl ring-1 ${notificationsOpen ? 'bg-white text-slate-950 ring-white' : 'bg-white/10 text-white ring-white/20'}`}><Bell className="h-4 w-4" />{unresolved.length > 0 && <span className="absolute -right-1.5 -top-1.5 min-w-5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-black text-white ring-2 ring-teal-900">{unresolved.length > 99 ? '99+' : unresolved.length}</span>}</button>
-            {notificationsOpen && <div role="dialog" aria-label="개선 검토 알림" className="absolute right-0 top-[calc(100%+12px)] z-50 w-[min(380px,calc(100vw-3rem))] text-slate-900"><span className="absolute -top-2 right-3 h-4 w-4 rotate-45 border-l border-t border-slate-200 bg-white" /><div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/20"><div className="border-b border-slate-100 px-4 py-3"><h2 className="text-sm font-black">개선 검토 알림</h2><p className="mt-0.5 text-[11px] text-slate-500">전체 기간 미확인 {notifications.length}건</p></div><div className="max-h-80 divide-y divide-slate-100 overflow-y-auto">{notifications.length > 0 ? notifications.map((item) => <button key={item.alert_id} type="button" onClick={() => { setNotificationsOpen(false); onOpenReview(item); }} className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-slate-50"><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${item.severity === 'high' ? 'bg-rose-500' : item.severity === 'medium' ? 'bg-amber-500' : 'bg-cyan-500'}`} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-xs text-slate-900">{SIGNAL_LABEL[item.type]} · {item.reason}</strong>{item.severity === 'high' && <span className="shrink-0 rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-black text-rose-700">긴급</span>}</span><span className="mt-1 block truncate text-[11px] text-slate-500">{item.question || '질문 내용 없음'}</span><span className="mt-1 block text-[9px] text-slate-400">{new Date(item.created_at).toLocaleString('ko-KR')}</span></span></button>) : <p className="px-4 py-8 text-center text-xs text-slate-400">미확인 항목이 없습니다.</p>}</div></div></div>}
+            {notificationsOpen && <div role="dialog" aria-label="개선 검토 알림" className="absolute right-0 top-[calc(100%+12px)] z-50 w-[min(380px,calc(100vw-3rem))] text-slate-900"><span className="absolute -top-2 right-3 h-4 w-4 rotate-45 border-l border-t border-slate-200 bg-white" /><div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/20"><div className="border-b border-slate-100 px-4 py-3"><h2 className="text-sm font-black">개선 검토 알림</h2><p className="mt-0.5 text-[11px] text-slate-500">전체 기간 미확인 {notifications.length}건</p></div><div className="max-h-80 divide-y divide-slate-100 overflow-y-auto">{notifications.length > 0 ? notifications.map((item) => <button key={item.alert_id} type="button" onClick={() => { setNotificationsOpen(false); onOpenReview(item); }} className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-slate-50"><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${item.severity === 'high' ? 'bg-rose-500' : item.severity === 'medium' ? 'bg-amber-500' : 'bg-cyan-500'}`} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-xs text-slate-900">{SIGNAL_LABEL[item.type]} · {item.reason}</strong>{item.severity === 'high' && <span className="shrink-0 rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-black text-rose-700">긴급</span>}</span><span className="mt-1 block truncate text-[11px] text-slate-500">{item.question || '질문 내용 없음'}</span><span className="mt-1 block text-[9px] text-slate-400">{formatKoreaDateTime(item.created_at)}</span></span></button>) : <p className="px-4 py-8 text-center text-xs text-slate-400">미확인 항목이 없습니다.</p>}</div></div></div>}
           </div>
         </div>
       </div>

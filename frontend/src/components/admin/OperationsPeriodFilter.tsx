@@ -4,6 +4,7 @@ import {
   OperationsPeriodFilters,
   OperationsPeriodMode,
 } from '../../types';
+import { koreaCurrentYear } from '../../utils/dateTime';
 
 interface Props {
   data: OperationsAnalyticsData | null;
@@ -96,7 +97,7 @@ const SELECT_CLASS = 'h-9 rounded-lg border border-slate-200 bg-white px-2.5 tex
 
 export default function OperationsPeriodFilter({ data, loading, mode, filters, onChange, onRefresh }: Props) {
   const level = MODE_LEVEL[mode];
-  const currentYear = new Date().getFullYear();
+  const currentYear = koreaCurrentYear();
   const years = Array.from(new Set([2026, currentYear, currentYear + 1, ...(data?.available_years ?? [])])).sort((a, b) => a - b);
   const weeks = monthWeeks(filters.year, filters.month);
   const days = daysInWeek(filters.weekStart, filters.year, filters.month);
