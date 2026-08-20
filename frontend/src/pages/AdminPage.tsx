@@ -1669,7 +1669,6 @@ export default function AdminPage() {
                 setSelectedImprovementAlertId(item?.alert_id ?? null);
                 setActiveTab('improvements');
               }}
-              onOpenCosts={() => setActiveTab('costs')}
             />
           </div>
         )}

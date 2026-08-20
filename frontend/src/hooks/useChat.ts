@@ -264,6 +264,7 @@ export const useChat = () => {
     startNewChat,
     loadConversation,
     convId,
+    sessionId: sessionIdRef.current,
   };
 };
 

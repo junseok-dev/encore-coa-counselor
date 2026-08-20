@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OpenAiMonthlyCostRecord, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, PromptVersion, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CourseLinkEvent, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OpenAiMonthlyCostRecord, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, PromptVersion, SystemHealthProbe
 from app.models.chat import ChatRequest, HistoryMessage
 from app.models.session import MessageDetail, SessionDetail, SessionListResponse, SessionSummary
 from app.routers.chat import chat as run_chat_preview
@@ -95,6 +95,7 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "documents": "문서 관리 — 업로드·파싱·임베딩·승인 상태 추적",
     "chunks": "문서 청크 — RAG 검색에 사용되는 텍스트 조각",
     "cancel_requests": "취소 요청 내역",
+    "course_link_events": "챗봇에서 과정 상세 페이지로 이동한 클릭 내역",
     "operations_alerts": "답변 개선 검토 — 확인 시작·처리 완료 상태 관리",
     "system_health_probes": "시스템 상태 점검 — 데이터베이스 저장 가능 여부 확인",
     "billing_daily_cost_records": "계정·서비스·일자별 실제 원화 사용 금액",
@@ -631,6 +632,61 @@ def _is_homepage_request(value: str | None) -> bool:
     ))
 
 
+COURSE_INTEREST_CATEGORIES = {
+    "schedule", "cost", "employment", "recommendation", "class_format", "instructor",
+    "benefits", "certificate", "admission", "curriculum", "attendance", "campus", "organization",
+}
+
+
+def _is_course_interest_log(row: ChatLog) -> bool:
+    """상담 연결 여부가 아니라 실제 교육 과정 질문이 있었는지를 판단한다."""
+    category = row.question_category
+    if not category or category == "general":
+        category = categorize_question_rule(decrypt_if_needed(row.question) or "").key
+    return category in COURSE_INTEREST_CATEGORIES
+
+
+def _session_context_metrics(logs: list[ChatLog]) -> dict:
+    """개별 상태값이 아닌 세션 전체 대화 맥락을 묶어 운영 지표를 계산한다."""
+    grouped: dict[str, list[ChatLog]] = {}
+    for row in logs:
+        grouped.setdefault(row.session_id, []).append(row)
+
+    course_sessions: set[str] = set()
+    risk_sessions: set[str] = set()
+    potential_loss_sessions: set[str] = set()
+    first_course_log: dict[str, ChatLog] = {}
+    for session_id, session_logs in grouped.items():
+        ordered = sorted(session_logs, key=lambda item: (item.created_at or datetime.min, item.id or 0))
+        course_rows = [row for row in ordered if _is_course_interest_log(row)]
+        risk_rows = [
+            row for row in ordered
+            if row.source == "guardrail" or row.processing_status == "failed" or bool(decrypt_if_needed(row.error))
+        ]
+        if course_rows:
+            course_sessions.add(session_id)
+            first_course_log[session_id] = course_rows[0]
+        if risk_rows:
+            risk_sessions.add(session_id)
+        if course_rows and risk_rows:
+            last_risk = risk_rows[-1]
+            has_success_after_risk = any(
+                (row.created_at or datetime.min) > (last_risk.created_at or datetime.min)
+                and row.processing_status != "failed"
+                and not decrypt_if_needed(row.error)
+                for row in ordered
+            )
+            if not has_success_after_risk:
+                potential_loss_sessions.add(session_id)
+
+    return {
+        "course_sessions": course_sessions,
+        "risk_sessions": risk_sessions,
+        "potential_loss_sessions": potential_loss_sessions,
+        "first_course_log": first_course_log,
+    }
+
+
 def _handoff_reason(
     question: str,
     status: str,
@@ -673,6 +729,7 @@ def _operations_summary(
     sessions: list[ChatSession],
     logs: list[ChatLog],
     cancels: list[CancelRequest],
+    link_events: list[CourseLinkEvent] | None = None,
 ) -> dict:
     handoffs = [row for row in logs if row.processing_status == "handoff" or row.source == "handoff"]
     consultation_requests = [row for row in logs if row.processing_status == "handoff_offer"]
@@ -682,9 +739,12 @@ def _operations_summary(
     homepage_request_count = sum(
         1 for row in logs if _is_homepage_request(decrypt_if_needed(row.question))
     )
+    context = _session_context_metrics(logs)
     return {
         "visitors": len(sessions),
         "chats": len(logs),
+        "course_inquiries": len(context["course_sessions"]),
+        "course_page_views": len({row.session_id for row in (link_events or [])}),
         "handoffs": len(handoffs),
         "consultation_requests": len(consultation_requests),
         "cancels": len(cancels) - refund_count,
@@ -692,6 +752,8 @@ def _operations_summary(
         "homepage_requests": homepage_request_count,
         "safety": len(safety),
         "failed": len(failed),
+        "affected_sessions": len(context["risk_sessions"]),
+        "potential_inquiry_loss": len(context["potential_loss_sessions"]),
         "avg_questions_per_session": round(len(logs) / len(sessions), 1) if sessions else 0,
     }
 
@@ -1600,6 +1662,10 @@ def get_operations_analytics(
         CancelRequest.created_at >= query_start,
         CancelRequest.created_at < query_end,
     ).all()
+    link_events = db.query(CourseLinkEvent).filter(
+        CourseLinkEvent.created_at >= query_start,
+        CourseLinkEvent.created_at < query_end,
+    ).all()
 
     def in_analysis_period(value: datetime | None) -> bool:
         if not value:
@@ -1610,6 +1676,7 @@ def get_operations_analytics(
     analysis_sessions = [row for row in sessions if in_analysis_period(row.created_at)]
     analysis_logs = [row for row in logs if in_analysis_period(row.created_at)]
     analysis_cancels = [row for row in cancels if in_analysis_period(row.created_at)]
+    analysis_link_events = [row for row in link_events if in_analysis_period(row.created_at)]
     analysis_costs = db.query(BillingDailyCostRecord).filter(
         BillingDailyCostRecord.usage_date >= analysis_start.date(),
         BillingDailyCostRecord.usage_date < analysis_end.date(),
@@ -1624,6 +1691,8 @@ def get_operations_analytics(
             "month": month_start.strftime("%Y-%m"),
             "visitors": 0,
             "chats": 0,
+            "course_inquiries": 0,
+            "course_page_views": 0,
             "handoffs": 0,
             "consultation_requests": 0,
             "cancels": 0,
@@ -1631,6 +1700,8 @@ def get_operations_analytics(
             "homepage_requests": 0,
             "safety": 0,
             "failed": 0,
+            "affected_sessions": 0,
+            "potential_inquiry_loss": 0,
             "aws_cost_krw": 0,
             "openai_cost_usd": 0.0,
         }
@@ -1639,8 +1710,10 @@ def get_operations_analytics(
     hourly_map = {
         hour: {
             "hour": hour, "label": f"{hour:02d}시", "visitors": 0, "chats": 0,
+            "course_inquiries": 0, "course_page_views": 0,
             "handoffs": 0, "consultation_requests": 0, "cancels": 0, "refunds": 0,
-            "homepage_requests": 0, "safety": 0, "failed": 0, "openai_cost_usd": 0.0,
+            "homepage_requests": 0, "safety": 0, "failed": 0,
+            "affected_sessions": 0, "potential_inquiry_loss": 0, "openai_cost_usd": 0.0,
         }
         for hour in range(24)
     }
@@ -1652,6 +1725,8 @@ def get_operations_analytics(
                 "date": (analysis_start.date() + timedelta(days=offset)).isoformat(),
                 "visitors": 0,
                 "chats": 0,
+                "course_inquiries": 0,
+                "course_page_views": 0,
                 "handoffs": 0,
                 "consultation_requests": 0,
                 "cancels": 0,
@@ -1659,6 +1734,8 @@ def get_operations_analytics(
                 "homepage_requests": 0,
                 "safety": 0,
                 "failed": 0,
+                "affected_sessions": 0,
+                "potential_inquiry_loss": 0,
                 "aws_cost_krw": 0,
                 "openai_cost_usd": 0.0,
             }
@@ -1731,6 +1808,33 @@ def get_operations_analytics(
         day_key = _analysis_datetime(row.created_at).date().isoformat()
         if day_key in daily_map:
             daily_map[day_key][metric_key] += 1
+
+    context_metrics = _session_context_metrics(analysis_logs)
+
+    def add_context_metric(created_at: datetime | None, metric: str) -> None:
+        if not created_at:
+            return
+        local_created_at = _analysis_datetime(created_at)
+        month_key = local_created_at.strftime("%Y-%m")
+        if month_key in monthly_map:
+            monthly_map[month_key][metric] += 1
+        hourly_map[local_created_at.hour][metric] += 1
+        day_key = local_created_at.date().isoformat()
+        if day_key in daily_map:
+            daily_map[day_key][metric] += 1
+
+    for row in context_metrics["first_course_log"].values():
+        add_context_metric(row.created_at, "course_inquiries")
+    for event in analysis_link_events:
+        add_context_metric(event.created_at, "course_page_views")
+    for session_id in context_metrics["risk_sessions"]:
+        session_rows = [row for row in analysis_logs if row.session_id == session_id and row.created_at]
+        if session_rows:
+            add_context_metric(min(row.created_at for row in session_rows), "affected_sessions")
+    for session_id in context_metrics["potential_loss_sessions"]:
+        session_rows = [row for row in analysis_logs if row.session_id == session_id and row.created_at]
+        if session_rows:
+            add_context_metric(max(row.created_at for row in session_rows), "potential_inquiry_loss")
 
     for row in analysis_costs:
         month_key = row.usage_date.strftime("%Y-%m")
@@ -1831,6 +1935,8 @@ def get_operations_analytics(
     period_summary = {
         "visitors": visitor_count,
         "chats": chat_count,
+        "course_inquiries": len(context_metrics["course_sessions"]),
+        "course_page_views": len({row.session_id for row in analysis_link_events}),
         "handoffs": handoff_count,
         "consultation_requests": consultation_request_count,
         "cancels": len(analysis_cancels) - refund_count,
@@ -1838,6 +1944,8 @@ def get_operations_analytics(
         "homepage_requests": homepage_request_count,
         "safety": sum(1 for row in analysis_logs if row.source == "guardrail"),
         "failed": failed_count,
+        "affected_sessions": len(context_metrics["risk_sessions"]),
+        "potential_inquiry_loss": len(context_metrics["potential_loss_sessions"]),
     }
     period_label = (
         f"{anchor.year}년"
@@ -2047,7 +2155,7 @@ def get_operations_health(_: None = Depends(verify_admin)):
 @router.get("/operations/dashboard")
 def get_operations_dashboard(
     days: int = Query(7, ge=1, le=30),
-    attention_limit: int = Query(50, ge=10, le=200),
+    attention_limit: int = Query(500, ge=10, le=2000),
     db: Session = Depends(get_db),
     _: None = Depends(verify_admin),
 ):
@@ -2060,6 +2168,7 @@ def get_operations_dashboard(
     sessions = db.query(ChatSession).filter(ChatSession.created_at >= previous_start).all()
     logs = db.query(ChatLog).filter(ChatLog.created_at >= previous_start).order_by(ChatLog.created_at.desc()).all()
     cancels = db.query(CancelRequest).filter(CancelRequest.created_at >= previous_start).order_by(CancelRequest.created_at.desc()).all()
+    link_events = db.query(CourseLinkEvent).filter(CourseLinkEvent.created_at >= previous_start).all()
 
     current_sessions = [row for row in sessions if row.created_at and row.created_at.date() >= start_date]
     previous_sessions = [row for row in sessions if row.created_at and previous_start_date <= row.created_at.date() < start_date]
@@ -2067,9 +2176,11 @@ def get_operations_dashboard(
     previous_logs = [row for row in logs if row.created_at and previous_start_date <= row.created_at.date() < start_date]
     current_cancels = [row for row in cancels if row.created_at and row.created_at.date() >= start_date]
     previous_cancels = [row for row in cancels if row.created_at and previous_start_date <= row.created_at.date() < start_date]
+    current_link_events = [row for row in link_events if row.created_at and row.created_at.date() >= start_date]
+    previous_link_events = [row for row in link_events if row.created_at and previous_start_date <= row.created_at.date() < start_date]
 
-    summary = _operations_summary(current_sessions, current_logs, current_cancels)
-    previous_summary = _operations_summary(previous_sessions, previous_logs, previous_cancels)
+    summary = _operations_summary(current_sessions, current_logs, current_cancels, current_link_events)
+    previous_summary = _operations_summary(previous_sessions, previous_logs, previous_cancels, previous_link_events)
     changes = {key: _percent_change(summary[key], previous_summary[key]) for key in summary}
 
     daily_map = {
@@ -2077,6 +2188,8 @@ def get_operations_dashboard(
             "date": (start_date + timedelta(days=offset)).isoformat(),
             "visitors": 0,
             "chats": 0,
+            "course_inquiries": 0,
+            "course_page_views": 0,
             "handoffs": 0,
             "consultation_requests": 0,
             "cancels": 0,
@@ -2084,6 +2197,8 @@ def get_operations_dashboard(
             "homepage_requests": 0,
             "safety": 0,
             "failed": 0,
+            "affected_sessions": 0,
+            "potential_inquiry_loss": 0,
         }
         for offset in range(days)
     }
@@ -2106,28 +2221,49 @@ def get_operations_dashboard(
         key = "refunds" if _is_refund_request(decrypt_if_needed(row.message)) else "cancels"
         daily_map[row.created_at.date().isoformat()][key] += 1
 
+    context_metrics = _session_context_metrics(current_logs)
+    for row in context_metrics["first_course_log"].values():
+        if row.created_at:
+            daily_map[row.created_at.date().isoformat()]["course_inquiries"] += 1
+    for row in current_link_events:
+        if row.created_at:
+            daily_map[row.created_at.date().isoformat()]["course_page_views"] += 1
+    for session_id in context_metrics["risk_sessions"]:
+        session_rows = [row for row in current_logs if row.session_id == session_id and row.created_at]
+        if session_rows:
+            daily_map[min(row.created_at for row in session_rows).date().isoformat()]["affected_sessions"] += 1
+    for session_id in context_metrics["potential_loss_sessions"]:
+        session_rows = [row for row in current_logs if row.session_id == session_id and row.created_at]
+        if session_rows:
+            daily_map[max(row.created_at for row in session_rows).date().isoformat()]["potential_inquiry_loss"] += 1
+
+    review_logs = db.query(ChatLog).order_by(ChatLog.created_at.desc(), ChatLog.id.desc()).all()
+    review_cancels = db.query(CancelRequest).order_by(CancelRequest.created_at.desc()).all()
     request_signal_by_key = {
         (row.session_id, (decrypt_if_needed(row.message) or "").strip()): (
             "refund" if _is_refund_request(decrypt_if_needed(row.message)) else "cancel"
         )
-        for row in current_cancels
+        for row in review_cancels
     }
     handoff_category_map: dict[str, dict] = {}
     session_context_map: dict[str, list[str]] = {}
-    for context_row in current_logs:
+    for context_row in review_logs:
         session_context_map.setdefault(context_row.session_id, []).extend([
             decrypt_if_needed(context_row.question) or "",
             decrypt_if_needed(context_row.answer) or "",
         ])
+    review_context = _session_context_metrics(review_logs)
+    first_course_log_ids = {row.id for row in review_context["first_course_log"].values()}
+    current_log_ids = {row.id for row in current_logs}
     attention = []
-    log_ids = [row.id for row in current_logs]
+    log_ids = [row.id for row in review_logs]
     alert_by_log_id = {
         alert.chat_log_id: alert
         for alert in db.query(OperationsAlert).filter(OperationsAlert.chat_log_id.in_(log_ids)).all()
     } if log_ids else {}
     alerts_changed = False
 
-    for row in current_logs:
+    for row in review_logs:
         question = decrypt_if_needed(row.question) or ""
         answer = decrypt_if_needed(row.answer) or ""
         error = decrypt_if_needed(row.error)
@@ -2135,7 +2271,7 @@ def get_operations_dashboard(
         is_cancel = request_signal is not None
         is_handoff = row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff"
         reason = ""
-        if is_handoff:
+        if is_handoff and row.id in current_log_ids:
             category_key, reason = _handoff_reason(
                 question,
                 row.processing_status,
@@ -2152,7 +2288,9 @@ def get_operations_dashboard(
         alert = alert_by_log_id.get(row.id)
         signal_type = None
         severity = "medium"
-        if request_signal == "refund":
+        if alert and alert.signal_type == "quality":
+            signal_type, severity, reason = alert.signal_type, alert.severity, alert.reason
+        elif request_signal == "refund":
             signal_type, severity, reason = "refund", "medium", "환불 요청 접수"
         elif request_signal == "cancel":
             signal_type, severity, reason = "cancel", "medium", "취소 요청 접수"
@@ -2160,14 +2298,8 @@ def get_operations_dashboard(
             signal_type, severity, reason = "safety", "high", "안전 가드레일 감지"
         elif row.processing_status == "failed" or error:
             signal_type, severity, reason = "error", "high", "응답 처리 오류"
-        elif is_handoff:
-            signal_type = "handoff"
-            severity = "low" if row.processing_status == "handoff_offer" else "medium"
-
-        if signal_type is None and alert and alert.signal_type == "quality":
-            signal_type = alert.signal_type
-            severity = alert.severity
-            reason = alert.reason
+        elif row.id in first_course_log_ids:
+            signal_type, severity, reason = "enrollment", "low", "수강 관심 대화 맥락 확인"
 
         if signal_type:
             if alert is None:
@@ -2189,7 +2321,7 @@ def get_operations_dashboard(
                 alert.reason = reason
                 alerts_changed = True
 
-        if signal_type and len(attention) < attention_limit:
+        if signal_type:
             attention.append({
                 "id": row.id,
                 "alert_id": alert.id,
@@ -2208,6 +2340,12 @@ def get_operations_dashboard(
 
     if alerts_changed:
         db.commit()
+
+    attention.sort(key=lambda item: (
+        item["status"] == "resolved",
+        -((item["created_at"] or datetime.min).timestamp()),
+    ))
+    attention = attention[:attention_limit]
 
     handoff_categories = list(handoff_category_map.values())
     handoff_categories.sort(key=lambda item: item["count"], reverse=True)

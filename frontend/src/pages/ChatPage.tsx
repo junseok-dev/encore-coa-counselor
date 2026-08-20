@@ -18,6 +18,7 @@ const ChatPage: React.FC = () => {
     startNewChat,
     loadConversation,
     convId,
+    sessionId,
   } = useChat();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scrollToMessageId, setScrollToMessageId] = useState<string | null>(null);
@@ -96,6 +97,7 @@ const ChatPage: React.FC = () => {
               sendMessage={sendMessage}
               stopGenerating={stopGenerating}
               convId={convId}
+              sessionId={sessionId}
               scrollToMessageId={scrollToMessageId}
             />
           </div>

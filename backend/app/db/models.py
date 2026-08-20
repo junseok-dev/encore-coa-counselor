@@ -133,6 +133,16 @@ class CancelRequest(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class CourseLinkEvent(Base):
+    __tablename__ = "course_link_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(64), index=True, nullable=False)
+    url = Column(Text, nullable=False)
+    course_slug = Column(String(100), index=True, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class OperationsAlert(Base):
     __tablename__ = "operations_alerts"
 

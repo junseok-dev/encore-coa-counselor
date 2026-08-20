@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { chatApi } from '../../services/api';
 import { Message } from '../../types';
 
 interface Props {
   message: Message;
   isStreaming?: boolean;
+  sessionId?: string;
 }
 
 const THINKING_STATUSES = [
@@ -27,7 +29,7 @@ const normalizeEmphasis = (text: string): string => {
   return s;
 };
 
-const MessageBubble: React.FC<Props> = ({ message, isStreaming = false }) => {
+const MessageBubble: React.FC<Props> = ({ message, isStreaming = false, sessionId }) => {
   const isUser = message.role === 'user';
   const [statusIndex, setStatusIndex] = useState(0);
   const timeString = new Date(message.timestamp).toLocaleTimeString('ko-KR', {
@@ -115,6 +117,11 @@ const MessageBubble: React.FC<Props> = ({ message, isStreaming = false }) => {
                         a: ({ href, children }) => (
                           <a
                             href={href}
+                            onClick={() => {
+                              if (sessionId && href && /(^|\.)encorecampus\.ai$/i.test(new URL(href, window.location.href).hostname)) {
+                                void chatApi.trackCourseLinkClick(sessionId, href).catch(() => undefined);
+                              }
+                            }}
                             target="_blank"
                             rel="noreferrer"
                             className="font-medium text-brand-600 underline decoration-brand-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-500"

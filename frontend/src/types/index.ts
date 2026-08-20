@@ -220,11 +220,13 @@ export interface ChatLog {
   created_at: string;
 }
 
-export type OperationsSignalType = 'handoff' | 'cancel' | 'refund' | 'safety' | 'error' | 'quality';
+export type OperationsSignalType = 'enrollment' | 'handoff' | 'cancel' | 'refund' | 'safety' | 'error' | 'quality';
 
 export interface OperationsMetricSummary {
   visitors: number;
   chats: number;
+  course_inquiries: number;
+  course_page_views: number;
   handoffs: number;
   consultation_requests: number;
   cancels: number;
@@ -232,6 +234,8 @@ export interface OperationsMetricSummary {
   homepage_requests: number;
   safety: number;
   failed: number;
+  affected_sessions: number;
+  potential_inquiry_loss: number;
   avg_questions_per_session: number;
 }
 
@@ -239,6 +243,8 @@ export interface OperationsDailyMetric {
   date: string;
   visitors: number;
   chats: number;
+  course_inquiries: number;
+  course_page_views: number;
   handoffs: number;
   consultation_requests: number;
   cancels: number;
@@ -246,6 +252,8 @@ export interface OperationsDailyMetric {
   homepage_requests: number;
   safety: number;
   failed: number;
+  affected_sessions: number;
+  potential_inquiry_loss: number;
   aws_cost_krw?: number;
   openai_cost_usd?: number;
 }
@@ -273,6 +281,8 @@ export interface OperationsMonthlyMetric {
   month: string;
   visitors: number;
   chats: number;
+  course_inquiries: number;
+  course_page_views: number;
   handoffs: number;
   consultation_requests: number;
   cancels: number;
@@ -280,6 +290,8 @@ export interface OperationsMonthlyMetric {
   homepage_requests: number;
   safety: number;
   failed: number;
+  affected_sessions: number;
+  potential_inquiry_loss: number;
   aws_cost_krw: number;
   openai_cost_usd: number;
 }
@@ -289,6 +301,8 @@ export interface OperationsHourlyMetric {
   label: string;
   visitors: number;
   chats: number;
+  course_inquiries: number;
+  course_page_views: number;
   handoffs: number;
   consultation_requests: number;
   cancels: number;
@@ -296,6 +310,8 @@ export interface OperationsHourlyMetric {
   homepage_requests: number;
   safety: number;
   failed: number;
+  affected_sessions: number;
+  potential_inquiry_loss: number;
   openai_cost_usd: number;
 }
 
@@ -332,6 +348,8 @@ export interface OperationsAnalyticsData {
   period_summary: {
     visitors: number;
     chats: number;
+    course_inquiries: number;
+    course_page_views: number;
     handoffs: number;
     consultation_requests: number;
     cancels: number;
@@ -339,6 +357,8 @@ export interface OperationsAnalyticsData {
     homepage_requests: number;
     safety: number;
     failed: number;
+    affected_sessions: number;
+    potential_inquiry_loss: number;
   };
   highlights: {
     busiest_visitor_month: AnalyticsPeak | null;

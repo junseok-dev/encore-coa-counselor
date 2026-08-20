@@ -13,6 +13,7 @@ interface Props {
   sendMessage: (content: string) => void;
   stopGenerating: () => void;
   convId?: string;
+  sessionId?: string;
   scrollToMessageId?: string | null;
 }
 
@@ -27,6 +28,7 @@ const ChatWindow: React.FC<Props> = ({
   sendMessage,
   stopGenerating,
   convId,
+  sessionId,
   scrollToMessageId,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -111,6 +113,7 @@ const ChatWindow: React.FC<Props> = ({
             <MessageBubble
               message={message}
               isStreaming={message.id === streamingMessageId}
+              sessionId={sessionId}
             />
           </div>
         ))}

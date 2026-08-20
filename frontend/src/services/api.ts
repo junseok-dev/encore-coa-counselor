@@ -73,6 +73,10 @@ adminApiClient.interceptors.response.use(
 );
 
 export const chatApi = {
+  trackCourseLinkClick: async (sessionId: string, url: string): Promise<void> => {
+    await apiClient.post('/chat/events/course-link', { session_id: sessionId, url });
+  },
+
   sendMessage: async (sessionId: string, message: string): Promise<ChatResponse> => {
     const response = await apiClient.post<ChatResponse>('/chat', {
       session_id: sessionId,
@@ -250,7 +254,7 @@ export const adminApi = {
 
   getOperationsDashboard: async (days = 7): Promise<OperationsDashboardData> => {
     const response = await adminApiClient.get<OperationsDashboardData>('/admin/operations/dashboard', {
-      params: { days, attention_limit: 100 },
+      params: { days, attention_limit: 2000 },
     });
     return response.data;
   },

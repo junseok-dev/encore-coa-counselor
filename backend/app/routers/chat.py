@@ -1,15 +1,17 @@
 import asyncio
 import json
 import re
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.crud import get_or_create_session, save_message
 from app.db.database import get_db
-from app.db.models import CancelRequest, ChatLog
+from app.db.models import CancelRequest, ChatLog, CourseLinkEvent
 from app.models.chat import ChatRequest, ChatResponse, SuggestedQuestionsResponse
 from app.services.document_service import search_documents
 from app.services.employment_service import (
@@ -32,6 +34,23 @@ from app.services.website_course_service import is_live_course_fact_query
 from app.utils.crypto import maybe_encrypt
 
 router = APIRouter()
+
+
+class CourseLinkEventRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    url: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/events/course-link", status_code=201)
+def record_course_link_event(body: CourseLinkEventRequest, db: Session = Depends(get_db)):
+    parsed = urlparse(body.url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or not (host == "encorecampus.ai" or host.endswith(".encorecampus.ai")):
+        raise HTTPException(status_code=400, detail="엔코아 AI 캠퍼스 과정 링크만 기록할 수 있습니다.")
+    course_slug = parsed.path.strip("/").split("/")[-1][:100] or None
+    db.add(CourseLinkEvent(session_id=body.session_id, url=body.url, course_slug=course_slug))
+    db.commit()
+    return {"recorded": True}
 
 
 def _normalize_intent_text(message: str) -> str:

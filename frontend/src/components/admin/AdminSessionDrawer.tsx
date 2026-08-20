@@ -27,6 +27,7 @@ const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
 };
 
 const SIGNAL_LABEL: Record<OperationsAttentionItem['type'], string> = {
+  enrollment: '수강 문의',
   handoff: '상담 연결',
   cancel: '취소 요청',
   refund: '환불 요청',

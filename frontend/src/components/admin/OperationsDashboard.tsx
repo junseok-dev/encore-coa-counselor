@@ -40,6 +40,7 @@ interface OperationsDashboardProps {
 }
 
 const SIGNAL_CONFIG: Record<OperationsSignalType, { label: string; badge: string; dot: string }> = {
+  enrollment: { label: '수강 문의', badge: 'bg-blue-50 text-blue-700 ring-blue-200', dot: 'bg-blue-500' },
   handoff: { label: '상담 연결', badge: 'bg-violet-50 text-violet-700 ring-violet-200', dot: 'bg-violet-500' },
   cancel: { label: '취소 요청', badge: 'bg-rose-50 text-rose-700 ring-rose-200', dot: 'bg-rose-500' },
   refund: { label: '환불 요청', badge: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
