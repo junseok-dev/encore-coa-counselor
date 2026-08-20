@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, BarChart3, Bell, CreditCard, Headphones,
+  AlertTriangle, BarChart3, Bell, CalendarRange, CreditCard, Headphones,
   MessageCircle, RefreshCw, ShieldAlert, Users,
 } from 'lucide-react';
 import {
@@ -101,8 +101,18 @@ export default function AdminOperationsOverview({ data, loading, analyticsData, 
       </div>
     </header>
 
-    <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="flex flex-col gap-2 xl:items-end"><div className="inline-flex self-start rounded-xl bg-slate-100 p-1 xl:self-end">{PERIOD_OPTIONS.map((period) => <button key={period} onClick={() => onPeriodChange(period)} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${analyticsPeriod === period ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{PERIOD_NAMES[period]}</button>)}</div><OperationsPeriodFilter data={analyticsData} loading={analyticsLoading} mode={analyticsPeriod} filters={analyticsFilters} onChange={onFiltersChange} onRefresh={onRefreshAnalytics} /></div>
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><CalendarRange className="h-5 w-5" /></span>
+          <div><h2 className="text-sm font-black text-slate-900">통계 조회 기간</h2><p className="mt-0.5 text-[11px] text-slate-500">집계 단위와 상세 범위를 선택하세요.</p></div>
+        </div>
+        <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-end">
+          <div className="inline-flex self-start rounded-xl bg-slate-100 p-1">{PERIOD_OPTIONS.map((period) => <button key={period} onClick={() => onPeriodChange(period)} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${analyticsPeriod === period ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{PERIOD_NAMES[period]}</button>)}</div>
+          <div className="hidden h-9 w-px bg-slate-200 lg:block" />
+          <OperationsPeriodFilter data={analyticsData} loading={analyticsLoading} mode={analyticsPeriod} filters={analyticsFilters} onChange={onFiltersChange} onRefresh={onRefreshAnalytics} />
+        </div>
+      </div>
     </section>
 
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{cards.map((metric) => <SummaryCard key={metric.title} {...metric} />)}</div>

@@ -116,34 +116,35 @@ export default function OperationsPeriodFilter({ data, loading, mode, filters, o
   });
   const updateWeek = (value: string) => onChange({ ...filters, weekStart: value || null, day: null });
   const updateDay = (value: string) => onChange({ ...filters, day: value || null });
+  const hasSelection = Boolean(filters.year || filters.month || filters.weekStart || filters.day);
 
   return (
-    <div className="flex flex-col items-start gap-1.5 sm:items-end">
+    <div className="flex min-w-0 flex-col items-start gap-1.5 lg:items-end">
       <div className="flex flex-wrap items-center gap-1.5">
         <select aria-label="조회 연도" value={filters.year ?? ''} onChange={(event) => updateYear(event.target.value)} className={SELECT_CLASS}>
           <option value="">연도 전체</option>
           {years.map((year) => <option key={year} value={year}>{year}년</option>)}
         </select>
-        <select aria-label="조회 월" value={level >= 2 ? filters.month ?? '' : ''} onChange={(event) => updateMonth(event.target.value)} disabled={level < 2 || !filters.year} className={SELECT_CLASS}>
+        {level >= 2 && <select aria-label="조회 월" value={filters.month ?? ''} onChange={(event) => updateMonth(event.target.value)} disabled={!filters.year} className={SELECT_CLASS}>
           <option value="">월 전체</option>
           {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => <option key={month} value={month}>{month}월</option>)}
-        </select>
-        <select aria-label="조회 주차" value={level >= 3 ? filters.weekStart ?? '' : ''} onChange={(event) => updateWeek(event.target.value)} disabled={level < 3 || !filters.month} className={SELECT_CLASS}>
+        </select>}
+        {level >= 3 && <select aria-label="조회 주차" value={filters.weekStart ?? ''} onChange={(event) => updateWeek(event.target.value)} disabled={!filters.month} className={SELECT_CLASS}>
           <option value="">주 전체</option>
           {weeks.map((week) => <option key={week.value} value={week.value}>{week.label}</option>)}
-        </select>
-        <select aria-label="조회 날짜" value={level >= 4 ? filters.day ?? '' : ''} onChange={(event) => updateDay(event.target.value)} disabled={level < 4 || !filters.weekStart} className={SELECT_CLASS}>
+        </select>}
+        {level >= 4 && <select aria-label="조회 날짜" value={filters.day ?? ''} onChange={(event) => updateDay(event.target.value)} disabled={!filters.weekStart} className={SELECT_CLASS}>
           <option value="">일 전체</option>
           {days.map((day) => <option key={day.value} value={day.value}>{day.label}</option>)}
-        </select>
-        <button onClick={() => onChange({ year: null, month: null, weekStart: null, day: null })} title="기간 선택 초기화" className="flex h-9 items-center gap-1 rounded-lg border border-slate-200 px-2.5 text-xs font-bold text-slate-500 hover:bg-slate-50">
+        </select>}
+        {hasSelection && <button onClick={() => onChange({ year: null, month: null, weekStart: null, day: null })} title="기간 선택 초기화" className="flex h-9 items-center gap-1 rounded-lg border border-slate-200 px-2.5 text-xs font-bold text-slate-500 hover:bg-slate-50">
           <RotateCcw className="h-3.5 w-3.5" />초기화
-        </button>
-        <button onClick={() => void onRefresh()} disabled={loading} title="통계 새로고침" className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 disabled:opacity-50">
+        </button>}
+        <button onClick={() => void onRefresh()} disabled={loading} title="통계 새로고침" className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
-      <p className="px-1 text-[11px] font-medium text-slate-400">참조 · {periodReference(data, filters)}</p>
+      <p className="px-1 text-[11px] font-medium text-slate-400 lg:text-right">참조 · {periodReference(data, filters)}</p>
     </div>
   );
 }
