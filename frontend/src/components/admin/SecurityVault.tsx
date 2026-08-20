@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Clock3, Copy, ExternalLink, Eye, EyeOff, KeyRound, Lock, Save, ShieldCheck } from 'lucide-react';
 import { adminApi } from '../../services/api';
 import { SecurityVaultCredential, SecurityVaultData, SecurityVaultStatus } from '../../types';
+import SecurityEnvironmentManager from './SecurityEnvironmentManager';
 
 function errorDetail(error: unknown, fallback: string) {
   return (error as { response?: { data?: { detail?: string } } }).response?.data?.detail || fallback;
@@ -227,7 +228,14 @@ export default function SecurityVault() {
         })}
       </div>
 
-      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 className="font-black text-slate-950">운영 환경설정</h3><p className="mt-1 text-xs leading-5 text-slate-500">운영에 필요한 허용 항목만 표시합니다. 암호화 키, JWT 비밀키, 관리자 비밀번호는 화면에서 조회할 수 없습니다.</p></div><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead><tr className="border-b border-slate-200 text-left text-xs text-slate-500"><th className="px-6 py-3">항목</th><th className="px-4 py-3">환경변수</th><th className="px-4 py-3">상태</th><th className="px-4 py-3">값</th><th className="px-6 py-3 text-right">동작</th></tr></thead><tbody>{data.environment.map((item) => { const visible = revealed.has(`env:${item.key}`); return <tr key={item.key} className="border-b border-slate-100 last:border-0"><td className="px-6 py-3 font-semibold text-slate-800">{item.label}</td><td className="px-4 py-3 font-mono text-xs text-slate-500">{item.key}</td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-black ${item.configured ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{item.configured ? '설정됨' : '미설정'}</span></td><td className="max-w-md px-4 py-3 font-mono text-xs text-slate-700"><span className="block truncate">{!item.configured ? '-' : visible || !item.sensitive ? item.value : '••••••••••••'}</span></td><td className="px-6 py-3"><div className="flex justify-end gap-2">{item.sensitive && item.configured && <button onClick={() => toggleReveal(`env:${item.key}`)} className="rounded-lg border border-slate-200 p-2 text-slate-500" title={visible ? '숨기기' : '보기'}>{visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>}<button onClick={() => void copy(item.value, item.label)} disabled={!item.configured} className="rounded-lg border border-slate-200 p-2 text-slate-500 disabled:opacity-30" title="복사"><Copy className="h-4 w-4" /></button></div></td></tr>; })}</tbody></table></div></section>
+      <SecurityEnvironmentManager
+        vaultToken={vaultToken}
+        items={data.environment}
+        protectedKeys={status.protected_keys}
+        onItemsChange={(environment) => setData((current) => current ? { ...current, environment } : current)}
+        onNotice={setNotice}
+        onExpired={() => lockVault('보안 정보 열람 시간이 만료되었습니다. 다시 잠금 해제해 주세요.')}
+      />
     </div>
   );
 }

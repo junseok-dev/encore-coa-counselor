@@ -116,6 +116,7 @@ function auditTargetName(
   if (log.target_type === 'openai_monthly_cost') return `${log.target_id ?? ''} OpenAI 비용`.trim();
   if (log.target_type === 'custom_table') return `업무 데이터 #${log.target_id ?? '-'}`;
   if (log.target_type === 'admin_user') return `관리자 ${log.target_id ?? ''}`.trim();
+  if (log.target_type === 'security_vault' && /environment/.test(log.action)) return `${log.target_id ?? ''} 환경설정`.trim();
   if (log.target_type === 'security_vault') return '보안 정보 보관함';
   if (log.target_type === 'system') return log.target_id && log.target_id !== 'global' ? log.target_id : '시스템';
   return `${log.target_type.replace(/_/g, ' ')} ${log.target_id ?? ''}`.trim();
@@ -164,6 +165,9 @@ function auditSentence(action: string, target: string): string {
     security_vault_password_reset: '보안 정보 보관 비밀번호를 재설정했습니다.',
     security_vault_viewed: '보안 정보를 조회했습니다.',
     security_vault_item_saved: '보안 정보를 수정했습니다.',
+    security_vault_environment_created: `${target}을 등록했습니다.`,
+    security_vault_environment_updated: `${target}을 수정했습니다.`,
+    security_vault_environment_deleted: `${target}을 삭제했습니다.`,
     password_changed: '관리자 비밀번호를 변경했습니다.',
     superadmin_changed: '최상위 관리자 계정을 변경했습니다.',
     permission_added: `${target}에게 관리자 권한을 부여했습니다.`,
@@ -266,9 +270,9 @@ export default function AdminLogExplorer({
   }, [auditActor, auditCategoryFilter, auditLogs, auditQuery, documents, faqs, prompts]);
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-3xl bg-white p-5 shadow-sm sm:p-6">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)] xl:items-start">
+      <section className="rounded-3xl bg-white p-5 shadow-sm sm:p-6 xl:flex xl:h-[calc(100vh-13rem)] xl:min-h-[640px] xl:flex-col">
+        <div className="flex flex-col gap-4">
           <div>
             <div className="flex items-center gap-2">
               <Activity className="h-5 w-5 text-cyan-700" />
@@ -276,7 +280,7 @@ export default function AdminLogExplorer({
             </div>
             <p className="mt-1 text-sm text-slate-500">문서별로 업로드부터 운영 반영까지의 흐름을 확인합니다. 문제가 있는 문서가 먼저 표시됩니다.</p>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center text-xs sm:min-w-[330px]">
+          <div className="grid grid-cols-3 gap-2 text-center text-xs">
             <button type="button" onClick={() => setProcessingFilter('issue')} className="rounded-xl bg-rose-50 px-3 py-2 text-rose-700">
               <strong className="block text-lg">{processingCounts.issue}</strong>문제
             </button>
@@ -289,7 +293,7 @@ export default function AdminLogExplorer({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px]">
+        <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
             <input value={processingQuery} onChange={(event) => setProcessingQuery(event.target.value)} placeholder="문서명, 문서 ID, 처리 내용, 오류 메시지 검색" className={`${INPUT_CLASS} pl-9`} />
@@ -313,12 +317,12 @@ export default function AdminLogExplorer({
           <span className="ml-auto self-center text-xs text-slate-500">문서 {processingGroups.length}개</span>
         </div>
 
-        <div className="mt-4 max-h-[680px] space-y-3 overflow-y-auto pr-1">
+        <div className="mt-4 max-h-[440px] space-y-3 overflow-y-auto pr-1 sm:max-h-[560px] xl:min-h-0 xl:flex-1 xl:max-h-none">
           {processingGroups.length === 0 && (
             <div className="rounded-2xl bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">조건에 맞는 처리 기록이 없습니다.</div>
           )}
-          {processingGroups.map((group, index) => (
-            <details key={group.key} open={group.hasIssue || index === 0} className={`group rounded-2xl border ${group.hasIssue ? 'border-rose-200 bg-rose-50/30' : 'border-slate-200'}`}>
+          {processingGroups.map((group) => (
+            <details key={group.key} open={group.hasIssue} className={`group rounded-2xl border ${group.hasIssue ? 'border-rose-200 bg-rose-50/30' : 'border-slate-200'}`}>
               <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
                 <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${group.hasIssue ? 'bg-rose-100 text-rose-700' : 'bg-cyan-50 text-cyan-700'}`}>
                   {group.hasIssue ? <AlertTriangle className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
@@ -363,7 +367,7 @@ export default function AdminLogExplorer({
         </div>
       </section>
 
-      <section className="rounded-3xl bg-white p-5 shadow-sm sm:p-6">
+      <section className="rounded-3xl bg-white p-5 shadow-sm sm:p-6 xl:flex xl:h-[calc(100vh-13rem)] xl:min-h-[640px] xl:flex-col">
         <div className="flex items-start gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-700"><ShieldCheck className="h-5 w-5" /></span>
           <div>
@@ -372,30 +376,32 @@ export default function AdminLogExplorer({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_180px]">
+        <div className="mt-5 space-y-3">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
             <input value={auditQuery} onChange={(event) => setAuditQuery(event.target.value)} placeholder="관리자, 작업, 대상 이름 또는 상세 내용 검색" className={`${INPUT_CLASS} pl-9`} />
           </label>
-          <select value={auditActor} onChange={(event) => setAuditActor(event.target.value)} className={INPUT_CLASS}>
-            <option value="all">모든 관리자</option>
-            {auditActors.map((actor) => <option key={actor} value={actor}>{actor}</option>)}
-          </select>
-          <select value={auditCategoryFilter} onChange={(event) => setAuditCategoryFilter(event.target.value as AuditCategory)} className={INPUT_CLASS}>
-            <option value="all">모든 작업 영역</option>
-            <option value="content">콘텐츠</option>
-            <option value="operations">운영</option>
-            <option value="cost">비용</option>
-            <option value="security">보안·권한</option>
-            <option value="system">시스템</option>
-          </select>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <select value={auditActor} onChange={(event) => setAuditActor(event.target.value)} className={INPUT_CLASS}>
+              <option value="all">모든 관리자</option>
+              {auditActors.map((actor) => <option key={actor} value={actor}>{actor}</option>)}
+            </select>
+            <select value={auditCategoryFilter} onChange={(event) => setAuditCategoryFilter(event.target.value as AuditCategory)} className={INPUT_CLASS}>
+              <option value="all">모든 작업 영역</option>
+              <option value="content">콘텐츠</option>
+              <option value="operations">운영</option>
+              <option value="cost">비용</option>
+              <option value="security">보안·권한</option>
+              <option value="system">시스템</option>
+            </select>
+          </div>
         </div>
         <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
           <span>최신 활동순</span>
           <span>{filteredAuditLogs.length}건</span>
         </div>
 
-        <div className="mt-3 max-h-[680px] overflow-y-auto rounded-2xl border border-slate-200">
+        <div className="mt-3 max-h-[440px] overflow-y-auto rounded-2xl border border-slate-200 sm:max-h-[560px] xl:min-h-0 xl:flex-1 xl:max-h-none">
           {filteredAuditLogs.length === 0 && (
             <div className="px-4 py-10 text-center text-sm text-slate-500">조건에 맞는 활동 기록이 없습니다.</div>
           )}
@@ -404,7 +410,7 @@ export default function AdminLogExplorer({
               const target = auditTargetName(log, documents, faqs, prompts);
               const category = auditCategory(log);
               const buttonLabel = auditTargetButtonLabel(log);
-              const isRisky = /deleted|removed|failed|password|security/.test(log.action);
+              const isRisky = /deleted|removed|failed|password_reset|password_changed/.test(log.action);
               return (
                 <li key={log.id} className="p-4 sm:p-5">
                   <div className="flex gap-3">

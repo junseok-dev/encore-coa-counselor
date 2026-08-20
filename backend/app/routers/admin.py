@@ -18,7 +18,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import jwt
-from dotenv import dotenv_values
+from dotenv import dotenv_values, set_key, unset_key
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from openai import AsyncOpenAI
@@ -236,7 +236,18 @@ class VaultSecretPayload(BaseModel):
     note: str | None = None
 
 
+class VaultEnvironmentPayload(BaseModel):
+    label: str
+    value: str
+    sensitive: bool = True
+
+
+class VaultEnvironmentCreatePayload(VaultEnvironmentPayload):
+    key: str
+
+
 VAULT_PASSWORD_SETTING_KEY = "admin_security_vault_password_hash"
+VAULT_CUSTOM_ENV_SETTING_KEY = "admin_security_vault_custom_env_fields"
 VAULT_TOKEN_MINUTES = 30
 VAULT_DEFAULTS = {
     "nxavis": {
@@ -266,6 +277,23 @@ VAULT_ENV_FIELDS = (
     ("MODEL_NAME", "기본 LLM 모델", False),
     ("ADMIN_EMAIL", "최상위 관리자 이메일", False),
 )
+VAULT_PROTECTED_ENV_KEYS = {"ENCRYPTION_KEY", "JWT_SECRET", "ADMIN_PASSWORD"}
+VAULT_RESERVED_ENV_KEYS = {
+    "COMSPEC",
+    "HOME",
+    "HOSTNAME",
+    "PATH",
+    "PATHEXT",
+    "PWD",
+    "SHELL",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "VIRTUAL_ENV",
+    "WINDIR",
+}
 
 
 def _hash_vault_password(password: str) -> str:
@@ -372,20 +400,107 @@ def _serialize_vault_secret(row: AdminSecretRecord) -> dict:
     }
 
 
-def _vault_environment_items() -> list[dict]:
+def _vault_custom_environment_fields(db: Session) -> dict[str, dict]:
+    setting = db.query(AppSetting).filter(AppSetting.key == VAULT_CUSTOM_ENV_SETTING_KEY).first()
+    if setting is None or not setting.value:
+        return {}
+    try:
+        raw_fields = json.loads(setting.value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw_fields, list):
+        return {}
+    fields: dict[str, dict] = {}
+    for raw in raw_fields:
+        if not isinstance(raw, dict):
+            continue
+        key = str(raw.get("key") or "").strip().upper()
+        label = str(raw.get("label") or "").strip()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,99}", key) or not label:
+            continue
+        if key in VAULT_PROTECTED_ENV_KEYS or key in VAULT_RESERVED_ENV_KEYS:
+            continue
+        fields[key] = {
+            "label": label[:120],
+            "sensitive": bool(raw.get("sensitive", True)),
+        }
+    return fields
+
+
+def _save_vault_custom_environment_fields(db: Session, fields: dict[str, dict]) -> None:
+    payload = [
+        {"key": key, "label": item["label"], "sensitive": bool(item["sensitive"])}
+        for key, item in sorted(fields.items())
+    ]
+    setting = db.query(AppSetting).filter(AppSetting.key == VAULT_CUSTOM_ENV_SETTING_KEY).first()
+    if setting is None:
+        setting = AppSetting(key=VAULT_CUSTOM_ENV_SETTING_KEY)
+        db.add(setting)
+    setting.value = json.dumps(payload, ensure_ascii=False)
+
+
+def _validate_vault_environment_key(value: str) -> str:
+    key = value.strip().upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,99}", key):
+        raise HTTPException(status_code=400, detail="환경변수 이름은 영문 대문자로 시작하고 영문 대문자, 숫자, 밑줄만 사용할 수 있습니다.")
+    if key in VAULT_PROTECTED_ENV_KEYS:
+        raise HTTPException(status_code=400, detail="이 환경변수는 보안 정책에 따라 화면에서 관리할 수 없습니다.")
+    if key in VAULT_RESERVED_ENV_KEYS:
+        raise HTTPException(status_code=400, detail="운영체제에서 사용하는 예약 환경변수는 등록할 수 없습니다.")
+    return key
+
+
+def _validate_vault_environment_payload(body: VaultEnvironmentPayload) -> tuple[str, str]:
+    label = body.label.strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="표시 이름을 입력해 주세요.")
+    if len(label) > 120:
+        raise HTTPException(status_code=400, detail="표시 이름은 120자 이하여야 합니다.")
+    if not body.value:
+        raise HTTPException(status_code=400, detail="값을 입력해 주세요. 값을 없애려면 삭제 기능을 사용해 주세요.")
+    if len(body.value) > 20_000:
+        raise HTTPException(status_code=400, detail="환경설정 값은 20,000자 이하여야 합니다.")
+    if "\n" in body.value or "\r" in body.value:
+        raise HTTPException(status_code=400, detail="환경설정 값에는 줄바꿈을 사용할 수 없습니다.")
+    return label, body.value
+
+
+def _write_vault_environment_value(key: str, value: str) -> None:
+    ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not ENV_PATH.exists():
+        ENV_PATH.write_text("", encoding="utf-8")
+    set_key(str(ENV_PATH), key, value, quote_mode="always")
+    os.environ[key] = value
+    get_settings.cache_clear()
+
+
+def _delete_vault_environment_value(key: str) -> None:
+    if ENV_PATH.exists():
+        unset_key(str(ENV_PATH), key)
+    os.environ.pop(key, None)
+    get_settings.cache_clear()
+
+
+def _vault_environment_items(db: Session) -> list[dict]:
     file_values = dotenv_values(ENV_PATH) if ENV_PATH.exists() else {}
+    built_in_fields = {
+        key: {"label": label, "sensitive": sensitive}
+        for key, label, sensitive in VAULT_ENV_FIELDS
+    }
+    custom_fields = _vault_custom_environment_fields(db)
     items = []
-    for key, label, sensitive in VAULT_ENV_FIELDS:
+    for key, metadata in [*built_in_fields.items(), *custom_fields.items()]:
         value = os.getenv(key)
         if value is None:
             value = file_values.get(key)
         text_value = str(value or "")
         items.append({
             "key": key,
-            "label": label,
+            "label": metadata["label"],
             "value": text_value,
             "configured": bool(text_value),
-            "sensitive": sensitive,
+            "sensitive": bool(metadata["sensitive"]),
+            "custom": key in custom_fields,
         })
     return items
 
@@ -4061,7 +4176,7 @@ def get_security_vault_status(
         "configured": configured,
         "can_setup": not configured and current_user == get_settings().admin_email,
         "unlock_minutes": VAULT_TOKEN_MINUTES,
-        "protected_keys": ["ENCRYPTION_KEY", "JWT_SECRET", "ADMIN_PASSWORD"],
+        "protected_keys": sorted(VAULT_PROTECTED_ENV_KEYS),
     }
 
 
@@ -4161,7 +4276,7 @@ def get_security_vault_data(
     )
     return {
         "credentials": [_serialize_vault_secret(row) for row in records],
-        "environment": _vault_environment_items(),
+        "environment": _vault_environment_items(db),
         "expires_in_seconds": VAULT_TOKEN_MINUTES * 60,
     }
 
@@ -4213,6 +4328,113 @@ def save_security_vault_item(
         actor=current_user,
     )
     return _serialize_vault_secret(row)
+
+
+@router.post("/security-vault/environment")
+def create_security_vault_environment(
+    body: VaultEnvironmentCreatePayload,
+    x_vault_token: str | None = Header(None, alias="X-Vault-Token"),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_superadmin),
+):
+    _require_vault_token(current_user, x_vault_token, db)
+    key = _validate_vault_environment_key(body.key)
+    label, value = _validate_vault_environment_payload(body)
+    built_in_keys = {field[0] for field in VAULT_ENV_FIELDS}
+    custom_fields = _vault_custom_environment_fields(db)
+    if key in built_in_keys or key in custom_fields:
+        raise HTTPException(status_code=409, detail="이미 등록된 환경변수입니다. 기존 항목에서 값을 수정해 주세요.")
+
+    sensitive = body.sensitive or bool(re.search(r"KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL", key))
+    _write_vault_environment_value(key, value)
+    custom_fields[key] = {"label": label, "sensitive": sensitive}
+    _save_vault_custom_environment_fields(db, custom_fields)
+    db.commit()
+    create_audit_log(
+        db,
+        "security_vault_environment_created",
+        "security_vault",
+        key,
+        f"label={label}, sensitive={str(sensitive).lower()}",
+        actor=current_user,
+    )
+    return {
+        "message": f"{label} 환경설정을 등록했습니다.",
+        "environment": _vault_environment_items(db),
+    }
+
+
+@router.put("/security-vault/environment/{environment_key}")
+def update_security_vault_environment(
+    environment_key: str,
+    body: VaultEnvironmentPayload,
+    x_vault_token: str | None = Header(None, alias="X-Vault-Token"),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_superadmin),
+):
+    _require_vault_token(current_user, x_vault_token, db)
+    key = _validate_vault_environment_key(environment_key)
+    label, value = _validate_vault_environment_payload(body)
+    built_in_fields = {field[0]: {"label": field[1], "sensitive": field[2]} for field in VAULT_ENV_FIELDS}
+    custom_fields = _vault_custom_environment_fields(db)
+    if key not in built_in_fields and key not in custom_fields:
+        raise HTTPException(status_code=404, detail="등록된 환경설정을 찾을 수 없습니다.")
+
+    if key in custom_fields:
+        sensitive = body.sensitive or bool(re.search(r"KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL", key))
+        custom_fields[key] = {"label": label, "sensitive": sensitive}
+        _save_vault_custom_environment_fields(db, custom_fields)
+    else:
+        label = built_in_fields[key]["label"]
+        sensitive = bool(built_in_fields[key]["sensitive"])
+    _write_vault_environment_value(key, value)
+    db.commit()
+    create_audit_log(
+        db,
+        "security_vault_environment_updated",
+        "security_vault",
+        key,
+        f"label={label}, sensitive={str(sensitive).lower()}",
+        actor=current_user,
+    )
+    return {
+        "message": f"{label} 환경설정을 저장했습니다.",
+        "environment": _vault_environment_items(db),
+    }
+
+
+@router.delete("/security-vault/environment/{environment_key}")
+def delete_security_vault_environment(
+    environment_key: str,
+    x_vault_token: str | None = Header(None, alias="X-Vault-Token"),
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_superadmin),
+):
+    _require_vault_token(current_user, x_vault_token, db)
+    key = _validate_vault_environment_key(environment_key)
+    built_in_fields = {field[0]: {"label": field[1]} for field in VAULT_ENV_FIELDS}
+    custom_fields = _vault_custom_environment_fields(db)
+    if key not in built_in_fields and key not in custom_fields:
+        raise HTTPException(status_code=404, detail="등록된 환경설정을 찾을 수 없습니다.")
+
+    label = custom_fields.get(key, built_in_fields.get(key, {})).get("label", key)
+    _delete_vault_environment_value(key)
+    if key in custom_fields:
+        del custom_fields[key]
+        _save_vault_custom_environment_fields(db, custom_fields)
+    db.commit()
+    create_audit_log(
+        db,
+        "security_vault_environment_deleted",
+        "security_vault",
+        key,
+        f"label={label}",
+        actor=current_user,
+    )
+    return {
+        "message": f"{label} 환경설정을 삭제했습니다.",
+        "environment": _vault_environment_items(db),
+    }
 
 
 @router.put("/password")

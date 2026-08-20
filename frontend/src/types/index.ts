@@ -45,6 +45,7 @@ export interface SecurityVaultEnvironmentItem {
   value: string;
   configured: boolean;
   sensitive: boolean;
+  custom: boolean;
 }
 
 export interface SecurityVaultData {

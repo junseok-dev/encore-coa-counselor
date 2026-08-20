@@ -38,6 +38,7 @@ import {
   PromptPayload,
   SecurityVaultCredential,
   SecurityVaultData,
+  SecurityVaultEnvironmentItem,
   SecurityVaultStatus,
   SuggestedQuestionsResponse,
 } from '../types';
@@ -274,6 +275,40 @@ export const adminApi = {
   testOperationsAlertAnswer: async (alertId: number, question: string): Promise<OperationsAlertTestResult> => {
     const response = await adminApiClient.post<OperationsAlertTestResult>(`/admin/operations/alerts/${alertId}/test`, {
       question,
+    });
+    return response.data;
+  },
+
+  createSecurityVaultEnvironment: async (
+    vaultToken: string,
+    item: Pick<SecurityVaultEnvironmentItem, 'key' | 'label' | 'value' | 'sensitive'>,
+  ): Promise<{ message: string; environment: SecurityVaultEnvironmentItem[] }> => {
+    const response = await adminApiClient.post('/admin/security-vault/environment', item, {
+      headers: { 'X-Vault-Token': vaultToken },
+    });
+    return response.data;
+  },
+
+  updateSecurityVaultEnvironment: async (
+    vaultToken: string,
+    item: SecurityVaultEnvironmentItem,
+  ): Promise<{ message: string; environment: SecurityVaultEnvironmentItem[] }> => {
+    const response = await adminApiClient.put(`/admin/security-vault/environment/${encodeURIComponent(item.key)}`, {
+      label: item.label,
+      value: item.value,
+      sensitive: item.sensitive,
+    }, {
+      headers: { 'X-Vault-Token': vaultToken },
+    });
+    return response.data;
+  },
+
+  deleteSecurityVaultEnvironment: async (
+    vaultToken: string,
+    key: string,
+  ): Promise<{ message: string; environment: SecurityVaultEnvironmentItem[] }> => {
+    const response = await adminApiClient.delete(`/admin/security-vault/environment/${encodeURIComponent(key)}`, {
+      headers: { 'X-Vault-Token': vaultToken },
     });
     return response.data;
   },
