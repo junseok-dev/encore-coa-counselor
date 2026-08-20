@@ -2,11 +2,12 @@ import unittest
 from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.db.migrations import migrate_database
 from app.db.models import ChatLog, ChatSession, CourseLinkEvent, OperationsAlert
 from app.routers import admin, chat
 
@@ -73,6 +74,65 @@ class OperationsContextDashboardTest(unittest.TestCase):
         self.assertEqual(1, result["period_summary"]["course_page_views"])
         self.assertEqual(0, result["period_summary"]["handoffs"])
 
+    def test_internal_admin_and_test_sessions_are_excluded_everywhere(self):
+        created_at = datetime(2026, 8, 19, 11, 0)
+        self.db.add_all([
+            ChatSession(id="public-session", message_count=1, is_internal=False, created_at=created_at),
+            ChatSession(id="internal-session", message_count=1, is_internal=True, created_at=created_at),
+        ])
+        self.db.add_all([
+            ChatLog(
+                session_id="public-session",
+                question="머신러닝 과정이 궁금해요",
+                answer="과정을 안내합니다.",
+                source="document",
+                processing_status="ready",
+                question_category="curriculum",
+                created_at=created_at,
+            ),
+            ChatLog(
+                session_id="internal-session",
+                question="환불 테스트 중 오류",
+                answer="안전 안내",
+                source="guardrail",
+                processing_status="failed",
+                error="test error",
+                question_category="cancel",
+                created_at=created_at,
+            ),
+        ])
+        self.db.commit()
+
+        analytics = admin.get_operations_analytics(
+            selected_year=None,
+            selected_month=None,
+            period_mode="day",
+            anchor_date=date(2026, 8, 19),
+            db=self.db,
+            _=None,
+        )
+        dashboard = admin.get_operations_dashboard(days=30, attention_limit=500, db=self.db, _=None)
+
+        self.assertEqual(1, analytics["period_summary"]["visitors"])
+        self.assertEqual(1, analytics["period_summary"]["chats"])
+        self.assertEqual(0, analytics["period_summary"]["safety"])
+        self.assertNotIn("internal-session", {item["session_id"] for item in dashboard["attention"]})
+
+    def test_admin_can_mark_existing_browser_sessions_internal(self):
+        self.db.add(ChatSession(id="my-old-chat", message_count=1, is_internal=False))
+        self.db.commit()
+
+        result = admin.mark_internal_sessions(
+            admin.InternalSessionsRequest(session_ids=["my-old-chat", "missing"]),
+            self.db,
+            "admin@example.com",
+        )
+
+        self.assertEqual(1, result["updated"])
+        self.assertTrue(self.db.get(ChatSession, "my-old-chat").is_internal)
+        self.assertTrue(chat._is_internal_session("test-dashboard", False))
+        self.assertTrue(chat._is_internal_session("normal-session", True))
+
     def test_old_safety_and_error_stay_in_review_until_resolved(self):
         old_at = datetime.now() - timedelta(days=365)
         self.db.add(ChatSession(id="old-risk", message_count=2, created_at=old_at))
@@ -120,6 +180,15 @@ class OperationsContextDashboardTest(unittest.TestCase):
                 chat.CourseLinkEventRequest(session_id="session-1", url="https://example.com/course"),
                 self.db,
             )
+
+    def test_legacy_chat_sessions_gain_internal_analytics_flag(self):
+        legacy_engine = create_engine("sqlite://", poolclass=StaticPool)
+        with legacy_engine.begin() as connection:
+            connection.execute(text("CREATE TABLE chat_sessions (id VARCHAR(64) PRIMARY KEY, message_count INTEGER)"))
+        migrate_database(legacy_engine)
+        columns = {column["name"] for column in inspect(legacy_engine).get_columns("chat_sessions")}
+        self.assertIn("is_internal", columns)
+        legacy_engine.dispose()
 
 
 if __name__ == "__main__":

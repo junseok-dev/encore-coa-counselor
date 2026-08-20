@@ -206,6 +206,10 @@ class SessionOperationsReviewRequest(BaseModel):
     reason: str | None = None
 
 
+class InternalSessionsRequest(BaseModel):
+    session_ids: list[str]
+
+
 class OperationsAiAssistRequest(BaseModel):
     message: str
 
@@ -685,6 +689,10 @@ def _session_context_metrics(logs: list[ChatLog]) -> dict:
         "potential_loss_sessions": potential_loss_sessions,
         "first_course_log": first_course_log,
     }
+
+
+def _internal_session_ids(db: Session) -> set[str]:
+    return {row[0] for row in db.query(ChatSession.id).filter(ChatSession.is_internal.is_(True)).all()}
 
 
 def _handoff_reason(
@@ -1577,11 +1585,15 @@ def get_operations_analytics(
 ):
     today = datetime.now().date()
     current_month = today.replace(day=1)
+    internal_ids = _internal_session_ids(db)
 
-    date_ranges = [
-        db.query(func.min(model.created_at), func.max(model.created_at)).one()
-        for model in (ChatSession, ChatLog, CancelRequest)
-    ]
+    session_range = db.query(func.min(ChatSession.created_at), func.max(ChatSession.created_at)).filter(ChatSession.is_internal.is_(False)).one()
+    log_range_query = db.query(func.min(ChatLog.created_at), func.max(ChatLog.created_at))
+    cancel_range_query = db.query(func.min(CancelRequest.created_at), func.max(CancelRequest.created_at))
+    if internal_ids:
+        log_range_query = log_range_query.filter(ChatLog.session_id.notin_(internal_ids))
+        cancel_range_query = cancel_range_query.filter(CancelRequest.session_id.notin_(internal_ids))
+    date_ranges = [session_range, log_range_query.one(), cancel_range_query.one()]
     latest_values = [value for _, maximum in date_ranges if (value := maximum) is not None]
     latest_data_month = (
         max(_analysis_datetime(value).date() for value in latest_values).replace(day=1)
@@ -1653,19 +1665,27 @@ def get_operations_analytics(
     sessions = db.query(ChatSession).filter(
         ChatSession.created_at >= query_start,
         ChatSession.created_at < query_end,
+        ChatSession.is_internal.is_(False),
     ).all()
-    logs = db.query(ChatLog).filter(
+    log_query = db.query(ChatLog).filter(
         ChatLog.created_at >= query_start,
         ChatLog.created_at < query_end,
-    ).all()
-    cancels = db.query(CancelRequest).filter(
+    )
+    cancel_query = db.query(CancelRequest).filter(
         CancelRequest.created_at >= query_start,
         CancelRequest.created_at < query_end,
-    ).all()
-    link_events = db.query(CourseLinkEvent).filter(
+    )
+    link_query = db.query(CourseLinkEvent).filter(
         CourseLinkEvent.created_at >= query_start,
         CourseLinkEvent.created_at < query_end,
-    ).all()
+    )
+    if internal_ids:
+        log_query = log_query.filter(ChatLog.session_id.notin_(internal_ids))
+        cancel_query = cancel_query.filter(CancelRequest.session_id.notin_(internal_ids))
+        link_query = link_query.filter(CourseLinkEvent.session_id.notin_(internal_ids))
+    logs = log_query.all()
+    cancels = cancel_query.all()
+    link_events = link_query.all()
 
     def in_analysis_period(value: datetime | None) -> bool:
         if not value:
@@ -2152,6 +2172,28 @@ def get_operations_health(_: None = Depends(verify_admin)):
     }
 
 
+@router.post("/operations/internal-sessions")
+def mark_internal_sessions(
+    body: InternalSessionsRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    session_ids = {value.strip() for value in body.session_ids[:500] if value and value.strip()}
+    if not session_ids:
+        return {"updated": 0}
+    rows = db.query(ChatSession).filter(ChatSession.id.in_(session_ids)).all()
+    updated = 0
+    for row in rows:
+        if row.is_internal:
+            continue
+        row.is_internal = True
+        updated += 1
+    if updated:
+        db.commit()
+        create_audit_log(db, "analytics_internal_sessions_marked", "chat_session", "multiple", f"{updated}개 내부 세션 제외", actor=current_user)
+    return {"updated": updated}
+
+
 @router.get("/operations/dashboard")
 def get_operations_dashboard(
     days: int = Query(7, ge=1, le=30),
@@ -2164,11 +2206,19 @@ def get_operations_dashboard(
     start_date = today - timedelta(days=days - 1)
     previous_start_date = start_date - timedelta(days=days)
     previous_start = datetime.combine(previous_start_date, time.min)
+    internal_ids = _internal_session_ids(db)
 
-    sessions = db.query(ChatSession).filter(ChatSession.created_at >= previous_start).all()
-    logs = db.query(ChatLog).filter(ChatLog.created_at >= previous_start).order_by(ChatLog.created_at.desc()).all()
-    cancels = db.query(CancelRequest).filter(CancelRequest.created_at >= previous_start).order_by(CancelRequest.created_at.desc()).all()
-    link_events = db.query(CourseLinkEvent).filter(CourseLinkEvent.created_at >= previous_start).all()
+    sessions = db.query(ChatSession).filter(ChatSession.created_at >= previous_start, ChatSession.is_internal.is_(False)).all()
+    log_query = db.query(ChatLog).filter(ChatLog.created_at >= previous_start)
+    cancel_query = db.query(CancelRequest).filter(CancelRequest.created_at >= previous_start)
+    link_query = db.query(CourseLinkEvent).filter(CourseLinkEvent.created_at >= previous_start)
+    if internal_ids:
+        log_query = log_query.filter(ChatLog.session_id.notin_(internal_ids))
+        cancel_query = cancel_query.filter(CancelRequest.session_id.notin_(internal_ids))
+        link_query = link_query.filter(CourseLinkEvent.session_id.notin_(internal_ids))
+    logs = log_query.order_by(ChatLog.created_at.desc()).all()
+    cancels = cancel_query.order_by(CancelRequest.created_at.desc()).all()
+    link_events = link_query.all()
 
     current_sessions = [row for row in sessions if row.created_at and row.created_at.date() >= start_date]
     previous_sessions = [row for row in sessions if row.created_at and previous_start_date <= row.created_at.date() < start_date]
@@ -2237,8 +2287,13 @@ def get_operations_dashboard(
         if session_rows:
             daily_map[max(row.created_at for row in session_rows).date().isoformat()]["potential_inquiry_loss"] += 1
 
-    review_logs = db.query(ChatLog).order_by(ChatLog.created_at.desc(), ChatLog.id.desc()).all()
-    review_cancels = db.query(CancelRequest).order_by(CancelRequest.created_at.desc()).all()
+    review_log_query = db.query(ChatLog)
+    review_cancel_query = db.query(CancelRequest)
+    if internal_ids:
+        review_log_query = review_log_query.filter(ChatLog.session_id.notin_(internal_ids))
+        review_cancel_query = review_cancel_query.filter(CancelRequest.session_id.notin_(internal_ids))
+    review_logs = review_log_query.order_by(ChatLog.created_at.desc(), ChatLog.id.desc()).all()
+    review_cancels = review_cancel_query.order_by(CancelRequest.created_at.desc()).all()
     request_signal_by_key = {
         (row.session_id, (decrypt_if_needed(row.message) or "").strip()): (
             "refund" if _is_refund_request(decrypt_if_needed(row.message)) else "cancel"
@@ -2380,7 +2435,10 @@ def get_operations_dashboard(
         key=lambda row: row.updated_at or row.created_at or datetime.min,
         reverse=True,
     )[:10]
-    last_conversation_at = db.query(func.max(ChatMessage.created_at)).scalar()
+    last_message_query = db.query(func.max(ChatMessage.created_at))
+    if internal_ids:
+        last_message_query = last_message_query.filter(ChatMessage.session_id.notin_(internal_ids))
+    last_conversation_at = last_message_query.scalar()
     return {
         "period_days": days,
         "generated_at": datetime.now(),

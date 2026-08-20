@@ -28,6 +28,8 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
             "question_category_source": "VARCHAR(20)",
         }
         return mapping.get(column_name)
+    if table_name == "chat_sessions":
+        return {"is_internal": "BOOLEAN NOT NULL DEFAULT FALSE"}.get(column_name)
     if table_name == "admin_secret_records":
         return {
             "account_identifier": "VARCHAR(120)",
@@ -225,6 +227,13 @@ def migrate_database(engine: Engine) -> None:
                 continue
             with engine.begin() as connection:
                 connection.execute(text(f"ALTER TABLE documents ADD COLUMN {column_name} {column_sql}"))
+
+    if "chat_sessions" in inspector.get_table_names():
+        existing = {column["name"] for column in inspector.get_columns("chat_sessions")}
+        if "is_internal" not in existing:
+            column_sql = _column_sql("chat_sessions", "is_internal")
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TABLE chat_sessions ADD COLUMN is_internal {column_sql}"))
 
     if "chat_logs" in inspector.get_table_names():
         existing = {column["name"] for column in inspector.get_columns("chat_logs")}

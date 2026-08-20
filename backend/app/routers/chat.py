@@ -36,6 +36,11 @@ from app.utils.crypto import maybe_encrypt
 router = APIRouter()
 
 
+def _is_internal_session(session_id: str, requested: bool) -> bool:
+    normalized = (session_id or "").strip().lower()
+    return requested or normalized.startswith(("test", "preview", "__operations_test__", "internal"))
+
+
 class CourseLinkEventRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=64)
     url: str = Field(min_length=1, max_length=2000)
@@ -255,7 +260,10 @@ def is_cancel_request(message: str) -> bool:
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
-    get_or_create_session(db, request.session_id, None)
+    session = get_or_create_session(db, request.session_id, None)
+    if _is_internal_session(request.session_id, request.exclude_from_analytics) and not session.is_internal:
+        session.is_internal = True
+        db.commit()
     save_message(db, request.session_id, "user", request.message, source="user")
 
     retrieval_chunks: list[str] = []
@@ -400,7 +408,10 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 
 @router.post("/stream")
 async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
-    get_or_create_session(db, request.session_id, None)
+    session = get_or_create_session(db, request.session_id, None)
+    if _is_internal_session(request.session_id, request.exclude_from_analytics) and not session.is_internal:
+        session.is_internal = True
+        db.commit()
     save_message(db, request.session_id, "user", request.message, source="user")
     db.commit()
     question_category = categorize_question_rule(request.message)

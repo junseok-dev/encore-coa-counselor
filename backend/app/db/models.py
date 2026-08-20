@@ -51,6 +51,7 @@ class ChatSession(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     message_count = Column(Integer, default=0)
     encrypted_user_name = Column(Text, nullable=True)
+    is_internal = Column(Boolean, default=False, nullable=False, index=True)
 
 
 class ChatMessage(Base):

@@ -51,9 +51,18 @@ const apiClient = axios.create({
 });
 
 const ADMIN_TOKEN_KEY = 'adminToken';
-export const getAdminToken = (): string => sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? '';
-export const saveAdminToken = (token: string) => sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+const INTERNAL_ANALYTICS_KEY = 'coaInternalAnalytics';
+export const getAdminToken = (): string => {
+  const token = sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? '';
+  if (token) localStorage.setItem(INTERNAL_ANALYTICS_KEY, 'true');
+  return token;
+};
+export const saveAdminToken = (token: string) => {
+  sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+  localStorage.setItem(INTERNAL_ANALYTICS_KEY, 'true');
+};
 export const clearAdminToken = () => sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+const excludeBrowserFromAnalytics = () => localStorage.getItem(INTERNAL_ANALYTICS_KEY) === 'true';
 
 const adminApiClient = axios.create({ baseURL: API_BASE_URL });
 adminApiClient.interceptors.request.use((config) => {
@@ -81,6 +90,7 @@ export const chatApi = {
     const response = await apiClient.post<ChatResponse>('/chat', {
       session_id: sessionId,
       message,
+      exclude_from_analytics: excludeBrowserFromAnalytics(),
     });
     return response.data;
   },
@@ -98,7 +108,7 @@ export const chatApi = {
       const response = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, message, history }),
+        body: JSON.stringify({ session_id: sessionId, message, history, exclude_from_analytics: excludeBrowserFromAnalytics() }),
         signal,
       });
 
@@ -144,6 +154,10 @@ export const chatApi = {
 };
 
 export const adminApi = {
+  markInternalSessions: async (sessionIds: string[]): Promise<{ updated: number }> => {
+    const response = await adminApiClient.post('/admin/operations/internal-sessions', { session_ids: sessionIds });
+    return response.data;
+  },
   getSecurityVaultStatus: async (): Promise<SecurityVaultStatus> => {
     const response = await adminApiClient.get<SecurityVaultStatus>('/admin/security-vault/status');
     return response.data;

@@ -59,8 +59,21 @@ type NavGroupKey = 'operations' | 'content' | 'tools';
 type LogViewKey = 'conversations' | 'system';
 
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
+const CHAT_CONVERSATIONS_STORAGE_KEY = 'chatConversations:v2';
 const CHAT_SESSION_PAGE_SIZE = 20;
 const EMPTY_ANALYTICS_FILTERS: OperationsPeriodFilters = { year: null, month: null, weekStart: null, day: null };
+
+function localChatSessionIds(): string[] {
+  try {
+    const raw = window.sessionStorage.getItem(CHAT_CONVERSATIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const rows = JSON.parse(raw) as { sessionId?: unknown }[];
+    if (!Array.isArray(rows)) return [];
+    return [...new Set(rows.map((row) => typeof row.sessionId === 'string' ? row.sessionId.trim() : '').filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
 
 function analyticsQuery(filters: OperationsPeriodFilters): { period?: OperationsPeriodMode; anchor?: string } {
   if (filters.day) return { period: 'day', anchor: filters.day };
@@ -473,6 +486,8 @@ export default function AdminPage() {
     setLoading(true);
     setLoadError('');
     try {
+      const internalSessionIds = localChatSessionIds();
+      if (internalSessionIds.length) await adminApi.markInternalSessions(internalSessionIds);
       const [documentData, faqData, promptData, logData, operations] = await Promise.all([
         adminApi.getDocuments(true),
         adminApi.getFaqs(),
