@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import {
   Bot,
@@ -28,6 +28,8 @@ import AdminOperationsOverview from '../components/admin/AdminOperationsOverview
 import OperationsReview from '../components/admin/OperationsReview';
 import CostManagement from '../components/admin/CostManagement';
 import SecurityVault from '../components/admin/SecurityVault';
+import AdminLogExplorer from '../components/admin/AdminLogExplorer';
+import AdminSessionDrawer from '../components/admin/AdminSessionDrawer';
 import {
   AdminDocument,
   AdminDocumentDetail,
@@ -54,6 +56,7 @@ import {
 
 type TabKey = 'dashboard' | 'improvements' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'security' | 'settings' | 'permissions';
 type NavGroupKey = 'operations' | 'content' | 'tools';
+type LogViewKey = 'conversations' | 'system';
 
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
 const CHAT_SESSION_PAGE_SIZE = 20;
@@ -365,10 +368,12 @@ export default function AdminPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatExporting, setChatExporting] = useState(false);
   const [chatReviewingId, setChatReviewingId] = useState<number | null>(null);
+  const [logView, setLogView] = useState<LogViewKey>('conversations');
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionPage, setSessionPage] = useState(initialAdminView.chatSessionPage);
   const [sessionTotal, setSessionTotal] = useState(0);
   const [sessionTotalPages, setSessionTotalPages] = useState(1);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
   // DB 브라우저
   const [dbTables, setDbTables] = useState<DbTableMeta[]>([]);
@@ -437,8 +442,6 @@ export default function AdminPage() {
   const faqMdInputRef = useRef<HTMLInputElement>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
   const documentRequestIdRef = useRef(0);
-  const navigate = useNavigate();
-
   const setActiveTab = (tab: TabKey) => {
     const nextSearchParams = new URLSearchParams(searchParams);
     nextSearchParams.set('tab', tab);
@@ -447,6 +450,8 @@ export default function AdminPage() {
     if (group) setExpandedNavGroups((current) => current.includes(group.key) ? current : [...current, group.key]);
     setMobileNavOpen(false);
   };
+
+  const handleCloseSessionDrawer = useCallback(() => setSelectedSessionId(null), []);
 
   const handleAdminLogout = () => {
     window.sessionStorage.removeItem(ADMIN_VIEW_STORAGE_KEY);
@@ -1006,6 +1011,57 @@ export default function AdminPage() {
 
   const handleSelectPrompt = (prompt: PromptConfig) => {
     setPromptForm({ prompt_key: prompt.prompt_key, label: prompt.label, content: prompt.content });
+  };
+
+  const handleOpenLogDocument = (documentId: number) => {
+    setActiveTab('documents');
+    void openDocument(documentId);
+  };
+
+  const handleOpenAuditTarget = (log: AuditLog) => {
+    if (log.target_type === 'document' && log.target_id) {
+      const documentId = Number(log.target_id);
+      setActiveTab('documents');
+      if (Number.isFinite(documentId) && documents.some((document) => document.id === documentId)) {
+        void openDocument(documentId);
+      }
+      return;
+    }
+    if (log.target_type === 'faq') {
+      const faq = faqs.find((item) => item.id === log.target_id);
+      if (faq) handleSelectFaq(faq);
+      setActiveTab('faqs');
+      return;
+    }
+    if (log.target_type === 'prompt') {
+      const prompt = prompts.find((item) => item.prompt_key === log.target_id);
+      if (prompt) handleSelectPrompt(prompt);
+      setActiveTab('prompts');
+      return;
+    }
+    if (log.target_type === 'operations_alert') {
+      const alertId = Number(log.target_id);
+      setSelectedImprovementAlertId(Number.isFinite(alertId) ? alertId : null);
+      setActiveTab('improvements');
+      return;
+    }
+    if (/cost|billing/.test(log.target_type)) {
+      setActiveTab('costs');
+      return;
+    }
+    if (log.target_type === 'custom_table') {
+      setActiveTab('db');
+      return;
+    }
+    if (log.target_type === 'admin_user') {
+      setActiveTab('permissions');
+      return;
+    }
+    if (log.target_type === 'security_vault') {
+      setActiveTab('security');
+      return;
+    }
+    if (log.target_type === 'system') setActiveTab('settings');
   };
 
   const handleSavePrompt = async () => {
@@ -2037,6 +2093,31 @@ export default function AdminPage() {
 
         {activeTab === 'chats' && (
           <div className="mt-6 space-y-6">
+            <div role="tablist" aria-label="로그 화면 구분" className="grid gap-3 rounded-3xl bg-white p-2 shadow-sm sm:grid-cols-2">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={logView === 'conversations'}
+                onClick={() => setLogView('conversations')}
+                className={`rounded-2xl px-5 py-4 text-left transition ${logView === 'conversations' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+              >
+                <span className="block text-sm font-semibold">대화·상담</span>
+                <span className={`mt-1 block text-xs ${logView === 'conversations' ? 'text-slate-300' : 'text-slate-400'}`}>대화 로그 조회·엑셀 다운로드·상담 세션</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={logView === 'system'}
+                onClick={() => setLogView('system')}
+                className={`rounded-2xl px-5 py-4 text-left transition ${logView === 'system' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+              >
+                <span className="block text-sm font-semibold">처리·감사</span>
+                <span className={`mt-1 block text-xs ${logView === 'system' ? 'text-slate-300' : 'text-slate-400'}`}>문서 처리 흐름·관리자 활동 내역</span>
+              </button>
+            </div>
+
+            {logView === 'conversations' && (
+              <>
             <section className="rounded-3xl bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-slate-900">대화 로그 조회와 엑셀 다운로드</h2>
               <div className="mt-4 grid gap-4 md:grid-cols-[1fr_1fr_1.2fr]">
@@ -2072,34 +2153,6 @@ export default function AdminPage() {
               </div>
             </section>
 
-            <div className="grid gap-6 xl:grid-cols-2">
-              <section className="rounded-3xl bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-slate-900">처리 로그</h2>
-                <div className="mt-4 max-h-[420px] space-y-3 overflow-y-auto">
-                  {processingLogs.map((log) => (
-                    <div key={log.id} className="rounded-2xl border border-slate-200 p-4">
-                      <div className="text-sm font-medium text-slate-900">{log.status} / {log.message}</div>
-                      <div className="mt-1 text-xs text-slate-500">{formatDate(log.created_at)}</div>
-                      {log.detail && <p className="mt-2 text-sm text-rose-600">{log.detail}</p>}
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="rounded-3xl bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-slate-900">감사 로그</h2>
-                <div className="mt-4 max-h-[420px] space-y-3 overflow-y-auto">
-                  {auditLogs.map((log) => (
-                    <div key={log.id} className="rounded-2xl border border-slate-200 p-4">
-                      <div className="text-sm font-medium text-slate-900">{log.action}</div>
-                      <div className="mt-1 text-xs text-slate-500">{log.target_type} / {log.target_id ?? '-'} / {formatDate(log.created_at)}</div>
-                      {log.detail && <p className="mt-2 text-sm text-slate-700">{log.detail}</p>}
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
-
             <section className="rounded-3xl bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-slate-900">상담 세션</h2>
@@ -2128,7 +2181,7 @@ export default function AdminPage() {
                         <td className="px-3 py-3">{session.message_count}</td>
                         <td className="px-3 py-3">
                           <button
-                            onClick={() => navigate(`/admin/sessions/${session.id}?tab=chats`, { state: { fromAdmin: true } })}
+                            onClick={() => setSelectedSessionId(session.id)}
                             className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
                           >보기</button>
                         </td>
@@ -2183,7 +2236,25 @@ export default function AdminPage() {
               </div>
               {sessionLoading && <p className="mt-2 text-center text-xs text-slate-500">상담 세션을 불러오는 중입니다.</p>}
             </section>
+              </>
+            )}
+
+            {logView === 'system' && (
+              <AdminLogExplorer
+                processingLogs={processingLogs}
+                auditLogs={auditLogs}
+                documents={documents}
+                faqs={faqs}
+                prompts={prompts}
+                onOpenDocument={handleOpenLogDocument}
+                onOpenAuditTarget={handleOpenAuditTarget}
+              />
+            )}
           </div>
+        )}
+
+        {selectedSessionId && (
+          <AdminSessionDrawer sessionId={selectedSessionId} onClose={handleCloseSessionDrawer} />
         )}
 
         {activeTab === 'db' && selectedDbTableMeta?.table_kind === 'custom' && (
