@@ -4,6 +4,7 @@ import { GoogleLogin } from '@react-oauth/google';
 import {
   Bot,
   BellRing,
+  ChevronDown,
   HelpCircle,
   Database,
   Eye,
@@ -19,6 +20,7 @@ import {
   ShieldCheck,
   Sparkles,
   WalletCards,
+  X,
 } from 'lucide-react';
 import { adminApi, clearAdminToken, getAdminToken, saveAdminToken } from '../services/api';
 import InfoTooltip from '../components/admin/InfoTooltip';
@@ -51,6 +53,7 @@ import {
 } from '../types';
 
 type TabKey = 'dashboard' | 'improvements' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'security' | 'settings' | 'permissions';
+type NavGroupKey = 'operations' | 'content' | 'tools';
 
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
 const CHAT_SESSION_PAGE_SIZE = 20;
@@ -119,16 +122,17 @@ function readStoredAdminView(): StoredAdminView {
   }
 }
 
-const NAV_GROUPS: { label: string; items: { key: TabKey; label: string; icon: typeof LayoutDashboard }[] }[] = [
+const NAV_GROUPS: { key: NavGroupKey; label: string; items: { key: TabKey; label: string; icon: typeof LayoutDashboard }[] }[] = [
   {
+    key: 'operations',
     label: '운영',
     items: [
-      { key: 'dashboard' as const, label: '대시보드', icon: LayoutDashboard },
       { key: 'improvements' as const, label: '개선 검토', icon: BellRing },
       { key: 'costs' as const, label: '비용 관리', icon: WalletCards },
     ],
   },
   {
+    key: 'content',
     label: '콘텐츠',
     items: [
       { key: 'documents' as const, label: '문서 검토', icon: FileCheck2 },
@@ -137,6 +141,7 @@ const NAV_GROUPS: { label: string; items: { key: TabKey; label: string; icon: ty
     ],
   },
   {
+    key: 'tools',
     label: '관리 도구',
     items: [
       { key: 'chats' as const, label: '로그·내보내기', icon: ScrollText },
@@ -295,6 +300,11 @@ export default function AdminPage() {
   const activeTab = normalizedTabParam && ADMIN_TAB_KEYS.has(normalizedTabParam as TabKey)
     ? (normalizedTabParam as TabKey)
     : initialAdminView.activeTab;
+  const [expandedNavGroups, setExpandedNavGroups] = useState<NavGroupKey[]>(() => {
+    const group = NAV_GROUPS.find((item) => item.items.some((navItem) => navItem.key === activeTab));
+    return group ? [group.key] : [];
+  });
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState('');
@@ -432,6 +442,9 @@ export default function AdminPage() {
     const nextSearchParams = new URLSearchParams(searchParams);
     nextSearchParams.set('tab', tab);
     setSearchParams(nextSearchParams, { replace: true });
+    const group = NAV_GROUPS.find((item) => item.items.some((navItem) => navItem.key === tab));
+    if (group) setExpandedNavGroups((current) => current.includes(group.key) ? current : [...current, group.key]);
+    setMobileNavOpen(false);
   };
 
   const handleAdminLogout = () => {
@@ -578,6 +591,11 @@ export default function AdminPage() {
       setActiveTab(initialAdminView.activeTab);
     }
   }, [authenticated, tabParam]);
+
+  useEffect(() => {
+    const group = visibleNavGroups.find((item) => item.items.some((navItem) => navItem.key === activeTab));
+    if (group) setExpandedNavGroups((current) => current.includes(group.key) ? current : [...current, group.key]);
+  }, [activeTab, visibleNavGroups]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -1470,22 +1488,44 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-[#f5f7fb] text-slate-900">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-72 flex-col border-r border-slate-800 bg-[#08111f] text-white lg:flex">
+      {mobileNavOpen && <button type="button" aria-label="메뉴 닫기" onClick={() => setMobileNavOpen(false)} className="fixed inset-0 z-40 bg-slate-950/55 backdrop-blur-sm lg:hidden" />}
+      <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-slate-800 bg-[#08111f] text-white transition-transform duration-200 ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'} lg:z-40 lg:translate-x-0`}>
         <div className="flex h-20 items-center gap-3 border-b border-white/10 px-6">
           <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/20">
             <Sparkles className="h-5 w-5" />
           </span>
-          <div>
+          <div className="flex-1">
             <p className="text-sm font-bold tracking-wide">COA CONTROL</p>
             <p className="text-[11px] text-slate-400">상담 운영 콘솔</p>
           </div>
+          <button type="button" onClick={() => setMobileNavOpen(false)} aria-label="사이드바 닫기" className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white lg:hidden"><X className="h-4 w-4" /></button>
         </div>
 
-        <nav className="flex-1 space-y-7 overflow-y-auto px-4 py-6">
+        <nav className="flex-1 overflow-y-auto px-4 py-5">
+          <button
+            onClick={() => setActiveTab('dashboard')}
+            className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-bold transition ${activeTab === 'dashboard' ? 'bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-950/30' : 'text-slate-200 hover:bg-white/5 hover:text-white'}`}
+          >
+            <LayoutDashboard className="h-[18px] w-[18px]" />
+            <span>대시보드</span>
+          </button>
+
+          <div className="my-4 h-px bg-white/10" />
+
           {visibleNavGroups.map((group) => (
-            <div key={group.label}>
-              <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">{group.label}</p>
-              <div className="space-y-1">
+            <div key={group.key} className="mb-2">
+              <button
+                type="button"
+                onClick={() => setExpandedNavGroups((current) => current.includes(group.key) ? current.filter((key) => key !== group.key) : [...current, group.key])}
+                aria-expanded={expandedNavGroups.includes(group.key)}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition ${expandedNavGroups.includes(group.key) ? 'bg-white/[0.07] text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+              >
+                <span className="text-[11px] font-black uppercase tracking-[0.16em]">{group.label}</span>
+                <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${expandedNavGroups.includes(group.key) ? 'rotate-180 text-cyan-300' : ''}`} />
+              </button>
+              <div className={`grid transition-[grid-template-rows,opacity] duration-200 ${expandedNavGroups.includes(group.key) ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                <div className="overflow-hidden">
+                  <div className="ml-3 mt-1 space-y-1 border-l border-white/10 pl-3 pb-2">
                 {group.items.map(({ key, label, icon: Icon }) => (
                   <button
                     key={key}
@@ -1499,6 +1539,8 @@ export default function AdminPage() {
                     )}
                   </button>
                 ))}
+                  </div>
+                </div>
               </div>
             </div>
           ))}
@@ -1523,7 +1565,7 @@ export default function AdminPage() {
           <div className="mx-auto flex max-w-[1680px] items-center justify-between gap-4 px-4 py-4 sm:px-6 xl:px-8">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <Menu className="h-5 w-5 text-slate-400 lg:hidden" />
+                <button type="button" onClick={() => setMobileNavOpen(true)} aria-label="관리 메뉴 열기" className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 lg:hidden"><Menu className="h-5 w-5" /></button>
                 <h1 className="truncate text-xl font-bold tracking-tight text-slate-950">{PAGE_META[activeTab].title}</h1>
               </div>
               <p className="mt-1 hidden text-xs text-slate-500 sm:block">{PAGE_META[activeTab].description}</p>
@@ -1547,14 +1589,6 @@ export default function AdminPage() {
         </header>
 
         <div className="mx-auto max-w-[1680px] px-4 pb-10 pt-4 sm:px-6 xl:px-8">
-          <div className="mb-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">
-            {visibleNavGroups.flatMap((group) => group.items).map(({ key, label, icon: Icon }) => (
-              <button key={key} onClick={() => setActiveTab(key)} className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold ${activeTab === key ? 'bg-slate-950 text-white' : 'border border-slate-200 bg-white text-slate-600'}`}>
-                <Icon className="h-4 w-4" /> {label}
-              </button>
-            ))}
-          </div>
-
         {(notice || loadError) && (
           <div className={`mt-4 rounded-2xl px-4 py-3 text-sm ${loadError ? 'bg-rose-50 text-rose-700' : 'bg-cyan-50 text-cyan-800'}`}>
             {loadError || notice}
