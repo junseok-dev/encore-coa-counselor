@@ -59,6 +59,12 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
             status="requested",
             created_at=datetime(2026, 8, 19, 17, 0),
         ))
+        self.db.add(CancelRequest(
+            session_id="session-period",
+            message="수강료 환불 요청",
+            status="requested",
+            created_at=datetime(2026, 8, 19, 18, 0),
+        ))
         self.db.add(BillingDailyCostRecord(
             usage_date=date(2026, 8, 19),
             account_id="account-1",
@@ -99,6 +105,8 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
         self.assertEqual(1, result["period_summary"]["handoffs"])
         self.assertEqual(1, result["period_summary"]["consultation_requests"])
         self.assertEqual(1, result["period_summary"]["cancels"])
+        self.assertEqual(1, result["period_summary"]["refunds"])
+        self.assertEqual(1, result["period_summary"]["withdrawal_sessions"])
         self.assertEqual(12000, result["cost_summary"]["aws_cost_krw"])
         self.assertEqual(0, result["cost_summary"]["openai_cost_usd"])
 

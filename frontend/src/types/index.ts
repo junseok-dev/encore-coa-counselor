@@ -366,6 +366,7 @@ export interface OperationsAnalyticsData {
     consultation_requests: number;
     cancels: number;
     refunds: number;
+    withdrawal_sessions: number;
     homepage_requests: number;
     safety: number;
     failed: number;

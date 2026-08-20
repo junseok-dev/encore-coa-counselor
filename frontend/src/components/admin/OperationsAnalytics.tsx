@@ -130,30 +130,32 @@ function RiskImpact({ data }: { data: OperationsAnalyticsData }) {
 }
 
 function InterestWithdrawalBalance({ data }: { data: OperationsAnalyticsData }) {
+  const visitors = data.period_summary.visitors;
   const interest = data.period_summary.course_inquiries ?? 0;
-  const withdrawal = data.period_summary.cancels + data.period_summary.refunds;
-  const total = interest + withdrawal;
-  const interestShare = total ? Math.round(interest / total * 1000) / 10 : 0;
-  const withdrawalShare = total ? Math.round(withdrawal / total * 1000) / 10 : 0;
-  const difference = Math.abs(interestShare - withdrawalShare);
-  const state = interestShare > withdrawalShare
-    ? { label: '수강 관심 신호 우세', className: 'bg-emerald-100 text-emerald-800', description: `관심 신호가 이탈 신호보다 ${difference}%p 높습니다.` }
-    : interestShare < withdrawalShare
-      ? { label: '취소·환불 신호 주의', className: 'bg-rose-100 text-rose-800', description: `이탈 신호가 관심 신호보다 ${difference}%p 높습니다.` }
+  const withdrawal = data.period_summary.withdrawal_sessions ?? 0;
+  const interestRate = visitors ? Math.round(interest / visitors * 1000) / 10 : 0;
+  const withdrawalRate = visitors ? Math.round(withdrawal / visitors * 1000) / 10 : 0;
+  const difference = Math.round(Math.abs(interestRate - withdrawalRate) * 10) / 10;
+  const state = interestRate > withdrawalRate
+    ? { label: '수강 관심 우세', className: 'bg-emerald-100 text-emerald-800', description: `수강 관심 도달률이 취소·환불 문의율보다 ${difference}%p 높습니다.` }
+    : interestRate < withdrawalRate
+      ? { label: '취소·환불 주의', className: 'bg-rose-100 text-rose-800', description: `취소·환불 문의율이 수강 관심 도달률보다 ${difference}%p 높습니다.` }
       : { label: '두 신호가 동일', className: 'bg-slate-100 text-slate-700', description: '관심과 이탈 신호의 비중이 같습니다.' };
   return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700"><Scale className="h-5 w-5" /></span><div><h2 className="font-black text-slate-950">수강 관심 · 이탈 신호 비교</h2><p className="mt-1 text-xs text-slate-500">같은 기간에 감지된 수강 관심과 취소·환불 요청의 상대 비중입니다.</p></div></div><span className={`rounded-full px-3 py-1.5 text-xs font-black ${state.className}`}>{state.label}</span></div>
-    <div className="mt-5 flex h-4 overflow-hidden rounded-full bg-slate-100">{total > 0 && <><span className="bg-violet-600" style={{ width: `${interestShare}%` }} /><span className="bg-rose-500" style={{ width: `${withdrawalShare}%` }} /></>}</div>
-    <div className="mt-3 grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-violet-50 p-4"><div className="flex items-center justify-between gap-3"><span className="text-xs font-black text-violet-700">수강 관심</span><span className="text-lg font-black text-violet-950">{interestShare}%</span></div><p className="mt-1 text-[11px] text-violet-700/70">{interest.toLocaleString()}개 세션</p></div><div className="rounded-xl bg-rose-50 p-4"><div className="flex items-center justify-between gap-3"><span className="text-xs font-black text-rose-700">취소·환불</span><span className="text-lg font-black text-rose-950">{withdrawalShare}%</span></div><p className="mt-1 text-[11px] text-rose-700/70">{withdrawal.toLocaleString()}건</p></div></div>
-    <p className="mt-4 text-sm font-bold text-slate-700">{total > 0 ? state.description : '비교할 수강 관심 또는 취소·환불 신호가 아직 없습니다.'}</p><p className="mt-1 text-[11px] leading-5 text-slate-400">실제 등록·취소 완료율이 아니라 챗봇 대화에서 감지된 운영 신호를 비교한 값입니다.</p>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700"><Scale className="h-5 w-5" /></span><div><h2 className="font-black text-slate-950">상담 성과 요약</h2><p className="mt-1 text-xs text-slate-500">같은 기간의 방문 세션을 기준으로 수강 관심과 취소·환불 도달률을 비교합니다.</p></div></div><span className={`rounded-full px-3 py-1.5 text-xs font-black ${state.className}`}>{state.label}</span></div>
+    <div className="mt-5 space-y-4">
+      <div><div className="mb-2 flex items-end justify-between gap-3"><div><p className="text-xs font-black text-violet-700">수강 관심 도달률</p><p className="mt-0.5 text-[11px] text-slate-400">{interest.toLocaleString()}개 관심 세션 / {visitors.toLocaleString()}개 방문 세션</p></div><strong className="text-2xl font-black text-violet-950">{interestRate}%</strong></div><div className="h-3 overflow-hidden rounded-full bg-violet-50"><div className="h-full rounded-full bg-violet-600 transition-all" style={{ width: `${Math.min(100, interestRate)}%` }} /></div></div>
+      <div><div className="mb-2 flex items-end justify-between gap-3"><div><p className="text-xs font-black text-rose-700">취소·환불 문의율</p><p className="mt-0.5 text-[11px] text-slate-400">{withdrawal.toLocaleString()}개 취소·환불 세션 / {visitors.toLocaleString()}개 방문 세션</p></div><strong className="text-2xl font-black text-rose-950">{withdrawalRate}%</strong></div><div className="h-3 overflow-hidden rounded-full bg-rose-50"><div className="h-full rounded-full bg-rose-500 transition-all" style={{ width: `${Math.min(100, withdrawalRate)}%` }} /></div></div>
+    </div>
+    <p className="mt-5 text-sm font-bold text-slate-700">{visitors > 0 ? state.description : '비교할 방문 세션이 아직 없습니다.'}</p><p className="mt-1 text-[11px] leading-5 text-slate-400">실제 수강 등록·취소 완료율이 아니라 챗봇 대화에서 감지된 관심 및 취소·환불 문의 세션의 비율입니다.</p>
   </section>;
 }
 
 export default function OperationsAnalytics({ data, loading, view }: Props) {
   if (!data) return <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-24 text-center text-sm text-slate-400">{loading ? '기간 통계를 불러오는 중입니다.' : '표시할 통계가 없습니다.'}</div>;
   const points = chartPoints(data);
-  if (view === 'traffic') return <div className="grid gap-5 xl:grid-cols-2"><LineChart points={points} metric="visitors" /><LineChart points={points} metric="chats" /></div>;
+  if (view === 'traffic') return <div className="space-y-5"><div className="grid gap-5 xl:grid-cols-2"><LineChart points={points} metric="visitors" /><LineChart points={points} metric="chats" /></div><InterestWithdrawalBalance data={data} /></div>;
   if (view === 'interest') return <div className="space-y-5"><InterestFunnel data={data} /><div className="grid gap-5 xl:grid-cols-2"><LineChart points={points} metric="courseInquiries" /><LineChart points={points} metric="coursePageViews" /></div></div>;
-  if (view === 'withdrawal') return <div className="space-y-5"><InterestWithdrawalBalance data={data} /><div className="grid gap-5 xl:grid-cols-2"><LineChart points={points} metric="cancels" /><LineChart points={points} metric="refunds" /></div></div>;
+  if (view === 'withdrawal') return <div className="grid gap-5 xl:grid-cols-2"><LineChart points={points} metric="cancels" /><LineChart points={points} metric="refunds" /></div>;
   return <div className="space-y-5"><RiskImpact data={data} /><div className="grid gap-5 xl:grid-cols-2"><LineChart points={points} metric="safety" /><LineChart points={points} metric="failed" /></div></div>;
 }

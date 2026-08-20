@@ -67,8 +67,6 @@ export default function AdminOperationsOverview({ data, loading, analyticsData, 
   }), [unresolved]);
   const highPriorityCount = unresolved.filter((item) => item.severity === 'high').length;
   const summary = analyticsData?.period_summary;
-  const inquiryRate = summary?.visitors ? Math.round((summary.course_inquiries ?? 0) / summary.visitors * 1000) / 10 : 0;
-  const withdrawalRate = summary?.course_inquiries ? Math.round((summary.cancels + summary.refunds) / summary.course_inquiries * 1000) / 10 : 0;
   const cards = {
     traffic: [
       { label: '방문자', value: `${summary?.visitors.toLocaleString() ?? 0}명`, caption: '새로 시작된 고유 대화 세션', icon: Users, iconClass: 'text-cyan-700', iconBg: 'bg-cyan-50' },
@@ -77,12 +75,10 @@ export default function AdminOperationsOverview({ data, loading, analyticsData, 
     interest: [
       { label: '수강 문의', value: `${(summary?.course_inquiries ?? 0).toLocaleString()}건`, caption: '전체 대화 맥락에서 과정 관심이 확인된 세션', icon: BookOpenCheck, iconClass: 'text-violet-700', iconBg: 'bg-violet-50' },
       { label: '과정 페이지 이동', value: `${(summary?.course_page_views ?? 0).toLocaleString()}건`, caption: '챗봇에서 과정 상세 링크를 실제로 누른 세션', icon: ExternalLink, iconClass: 'text-teal-700', iconBg: 'bg-teal-50' },
-      { label: '수강 문의율', value: `${inquiryRate}%`, caption: '방문 세션 중 수강 문의 맥락이 확인된 비율', icon: BarChart3, iconClass: 'text-fuchsia-700', iconBg: 'bg-fuchsia-50' },
     ],
     withdrawal: [
       { label: '수강 취소 문의', value: `${summary?.cancels.toLocaleString() ?? 0}건`, caption: '단순 정책 질문이 아닌 취소 의도 접수', icon: Ban, iconClass: 'text-amber-700', iconBg: 'bg-amber-50' },
       { label: '환불 요청', value: `${summary?.refunds.toLocaleString() ?? 0}건`, caption: '환불·환급 의도가 확인된 요청', icon: CreditCard, iconClass: 'text-emerald-700', iconBg: 'bg-emerald-50' },
-      { label: '취소·환불 비율', value: `${withdrawalRate}%`, caption: '수강 문의 대비 취소·환불 요청 비율', icon: BarChart3, iconClass: 'text-rose-700', iconBg: 'bg-rose-50' },
     ],
     risk: [
       { label: '안전 감지', value: `${summary?.safety.toLocaleString() ?? 0}건`, caption: '안전 가드레일이 개입한 대화', icon: ShieldAlert, iconClass: 'text-rose-700', iconBg: 'bg-rose-50' },

@@ -1963,6 +1963,7 @@ def get_operations_analytics(
         if row.processing_status == "failed" or bool(decrypt_if_needed(row.error))
     )
     refund_count = sum(1 for row in analysis_cancels if _is_refund_request(decrypt_if_needed(row.message)))
+    withdrawal_session_count = len({row.session_id for row in analysis_cancels})
     homepage_request_count = sum(
         1 for row in analysis_logs if _is_homepage_request(decrypt_if_needed(row.question))
     )
@@ -1975,6 +1976,7 @@ def get_operations_analytics(
         "consultation_requests": consultation_request_count,
         "cancels": len(analysis_cancels) - refund_count,
         "refunds": refund_count,
+        "withdrawal_sessions": withdrawal_session_count,
         "homepage_requests": homepage_request_count,
         "safety": sum(1 for row in analysis_logs if row.source == "guardrail"),
         "failed": failed_count,
