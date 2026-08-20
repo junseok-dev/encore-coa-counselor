@@ -82,6 +82,7 @@ interface ServiceVisibilityProps {
 }
 
 export function ServiceDonut({ data, hiddenServices, onToggleService }: { data: CostManagementData } & ServiceVisibilityProps) {
+  const donutRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<ServicePoint | null>(null);
   const [pinned, setPinned] = useState<ServicePoint | null>(null);
   const total = Math.max(1, data.usage_total_krw);
@@ -122,6 +123,17 @@ export function ServiceDonut({ data, hiddenServices, onToggleService }: { data: 
     setPinned((current) => current && !hiddenServices.has(current.serviceName) ? current : null);
   }, [hiddenServices]);
 
+  useEffect(() => {
+    if (!pinned) return;
+    const dismissPinned = (event: MouseEvent) => {
+      const target = event.target;
+      const clickedSegment = target instanceof Element && Boolean(target.closest('[data-donut-segment="true"]'));
+      if (!donutRef.current?.contains(target as Node) || !clickedSegment) setPinned(null);
+    };
+    document.addEventListener('mousedown', dismissPinned);
+    return () => document.removeEventListener('mousedown', dismissPinned);
+  }, [pinned]);
+
   const togglePoint = (point: ServicePoint) => {
     setPinned((current) => current?.key === point.key ? null : point);
   };
@@ -141,7 +153,7 @@ export function ServiceDonut({ data, hiddenServices, onToggleService }: { data: 
 
   return (
     <div className="grid min-w-0 gap-6 md:grid-cols-[minmax(230px,1fr)_minmax(145px,0.65fr)] md:items-center">
-      <div className="relative mx-auto h-60 w-60 shrink-0" onMouseLeave={() => setHovered(null)}>
+      <div ref={donutRef} className="relative mx-auto h-60 w-60 shrink-0" onMouseLeave={() => setHovered(null)}>
         <svg viewBox="0 0 180 180" className="h-full w-full">
           <circle cx="90" cy="90" r={radius} fill="none" stroke="#f1f5f9" strokeWidth="28" />
           {points.map((point) => {
@@ -159,6 +171,7 @@ export function ServiceDonut({ data, hiddenServices, onToggleService }: { data: 
                 transform="rotate(-90 90 90)"
                 className="cursor-pointer transition-all outline-none"
                 role="button"
+                data-donut-segment="true"
                 tabIndex={0}
                 aria-label={`${point.serviceName} ${point.rows[0].value}`}
                 onMouseEnter={() => setHovered(point)}

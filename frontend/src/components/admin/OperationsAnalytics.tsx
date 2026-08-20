@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Bot, ChevronDown } from 'lucide-react';
 import { OperationsAnalyticsData, QuestionCategoryMetric } from '../../types';
 import { ChartTooltip, TooltipPoint } from './CostInteractiveCharts';
@@ -100,6 +100,7 @@ function MetricTrend({
 
 function SourceDonut({ data }: { data: OperationsAnalyticsData }) {
   type SourcePoint = TooltipPoint & { source: 'faq' | 'llm' };
+  const donutRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<SourcePoint | null>(null);
   const [pinned, setPinned] = useState<SourcePoint | null>(null);
   const faq = data.answer_source_summary.faq;
@@ -133,12 +134,24 @@ function SourceDonut({ data }: { data: OperationsAnalyticsData }) {
     setPinned(closing ? null : point);
     if (closing) setHovered(null);
   };
+
+  useEffect(() => {
+    if (!pinned) return;
+    const dismissPinned = (event: MouseEvent) => {
+      const target = event.target;
+      const clickedSegment = target instanceof Element && Boolean(target.closest('[data-donut-segment="true"]'));
+      if (!donutRef.current?.contains(target as Node) || !clickedSegment) setPinned(null);
+    };
+    document.addEventListener('mousedown', dismissPinned);
+    return () => document.removeEventListener('mousedown', dismissPinned);
+  }, [pinned]);
+
   return <div className="grid min-h-72 place-items-center gap-6 py-2 sm:grid-cols-[minmax(220px,0.8fr)_1fr]">
-    <div className="relative h-48 w-48" onMouseLeave={() => setHovered(null)}>
+    <div ref={donutRef} className="relative h-48 w-48" onMouseLeave={() => setHovered(null)}>
       <svg viewBox="0 0 120 120" className="h-full w-full" role="img" aria-label="FAQ와 LLM 답변 비율 도넛 그래프">
         <circle cx="60" cy="60" r="46" fill="none" stroke="#e2e8f0" strokeWidth="22" />
-        {basePoint && <circle cx="60" cy="60" r="46" fill="none" stroke={llmPoint ? '#2563eb' : '#0891b2'} strokeWidth={activePoint?.source === basePoint.source ? 25 : 22} pathLength="100" transform="rotate(-90 60 60)" className="cursor-pointer transition-all outline-none" role="button" tabIndex={0} aria-label={basePoint.rows[0].label + ' ' + basePoint.rows[0].value} onMouseEnter={() => setHovered(basePoint)} onFocus={() => setHovered(basePoint)} onBlur={() => setHovered(null)} onClick={() => togglePoint(basePoint)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') togglePoint(basePoint); }} />}
-        {faqPoint && llmPoint && <circle cx="60" cy="60" r="46" fill="none" stroke="#0891b2" strokeWidth={activePoint?.source === 'faq' ? 25 : 22} pathLength="100" strokeDasharray={`${faqRate} ${100 - faqRate}`} transform="rotate(-90 60 60)" className="cursor-pointer transition-all outline-none" role="button" tabIndex={0} aria-label={faqPoint.rows[0].label + ' ' + faqPoint.rows[0].value} onMouseEnter={() => setHovered(faqPoint)} onFocus={() => setHovered(faqPoint)} onBlur={() => setHovered(null)} onClick={() => togglePoint(faqPoint)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') togglePoint(faqPoint); }} />}
+        {basePoint && <circle cx="60" cy="60" r="46" fill="none" stroke={llmPoint ? '#2563eb' : '#0891b2'} strokeWidth={activePoint?.source === basePoint.source ? 25 : 22} pathLength="100" transform="rotate(-90 60 60)" className="cursor-pointer transition-all outline-none" role="button" data-donut-segment="true" tabIndex={0} aria-label={basePoint.rows[0].label + ' ' + basePoint.rows[0].value} onMouseEnter={() => setHovered(basePoint)} onFocus={() => setHovered(basePoint)} onBlur={() => setHovered(null)} onClick={() => togglePoint(basePoint)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') togglePoint(basePoint); }} />}
+        {faqPoint && llmPoint && <circle cx="60" cy="60" r="46" fill="none" stroke="#0891b2" strokeWidth={activePoint?.source === 'faq' ? 25 : 22} pathLength="100" strokeDasharray={`${faqRate} ${100 - faqRate}`} transform="rotate(-90 60 60)" className="cursor-pointer transition-all outline-none" role="button" data-donut-segment="true" tabIndex={0} aria-label={faqPoint.rows[0].label + ' ' + faqPoint.rows[0].value} onMouseEnter={() => setHovered(faqPoint)} onFocus={() => setHovered(faqPoint)} onBlur={() => setHovered(null)} onClick={() => togglePoint(faqPoint)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') togglePoint(faqPoint); }} />}
       </svg>
       <div className="pointer-events-none absolute inset-8 flex flex-col items-center justify-center rounded-full bg-white text-center"><span className="text-[11px] font-bold text-slate-400">정상 응답</span><strong className="mt-1 text-2xl font-black text-slate-950">{total.toLocaleString()}건</strong><span className="mt-0.5 text-[10px] font-bold text-slate-400">전체</span></div>
       <ChartTooltip point={activePoint} pinned={!hovered && Boolean(pinned)} />
