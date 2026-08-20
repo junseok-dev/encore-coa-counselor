@@ -32,45 +32,49 @@ function chartPoints(data: OperationsAnalyticsData): ChartPoint[] {
   return data.daily.map((item) => mapPoint(item, `${Number(item.date.slice(5, 7))}/${Number(item.date.slice(8, 10))}`));
 }
 
-function UsageTrend({ points }: { points: ChartPoint[] }) {
-  const width = Math.max(720, points.length * 46);
-  const height = 270;
+function MetricTrend({
+  points, metric, title, description, color, dotClass, unit,
+}: {
+  points: ChartPoint[];
+  metric: 'visitors' | 'chats';
+  title: string;
+  description: string;
+  color: string;
+  dotClass: string;
+  unit: string;
+}) {
+  const width = Math.max(620, points.length * 34);
+  const height = 250;
   const left = 44;
   const right = 20;
   const top = 18;
   const bottom = 42;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const maxValue = Math.max(1, ...points.flatMap((point) => [point.visitors, point.chats]));
-  const coordinates = (key: 'visitors' | 'chats') => points.map((point, index) => ({
+  const maxValue = Math.max(1, ...points.map((point) => point[metric]));
+  const coordinates = points.map((point, index) => ({
     ...point,
     x: left + (points.length <= 1 ? plotWidth / 2 : index / (points.length - 1) * plotWidth),
-    y: top + plotHeight - point[key] / maxValue * plotHeight,
+    y: top + plotHeight - point[metric] / maxValue * plotHeight,
   }));
-  const visitorPoints = coordinates('visitors');
-  const chatPoints = coordinates('chats');
-  const labelEvery = Math.max(1, Math.ceil(points.length / 12));
+  const labelEvery = Math.max(1, Math.ceil(points.length / 10));
+  const total = points.reduce((sum, point) => sum + point[metric], 0);
 
   return <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-4">
-      <div><h2 className="font-black text-slate-950">방문자·채팅 추이</h2><p className="mt-1 text-xs text-slate-500">선택한 기간의 실제 이용 흐름을 함께 비교합니다.</p></div>
-      <div className="flex items-center gap-4 text-xs font-bold text-slate-600">
-        <span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-cyan-600" />방문자 {points.reduce((sum, point) => sum + point.visitors, 0).toLocaleString()}명</span>
-        <span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-blue-600" />채팅 {points.reduce((sum, point) => sum + point.chats, 0).toLocaleString()}건</span>
-      </div>
+      <div><h2 className="font-black text-slate-950">{title}</h2><p className="mt-1 text-xs text-slate-500">{description}</p></div>
+      <span className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><i className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />총 {total.toLocaleString()}{unit}</span>
     </div>
     <div className="mt-4 overflow-x-auto pb-1">
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="방문자와 채팅 수 선그래프">
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${title} 선그래프`}>
         {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
           const y = top + plotHeight * ratio;
           return <g key={ratio}><line x1={left} x2={width - right} y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="4 5" /><text x={left - 8} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{Math.round(maxValue * (1 - ratio))}</text></g>;
         })}
-        <polyline points={visitorPoints.map((point) => `${point.x},${point.y}`).join(' ')} fill="none" stroke="#0891b2" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-        <polyline points={chatPoints.map((point) => `${point.x},${point.y}`).join(' ')} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-        {visitorPoints.map((point, index) => <g key={`${point.label}-${index}`}>
-          <circle cx={point.x} cy={point.y} r="4" fill="white" stroke="#0891b2" strokeWidth="2.5"><title>{point.label} · 방문자 {point.visitors.toLocaleString()}명</title></circle>
-          <circle cx={chatPoints[index].x} cy={chatPoints[index].y} r="4" fill="white" stroke="#2563eb" strokeWidth="2.5"><title>{point.label} · 채팅 {point.chats.toLocaleString()}건</title></circle>
-          {(index % labelEvery === 0 || index === visitorPoints.length - 1) && <text x={point.x} y={height - 14} textAnchor="middle" fontSize="10" fill="#64748b">{point.label}</text>}
+        <polyline points={coordinates.map((point) => `${point.x},${point.y}`).join(' ')} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+        {coordinates.map((point, index) => <g key={`${point.label}-${index}`}>
+          <circle cx={point.x} cy={point.y} r="4" fill="white" stroke={color} strokeWidth="2.5"><title>{point.label} · {point[metric].toLocaleString()}{unit}</title></circle>
+          {(index % labelEvery === 0 || index === coordinates.length - 1) && <text x={point.x} y={height - 14} textAnchor="middle" fontSize="10" fill="#64748b">{point.label}</text>}
         </g>)}
       </svg>
     </div>
@@ -126,7 +130,10 @@ export default function OperationsAnalytics({ data, loading }: Props) {
         : '정상적으로 생성된 답변이 어떤 방식으로 제공됐는지 확인합니다.';
 
   return <div className="space-y-5">
-    <UsageTrend points={points} />
+    <div className="grid gap-5 xl:grid-cols-2">
+      <MetricTrend points={points} metric="visitors" title="방문자 추이" description="선택한 기간에 챗봇을 방문한 사용자 흐름입니다." color="#0891b2" dotClass="bg-cyan-600" unit="명" />
+      <MetricTrend points={points} metric="chats" title="채팅 추이" description="선택한 기간에 사용자가 보낸 질문 흐름입니다." color="#2563eb" dotClass="bg-blue-600" unit="건" />
+    </div>
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-white">{analysisView === 'sources' ? <Bot className="h-5 w-5" /> : <BarChart3 className="h-5 w-5" />}</span><div><h2 className="font-black text-slate-950">상세 분석</h2><p className="mt-0.5 text-[11px] text-slate-500">{description}</p></div></div>
