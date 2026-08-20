@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Ban, BarChart3, Bell, Bot, CreditCard, DollarSign,
-  Globe2, Headphones, MessageCircle, RefreshCw, Server, ShieldAlert, Users, WalletCards,
+  Globe2, Headphones, MessageCircle, RefreshCw, Server, ShieldAlert, Users, WalletCards, X,
 } from 'lucide-react';
 import {
-  OperationsAnalyticsData, OperationsDashboardData, OperationsPeriodFilters, OperationsPeriodMode,
+  OperationsAnalyticsData, OperationsAttentionItem, OperationsDashboardData, OperationsPeriodFilters, OperationsPeriodMode,
 } from '../../types';
 import OperationsAnalytics, { OperationsUsageMetricKey } from './OperationsAnalytics';
 import OperationsPeriodFilter from './OperationsPeriodFilter';
@@ -20,7 +20,7 @@ interface Props {
   onPeriodChange: (period: OperationsPeriodMode) => void;
   onFiltersChange: (filters: OperationsPeriodFilters) => void;
   onRefreshAnalytics: () => Promise<void>;
-  onOpenReview: () => void;
+  onOpenReview: (item?: OperationsAttentionItem) => void;
   onOpenCosts: () => void;
 }
 
@@ -68,7 +68,14 @@ function CostChart({ data, metric }: { data: OperationsAnalyticsData; metric: Co
 export default function AdminOperationsOverview({ data, loading, analyticsData, analyticsLoading, analyticsPeriod, analyticsFilters, onRefresh, onPeriodChange, onFiltersChange, onRefreshAnalytics, onOpenReview, onOpenCosts }: Props) {
   const [activeView, setActiveView] = useState<OverviewTab>('usage');
   const [usageGroup, setUsageGroup] = useState<UsageGroup>('traffic');
-  const unresolved = (data?.attention ?? []).filter((item) => item.status !== 'resolved');
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [incomingNotification, setIncomingNotification] = useState<OperationsAttentionItem | null>(null);
+  const knownNotificationIdsRef = useRef<Set<number> | null>(null);
+  const unresolved = useMemo(() => (data?.attention ?? []).filter((item) => item.status !== 'resolved'), [data?.attention]);
+  const notifications = useMemo(() => [...unresolved].sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === 'high' ? -1 : 1;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  }), [unresolved]);
   const highPriorityCount = unresolved.filter((item) => item.severity === 'high').length;
   const summary = analyticsData?.period_summary;
   const kpis = useMemo(() => [
@@ -90,12 +97,49 @@ export default function AdminOperationsOverview({ data, loading, analyticsData, 
     if (view === 'cost' && (analyticsPeriod === 'week' || analyticsPeriod === 'day')) onPeriodChange('month');
   };
 
+  useEffect(() => {
+    if (!data) return;
+    const currentIds = new Set(unresolved.map((item) => item.alert_id));
+    const knownIds = knownNotificationIdsRef.current;
+    if (knownIds) {
+      const newlyArrived = notifications.find((item) => !knownIds.has(item.alert_id));
+      if (newlyArrived) setIncomingNotification(newlyArrived);
+    }
+    knownNotificationIdsRef.current = currentIds;
+  }, [data, notifications, unresolved]);
+
+  useEffect(() => {
+    if (!incomingNotification) return;
+    const timer = window.setTimeout(() => setIncomingNotification(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [incomingNotification]);
+
   return <div className="space-y-6">
-    <header className="overflow-hidden rounded-2xl bg-[linear-gradient(120deg,#082f49,#0f766e)] px-6 py-5 text-white shadow-lg shadow-cyan-950/10"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex items-center gap-4"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15"><BarChart3 className="h-6 w-6 text-cyan-200" /></span><div><p className="text-sm font-semibold text-cyan-100">{analyticsData?.period_label ?? `${PERIOD_NAMES[analyticsPeriod]} 통계`}</p><h1 className="mt-1 text-2xl font-bold">챗봇 운영 대시보드</h1><p className="mt-1 text-[11px] text-cyan-100">기간과 지표 묶음을 선택해 항목별 변화를 확인합니다.</p></div></div><div className="flex items-center gap-2">{data?.last_conversation_at && <div className="mr-1 hidden rounded-xl bg-white/10 px-3 py-2 ring-1 ring-white/15 sm:block"><p className="text-[10px] text-cyan-100">최근 대화</p><p className="mt-0.5 text-xs font-bold">{formatRelativeTime(data.last_conversation_at)}</p></div>}<button onClick={() => void onRefresh()} disabled={loading || analyticsLoading} title="대시보드 새로고침" className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading || analyticsLoading ? 'animate-spin' : ''}`} /></button><button onClick={onOpenReview} title="개선 검토 알림 열기" className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20"><Bell className="h-4 w-4" />{unresolved.length > 0 && <span className="absolute -right-1.5 -top-1.5 min-w-5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-black text-white ring-2 ring-teal-900">{unresolved.length > 99 ? '99+' : unresolved.length}</span>}</button></div></div></header>
+    {incomingNotification && <div role="status" aria-live="polite" className="fixed right-4 top-20 z-[70] w-[min(380px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-rose-200 bg-white shadow-2xl shadow-slate-950/20">
+      <div className="h-1 bg-rose-500" />
+      <div className="flex items-start gap-3 p-4">
+        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600"><Bell className="h-4 w-4" /></span>
+        <button type="button" onClick={() => { const item = incomingNotification; setIncomingNotification(null); onOpenReview(item); }} className="min-w-0 flex-1 text-left"><span className="block text-xs font-black text-rose-600">새 개선 검토 알림</span><strong className="mt-1 block text-sm text-slate-950">{incomingNotification.reason}</strong><span className="mt-1 block truncate text-xs text-slate-500">{incomingNotification.question || '질문 내용 없음'}</span><span className="mt-2 block text-xs font-black text-cyan-700">눌러서 해당 검토 내용 확인</span></button>
+        <button type="button" onClick={() => setIncomingNotification(null)} aria-label="알림 닫기" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-3.5 w-3.5" /></button>
+      </div>
+    </div>}
+
+    {highPriorityCount > 0 && <button onClick={() => setNotificationsOpen((open) => !open)} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-left text-rose-900"><span className="flex items-center gap-3"><AlertTriangle className="h-5 w-5 shrink-0 text-rose-600" /><span><b className="block text-sm">우선 확인할 개선 항목 {highPriorityCount}건</b><span className="mt-0.5 block text-xs text-rose-700">알림을 열어 검토할 항목을 선택해 주세요.</span></span></span><span className="text-xs font-black">{notificationsOpen ? '알림 닫기' : '알림 보기'}</span></button>}
+
+    {notificationsOpen && <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg shadow-slate-900/5">
+      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4"><div><h2 className="text-sm font-black text-slate-950">개선 검토 알림</h2><p className="mt-0.5 text-xs text-slate-500">미처리 알림 {notifications.length}건 · 항목을 누르면 해당 검토 내용이 바로 열립니다.</p></div><button type="button" onClick={() => setNotificationsOpen(false)} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-100">닫기</button></div>
+      <div className="max-h-80 divide-y divide-slate-100 overflow-y-auto">
+        {notifications.length > 0 ? notifications.map((item) => <button key={item.alert_id} type="button" onClick={() => { setNotificationsOpen(false); onOpenReview(item); }} className="flex w-full items-start gap-3 px-5 py-4 text-left hover:bg-slate-50">
+          <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${item.severity === 'high' ? 'bg-rose-500' : item.severity === 'medium' ? 'bg-amber-500' : 'bg-cyan-500'}`} />
+          <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><strong className="text-sm text-slate-900">{item.reason}</strong>{item.severity === 'high' && <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-black text-rose-700">우선 확인</span>}</span><span className="mt-1 block truncate text-xs text-slate-500">{item.question || '질문 내용 없음'}</span><span className="mt-1 block text-[10px] text-slate-400">{new Date(item.created_at).toLocaleString('ko-KR')}</span></span>
+          <span className="shrink-0 self-center text-xs font-black text-cyan-700">검토하기</span>
+        </button>) : <p className="px-5 py-10 text-center text-sm text-slate-400">새로운 개선 검토 알림이 없습니다.</p>}
+      </div>
+    </section>}
+
+    <header className="overflow-hidden rounded-2xl bg-[linear-gradient(120deg,#082f49,#0f766e)] px-6 py-5 text-white shadow-lg shadow-cyan-950/10"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex items-center gap-4"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15"><BarChart3 className="h-6 w-6 text-cyan-200" /></span><div><p className="text-sm font-semibold text-cyan-100">{analyticsData?.period_label ?? `${PERIOD_NAMES[analyticsPeriod]} 통계`}</p><h1 className="mt-1 text-2xl font-bold">챗봇 운영 대시보드</h1><p className="mt-1 text-[11px] text-cyan-100">기간과 지표 묶음을 선택해 항목별 변화를 확인합니다.</p></div></div><div className="flex items-center gap-2">{data?.last_conversation_at && <div className="mr-1 hidden rounded-xl bg-white/10 px-3 py-2 ring-1 ring-white/15 sm:block"><p className="text-[10px] text-cyan-100">최근 대화</p><p className="mt-0.5 text-xs font-bold">{formatRelativeTime(data.last_conversation_at)}</p></div>}<button onClick={() => void onRefresh()} disabled={loading || analyticsLoading} title="대시보드 새로고침" className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading || analyticsLoading ? 'animate-spin' : ''}`} /></button><button onClick={() => setNotificationsOpen((open) => !open)} title="개선 검토 알림 열기" className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20"><Bell className="h-4 w-4" />{unresolved.length > 0 && <span className="absolute -right-1.5 -top-1.5 min-w-5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-black text-white ring-2 ring-teal-900">{unresolved.length > 99 ? '99+' : unresolved.length}</span>}</button></div></div></header>
 
     <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"><div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between"><div className="flex flex-wrap gap-1.5">{([['usage', '이용 현황'], ['analysis', '답변·상담 분석'], ['cost', '비용']] as const).map(([key, label]) => <button key={key} onClick={() => selectView(key)} className={`rounded-xl px-4 py-2.5 text-sm font-black ${activeView === key ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{label}</button>)}</div><div className="flex flex-col gap-2 xl:items-end"><div className="inline-flex self-start rounded-xl bg-slate-100 p-1 xl:self-end">{visiblePeriodOptions.map((period) => <button key={period} onClick={() => onPeriodChange(period)} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${analyticsPeriod === period ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{PERIOD_NAMES[period]}</button>)}</div><OperationsPeriodFilter data={analyticsData} loading={analyticsLoading} mode={analyticsPeriod} filters={analyticsFilters} onChange={onFiltersChange} onRefresh={onRefreshAnalytics} /></div></div></section>
-
-    {highPriorityCount > 0 && <button onClick={onOpenReview} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-left text-rose-900"><span className="flex items-center gap-3"><AlertTriangle className="h-5 w-5 shrink-0 text-rose-600" /><span><b className="block text-sm">우선 확인할 개선 항목 {highPriorityCount}건</b><span className="mt-0.5 block text-xs text-rose-700">대화 맥락과 수정 후 답변을 검증해 주세요.</span></span></span><span className="text-xs font-black">개선 검토 열기</span></button>}
 
     {activeView === 'usage' && <div className="space-y-6"><section className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"><div className="grid gap-2 sm:grid-cols-3">{(Object.entries(USAGE_GROUPS) as [UsageGroup, typeof USAGE_GROUPS[UsageGroup]][]).map(([key, group]) => <button key={key} onClick={() => setUsageGroup(key)} className={`rounded-xl px-4 py-3 text-left transition ${usageGroup === key ? 'bg-cyan-700 text-white shadow-sm' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}><span className="block text-sm font-black">{group.label}</span><span className={`mt-0.5 block text-[11px] ${usageGroup === key ? 'text-cyan-100' : 'text-slate-400'}`}>{group.description}</span></button>)}</div></section><div><div className="mb-3 flex flex-wrap items-end justify-between gap-2"><div><p className="text-xs font-black text-cyan-700">{selectedGroup.label}</p><h2 className="mt-1 text-lg font-black text-slate-950">{analyticsData?.period_label ?? '선택 기간'} 핵심 지표</h2></div><p className="text-xs text-slate-500">각 지표는 독립 그래프로 표시됩니다.</p></div><div className="grid gap-4 sm:grid-cols-3">{visibleKpis.map(({ key, ...metric }) => <MetricCard key={key} {...metric} />)}</div></div><OperationsAnalytics data={analyticsData} loading={analyticsLoading} view="usage" usageMetrics={selectedGroup.metrics} /></div>}
     {activeView === 'analysis' && <OperationsAnalytics data={analyticsData} loading={analyticsLoading} view="analysis" />}

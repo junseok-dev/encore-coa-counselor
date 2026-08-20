@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ChevronRight,
@@ -21,6 +21,8 @@ interface OperationsReviewProps {
   systemHealth: SystemHealthData | null;
   healthLoading: boolean;
   initialFilter?: 'all' | OperationsSignalType;
+  initialSelectedAlertId?: number | null;
+  onInitialAlertHandled?: () => void;
   onRefresh: () => Promise<void>;
   onOpenPrompts: () => void;
 }
@@ -83,11 +85,12 @@ function EmptyPanel({ loading }: { loading: boolean }) {
   );
 }
 
-export default function OperationsReview({ data, loading, systemHealth, healthLoading, initialFilter = 'all', onRefresh, onOpenPrompts }: OperationsReviewProps) {
+export default function OperationsReview({ data, loading, systemHealth, healthLoading, initialFilter = 'all', initialSelectedAlertId = null, onInitialAlertHandled, onRefresh, onOpenPrompts }: OperationsReviewProps) {
   const [selectedAlert, setSelectedAlert] = useState<OperationsAttentionItem | null>(null);
   const [filter, setFilter] = useState<'all' | OperationsSignalType>(initialFilter);
   const [statusFilter, setStatusFilter] = useState<'active' | 'developer_required' | 'all' | 'resolved'>('active');
   const [query, setQuery] = useState('');
+  const detailSectionRef = useRef<HTMLDivElement>(null);
   const items = data?.attention ?? [];
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -112,6 +115,25 @@ export default function OperationsReview({ data, loading, systemHealth, healthLo
     { key: 'error', label: '처리 오류' },
     { key: 'quality', label: '답변 품질' },
   ];
+
+  useEffect(() => {
+    if (initialSelectedAlertId === null) return;
+    const item = items.find((candidate) => candidate.alert_id === initialSelectedAlertId);
+    if (!item) return;
+    setSelectedAlert(item);
+    setFilter('all');
+    setStatusFilter(item.status === 'resolved' ? 'all' : 'active');
+    setQuery('');
+    onInitialAlertHandled?.();
+  }, [initialSelectedAlertId, items, onInitialAlertHandled]);
+
+  useEffect(() => {
+    if (!selectedAlert) return;
+    const frame = window.requestAnimationFrame(() => {
+      detailSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedAlert]);
 
   return (
     <div className="space-y-5">
@@ -159,12 +181,14 @@ export default function OperationsReview({ data, loading, systemHealth, healthLo
       </section>
 
       {selectedAlert && (
-        <OperationsAlertDetailPanel
-          item={selectedAlert}
-          onClose={() => setSelectedAlert(null)}
-          onOpenPrompts={onOpenPrompts}
-          onRefresh={onRefresh}
-        />
+        <div ref={detailSectionRef} className="scroll-mt-24">
+          <OperationsAlertDetailPanel
+            item={selectedAlert}
+            onClose={() => setSelectedAlert(null)}
+            onOpenPrompts={onOpenPrompts}
+            onRefresh={onRefresh}
+          />
+        </div>
       )}
     </div>
   );

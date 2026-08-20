@@ -318,6 +318,7 @@ export default function AdminPage() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [operationsData, setOperationsData] = useState<OperationsDashboardData | null>(null);
   const [operationsLoading, setOperationsLoading] = useState(false);
+  const [selectedImprovementAlertId, setSelectedImprovementAlertId] = useState<number | null>(null);
   const [analyticsData, setAnalyticsData] = useState<OperationsAnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsPeriod, setAnalyticsPeriod] = useState<OperationsPeriodMode>('month');
@@ -1608,7 +1609,10 @@ export default function AdminPage() {
               onPeriodChange={handleAnalyticsPeriodChange}
               onFiltersChange={handleAnalyticsFiltersChange}
               onRefreshAnalytics={() => loadAnalytics()}
-              onOpenReview={() => setActiveTab('improvements')}
+              onOpenReview={(item) => {
+                setSelectedImprovementAlertId(item?.alert_id ?? null);
+                setActiveTab('improvements');
+              }}
               onOpenCosts={() => setActiveTab('costs')}
             />
           </div>
@@ -1621,6 +1625,8 @@ export default function AdminPage() {
               loading={loading || operationsLoading}
               systemHealth={systemHealth}
               healthLoading={healthLoading}
+              initialSelectedAlertId={selectedImprovementAlertId}
+              onInitialAlertHandled={() => setSelectedImprovementAlertId(null)}
               onRefresh={async () => { await Promise.all([loadOperations(), loadSystemHealth()]); }}
               onOpenPrompts={() => setActiveTab('prompts')}
             />
