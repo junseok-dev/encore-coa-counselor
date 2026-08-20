@@ -83,7 +83,7 @@ function MetricTrend({
         <polyline points={coordinates.map((point) => `${point.x},${point.y}`).join(' ')} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
         {hoveredPoint && <line x1={hoveredPoint.x} x2={hoveredPoint.x} y1={top} y2={top + plotHeight} stroke={color} strokeWidth="1" strokeDasharray="3 4" opacity="0.35" />}
         {coordinates.map((point, index) => <g key={`${point.label}-${index}`} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)}>
-          <circle cx={point.x} cy={point.y} r="12" fill="transparent" className="cursor-pointer" tabIndex={0} aria-label={`${point.label} ${point[metric].toLocaleString()}${unit}`} onFocus={() => setHoveredIndex(index)} onBlur={() => setHoveredIndex(null)} />
+          <circle cx={point.x} cy={point.y} r="12" fill="transparent" className="cursor-pointer outline-none" aria-label={`${point.label} ${point[metric].toLocaleString()}${unit}`} />
           <circle cx={point.x} cy={point.y} r={hoveredIndex === index ? 5.5 : 4} fill={hoveredIndex === index ? color : 'white'} stroke={color} strokeWidth="2.5" pointerEvents="none" />
           {(index % labelEvery === 0 || index === coordinates.length - 1) && <text x={point.x} y={height - 14} textAnchor="middle" fontSize="10" fill="#64748b">{point.label}</text>}
         </g>)}
