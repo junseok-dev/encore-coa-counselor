@@ -10,7 +10,7 @@ interface TooltipRow {
   color?: string;
 }
 
-interface TooltipPoint {
+export interface TooltipPoint {
   key: string;
   title: string;
   rows: TooltipRow[];
@@ -45,7 +45,7 @@ function positionFromEvent(event: ReactMouseEvent<HTMLElement>, container: HTMLE
   };
 }
 
-function ChartTooltip({ point, pinned = false }: { point: TooltipPoint | null; pinned?: boolean }) {
+export function ChartTooltip({ point, pinned = false }: { point: TooltipPoint | null; pinned?: boolean }) {
   if (!point) return null;
   const left = Math.min(82, Math.max(18, point.left));
   const top = Math.min(88, Math.max(10, point.top));
