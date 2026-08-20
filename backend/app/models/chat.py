@@ -12,7 +12,7 @@ class ChatRequest(BaseModel):
     session_id: str
     message: str
     history: list[HistoryMessage] = []
-    exclude_from_analytics: bool = False
+    analytics_client_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

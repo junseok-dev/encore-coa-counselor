@@ -29,7 +29,10 @@ def _column_sql(table_name: str, column_name: str) -> str | None:
         }
         return mapping.get(column_name)
     if table_name == "chat_sessions":
-        return {"is_internal": "BOOLEAN NOT NULL DEFAULT FALSE"}.get(column_name)
+        return {
+            "is_internal": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "analytics_client_id": "VARCHAR(64)",
+        }.get(column_name)
     if table_name == "admin_secret_records":
         return {
             "account_identifier": "VARCHAR(120)",
@@ -230,10 +233,17 @@ def migrate_database(engine: Engine) -> None:
 
     if "chat_sessions" in inspector.get_table_names():
         existing = {column["name"] for column in inspector.get_columns("chat_sessions")}
-        if "is_internal" not in existing:
-            column_sql = _column_sql("chat_sessions", "is_internal")
+        for column_name in ("is_internal", "analytics_client_id"):
+            if column_name in existing:
+                continue
+            column_sql = _column_sql("chat_sessions", column_name)
             with engine.begin() as connection:
-                connection.execute(text(f"ALTER TABLE chat_sessions ADD COLUMN is_internal {column_sql}"))
+                connection.execute(text(f"ALTER TABLE chat_sessions ADD COLUMN {column_name} {column_sql}"))
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_chat_sessions_analytics_client_id "
+                "ON chat_sessions (analytics_client_id)"
+            ))
 
     if "chat_logs" in inspector.get_table_names():
         existing = {column["name"] for column in inspector.get_columns("chat_logs")}

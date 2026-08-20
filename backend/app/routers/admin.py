@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query
 from fastapi.responses import Response
 from openai import AsyncOpenAI
 from openpyxl import Workbook, load_workbook
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, cast, false, func, inspect as sa_inspect, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CourseLinkEvent, CustomColumn, CustomTable, DocumentRecord, FaqRecord, OpenAiMonthlyCostRecord, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, PromptVersion, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CourseLinkEvent, CustomColumn, CustomTable, DocumentRecord, FaqRecord, InternalAnalyticsClient, OpenAiMonthlyCostRecord, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, PromptVersion, SystemHealthProbe
 from app.models.chat import ChatRequest, HistoryMessage
 from app.models.session import MessageDetail, SessionDetail, SessionListResponse, SessionSummary
 from app.routers.chat import chat as run_chat_preview
@@ -96,6 +96,7 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "chunks": "문서 청크 — RAG 검색에 사용되는 텍스트 조각",
     "cancel_requests": "취소 요청 내역",
     "course_link_events": "챗봇에서 과정 상세 페이지로 이동한 클릭 내역",
+    "internal_analytics_clients": "운영 통계에서 제외하는 관리자·내부 테스트 브라우저 식별 목록",
     "operations_alerts": "답변 개선 검토 — 확인 시작·처리 완료 상태 관리",
     "system_health_probes": "시스템 상태 점검 — 데이터베이스 저장 가능 여부 확인",
     "billing_daily_cost_records": "계정·서비스·일자별 실제 원화 사용 금액",
@@ -208,6 +209,11 @@ class SessionOperationsReviewRequest(BaseModel):
 
 class InternalSessionsRequest(BaseModel):
     session_ids: list[str]
+
+
+class InternalAnalyticsClientRequest(BaseModel):
+    client_id: str = Field(min_length=8, max_length=64)
+    session_ids: list[str] = Field(default_factory=list)
 
 
 class OperationsAiAssistRequest(BaseModel):
@@ -973,6 +979,9 @@ def _apply_created_at_period(query, column, start_date: date | None, end_date: d
 
 def _filter_chat_logs(db: Session, start_date: date | None = None, end_date: date | None = None, session_id: str | None = None, limit: int | None = 500) -> list[ChatLog]:
     query = db.query(ChatLog)
+    internal_ids = _internal_session_ids(db)
+    if internal_ids:
+        query = query.filter(ChatLog.session_id.notin_(internal_ids))
     query = _apply_created_at_period(query, ChatLog.created_at, start_date, end_date)
     if session_id:
         query = query.filter(ChatLog.session_id == session_id)
@@ -991,7 +1000,12 @@ def list_sessions(
     db: Session = Depends(get_db),
     _: None = Depends(verify_admin),
 ):
-    query = _apply_created_at_period(db.query(ChatSession), ChatSession.created_at, start_date, end_date)
+    query = _apply_created_at_period(
+        db.query(ChatSession).filter(ChatSession.is_internal.is_(False)),
+        ChatSession.created_at,
+        start_date,
+        end_date,
+    )
     total = query.count()
     total_pages = max(1, (total + page_size - 1) // page_size)
     current_page = min(page, total_pages)
@@ -1491,7 +1505,7 @@ def rollback_prompt_version(
 @router.get("/logs")
 def get_logs(limit: int = 100, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
     processing_logs = db.query(ProcessingLog).order_by(ProcessingLog.created_at.desc()).limit(limit).all()
-    chat_logs = db.query(ChatLog).order_by(ChatLog.created_at.desc()).limit(limit).all()
+    chat_logs = _filter_chat_logs(db, limit=limit)
     audit_logs = db.query(AdminAuditLog).order_by(AdminAuditLog.created_at.desc()).limit(limit).all()
     return {
         "processing_logs": [_serialize_processing_log(row) for row in processing_logs],
@@ -2192,6 +2206,48 @@ def mark_internal_sessions(
         db.commit()
         create_audit_log(db, "analytics_internal_sessions_marked", "chat_session", "multiple", f"{updated}개 내부 세션 제외", actor=current_user)
     return {"updated": updated}
+
+
+@router.post("/operations/internal-clients")
+def register_internal_analytics_client(
+    body: InternalAnalyticsClientRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    client_id = body.client_id.strip()
+    client = db.get(InternalAnalyticsClient, client_id)
+    registered = client is None
+    if client is None:
+        db.add(InternalAnalyticsClient(client_id=client_id, registered_by=current_user))
+
+    session_ids = {
+        value.strip()
+        for value in body.session_ids[:500]
+        if value and value.strip()
+    }
+    conditions = [ChatSession.analytics_client_id == client_id]
+    if session_ids:
+        conditions.append(ChatSession.id.in_(session_ids))
+    rows = db.query(ChatSession).filter(or_(*conditions)).all()
+    updated = 0
+    for row in rows:
+        if not row.analytics_client_id:
+            row.analytics_client_id = client_id
+        if not row.is_internal:
+            row.is_internal = True
+            updated += 1
+    db.commit()
+
+    if registered or updated:
+        create_audit_log(
+            db,
+            "analytics_internal_client_registered",
+            "internal_analytics_client",
+            client_id,
+            f"excluded_sessions={updated}",
+            actor=current_user,
+        )
+    return {"registered": True, "updated": updated}
 
 
 @router.get("/operations/dashboard")

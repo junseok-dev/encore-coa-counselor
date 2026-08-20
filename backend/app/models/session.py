@@ -8,6 +8,7 @@ class SessionSummary(BaseModel):
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     message_count: int
+    is_internal: bool = False
     user_name: Optional[str] = None  # 복호화된 이름 (관리자용)
 
     class Config:

@@ -22,7 +22,7 @@ import {
   WalletCards,
   X,
 } from 'lucide-react';
-import { adminApi, clearAdminToken, getAdminToken, saveAdminToken } from '../services/api';
+import { adminApi, clearAdminToken, getAdminToken, getAnalyticsClientId, getBrowserChatSessionIds, saveAdminToken } from '../services/api';
 import InfoTooltip from '../components/admin/InfoTooltip';
 import AdminOperationsOverview from '../components/admin/AdminOperationsOverview';
 import OperationsReview from '../components/admin/OperationsReview';
@@ -59,21 +59,8 @@ type NavGroupKey = 'operations' | 'content' | 'tools';
 type LogViewKey = 'conversations' | 'system';
 
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
-const CHAT_CONVERSATIONS_STORAGE_KEY = 'chatConversations:v2';
 const CHAT_SESSION_PAGE_SIZE = 20;
 const EMPTY_ANALYTICS_FILTERS: OperationsPeriodFilters = { year: null, month: null, weekStart: null, day: null };
-
-function localChatSessionIds(): string[] {
-  try {
-    const raw = window.sessionStorage.getItem(CHAT_CONVERSATIONS_STORAGE_KEY);
-    if (!raw) return [];
-    const rows = JSON.parse(raw) as { sessionId?: unknown }[];
-    if (!Array.isArray(rows)) return [];
-    return [...new Set(rows.map((row) => typeof row.sessionId === 'string' ? row.sessionId.trim() : '').filter(Boolean))];
-  } catch {
-    return [];
-  }
-}
 
 function analyticsQuery(filters: OperationsPeriodFilters): { period?: OperationsPeriodMode; anchor?: string } {
   if (filters.day) return { period: 'day', anchor: filters.day };
@@ -486,8 +473,7 @@ export default function AdminPage() {
     setLoading(true);
     setLoadError('');
     try {
-      const internalSessionIds = localChatSessionIds();
-      if (internalSessionIds.length) await adminApi.markInternalSessions(internalSessionIds);
+      await adminApi.registerInternalClient(getAnalyticsClientId(), getBrowserChatSessionIds());
       const [documentData, faqData, promptData, logData, operations] = await Promise.all([
         adminApi.getDocuments(true),
         adminApi.getFaqs(),
@@ -2268,7 +2254,18 @@ export default function AdminPage() {
         )}
 
         {selectedSessionId && (
-          <AdminSessionDrawer sessionId={selectedSessionId} onClose={handleCloseSessionDrawer} />
+          <AdminSessionDrawer
+            sessionId={selectedSessionId}
+            onClose={handleCloseSessionDrawer}
+            onMarkedInternal={() => {
+              setSelectedSessionId(null);
+              void Promise.all([
+                loadChatView(sessionPage, appliedChatStartDate, appliedChatEndDate, false),
+                loadOperations(),
+                loadAnalytics(),
+              ]);
+            }}
+          />
         )}
 
         {activeTab === 'db' && selectedDbTableMeta?.table_kind === 'custom' && (

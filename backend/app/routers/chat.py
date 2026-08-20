@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.crud import get_or_create_session, save_message
 from app.db.database import get_db
-from app.db.models import CancelRequest, ChatLog, CourseLinkEvent
+from app.db.models import CancelRequest, ChatLog, ChatSession, CourseLinkEvent, InternalAnalyticsClient
 from app.models.chat import ChatRequest, ChatResponse, SuggestedQuestionsResponse
 from app.services.document_service import search_documents
 from app.services.employment_service import (
@@ -36,14 +36,41 @@ from app.utils.crypto import maybe_encrypt
 router = APIRouter()
 
 
-def _is_internal_session(session_id: str, requested: bool) -> bool:
+def _is_internal_session(session_id: str) -> bool:
     normalized = (session_id or "").strip().lower()
-    return requested or normalized.startswith(("test", "preview", "__operations_test__", "internal"))
+    return normalized.startswith(("test", "preview", "__operations_test__", "internal", "admin-test", "admin-draft"))
+
+
+def _sync_session_analytics_scope(
+    db: Session,
+    session: ChatSession,
+    analytics_client_id: str | None,
+) -> None:
+    client_id = (analytics_client_id or "").strip()[:64] or None
+    changed = False
+    if client_id and not session.analytics_client_id:
+        session.analytics_client_id = client_id
+        changed = True
+
+    effective_client_id = session.analytics_client_id
+    registered_internal = bool(
+        effective_client_id
+        and db.get(InternalAnalyticsClient, effective_client_id)
+    )
+    if (
+        _is_internal_session(session.id)
+        or registered_internal
+    ) and not session.is_internal:
+        session.is_internal = True
+        changed = True
+    if changed:
+        db.commit()
 
 
 class CourseLinkEventRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=64)
     url: str = Field(min_length=1, max_length=2000)
+    analytics_client_id: str | None = Field(default=None, max_length=64)
 
 
 @router.post("/events/course-link", status_code=201)
@@ -52,6 +79,13 @@ def record_course_link_event(body: CourseLinkEventRequest, db: Session = Depends
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in {"http", "https"} or not (host == "encorecampus.ai" or host.endswith(".encorecampus.ai")):
         raise HTTPException(status_code=400, detail="엔코아 AI 캠퍼스 과정 링크만 기록할 수 있습니다.")
+    session = db.get(ChatSession, body.session_id)
+    if session:
+        _sync_session_analytics_scope(
+            db,
+            session,
+            body.analytics_client_id,
+        )
     course_slug = parsed.path.strip("/").split("/")[-1][:100] or None
     db.add(CourseLinkEvent(session_id=body.session_id, url=body.url, course_slug=course_slug))
     db.commit()
@@ -261,9 +295,11 @@ def is_cancel_request(message: str) -> bool:
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     session = get_or_create_session(db, request.session_id, None)
-    if _is_internal_session(request.session_id, request.exclude_from_analytics) and not session.is_internal:
-        session.is_internal = True
-        db.commit()
+    _sync_session_analytics_scope(
+        db,
+        session,
+        request.analytics_client_id,
+    )
     save_message(db, request.session_id, "user", request.message, source="user")
 
     retrieval_chunks: list[str] = []
@@ -409,9 +445,11 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 @router.post("/stream")
 async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
     session = get_or_create_session(db, request.session_id, None)
-    if _is_internal_session(request.session_id, request.exclude_from_analytics) and not session.is_internal:
-        session.is_internal = True
-        db.commit()
+    _sync_session_analytics_scope(
+        db,
+        session,
+        request.analytics_client_id,
+    )
     save_message(db, request.session_id, "user", request.message, source="user")
     db.commit()
     question_category = categorize_question_rule(request.message)

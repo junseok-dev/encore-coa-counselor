@@ -52,6 +52,15 @@ class ChatSession(Base):
     message_count = Column(Integer, default=0)
     encrypted_user_name = Column(Text, nullable=True)
     is_internal = Column(Boolean, default=False, nullable=False, index=True)
+    analytics_client_id = Column(String(64), nullable=True, index=True)
+
+
+class InternalAnalyticsClient(Base):
+    __tablename__ = "internal_analytics_clients"
+
+    client_id = Column(String(64), primary_key=True)
+    registered_by = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class ChatMessage(Base):

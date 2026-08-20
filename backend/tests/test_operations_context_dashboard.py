@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.db.migrations import migrate_database
-from app.db.models import ChatLog, ChatSession, CourseLinkEvent, OperationsAlert
+from app.db.models import ChatLog, ChatSession, CourseLinkEvent, InternalAnalyticsClient, OperationsAlert
 from app.routers import admin, chat
 
 
@@ -130,8 +130,56 @@ class OperationsContextDashboardTest(unittest.TestCase):
 
         self.assertEqual(1, result["updated"])
         self.assertTrue(self.db.get(ChatSession, "my-old-chat").is_internal)
-        self.assertTrue(chat._is_internal_session("test-dashboard", False))
-        self.assertTrue(chat._is_internal_session("normal-session", True))
+        self.assertTrue(chat._is_internal_session("test-dashboard"))
+        self.assertFalse(chat._is_internal_session("normal-session"))
+
+    def test_registered_admin_browser_is_permanently_separated(self):
+        client_id = "browser-client-1234"
+        self.db.add(ChatSession(
+            id="before-admin-login",
+            analytics_client_id=client_id,
+            message_count=1,
+            is_internal=False,
+        ))
+        self.db.add(ChatLog(
+            session_id="before-admin-login",
+            question="test question",
+            answer="test answer",
+            source="document",
+            processing_status="ready",
+        ))
+        self.db.commit()
+
+        result = admin.register_internal_analytics_client(
+            admin.InternalAnalyticsClientRequest(
+                client_id=client_id,
+                session_ids=[],
+            ),
+            self.db,
+            "admin@example.com",
+        )
+
+        self.assertTrue(result["registered"])
+        self.assertEqual(1, result["updated"])
+        self.assertIsNotNone(self.db.get(InternalAnalyticsClient, client_id))
+        self.assertTrue(self.db.get(ChatSession, "before-admin-login").is_internal)
+        self.assertEqual([], admin._filter_chat_logs(self.db))
+        sessions = admin.list_sessions(
+            page=1,
+            page_size=20,
+            start_date=None,
+            end_date=None,
+            db=self.db,
+            _=None,
+        )
+        self.assertEqual([], sessions.sessions)
+
+        future_session = ChatSession(id="after-admin-login", message_count=0, is_internal=False)
+        self.db.add(future_session)
+        self.db.commit()
+        chat._sync_session_analytics_scope(self.db, future_session, client_id)
+        self.assertTrue(future_session.is_internal)
+        self.assertEqual(client_id, future_session.analytics_client_id)
 
     def test_old_safety_and_error_stay_in_review_until_resolved(self):
         old_at = datetime.now() - timedelta(days=365)
@@ -188,6 +236,7 @@ class OperationsContextDashboardTest(unittest.TestCase):
         migrate_database(legacy_engine)
         columns = {column["name"] for column in inspect(legacy_engine).get_columns("chat_sessions")}
         self.assertIn("is_internal", columns)
+        self.assertIn("analytics_client_id", columns)
         legacy_engine.dispose()
 
 

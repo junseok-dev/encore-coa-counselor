@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Calendar,
   Download,
+  EyeOff,
   Headphones,
   MessageCircle,
   ShieldAlert,
@@ -15,6 +16,7 @@ import { AdminSessionDetail, OperationsAttentionItem } from '../../types';
 interface AdminSessionDrawerProps {
   sessionId: string;
   onClose: () => void;
+  onMarkedInternal?: () => void;
 }
 
 const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
@@ -36,7 +38,7 @@ const SIGNAL_LABEL: Record<OperationsAttentionItem['type'], string> = {
   quality: '답변 품질',
 };
 
-export default function AdminSessionDrawer({ sessionId, onClose }: AdminSessionDrawerProps) {
+export default function AdminSessionDrawer({ sessionId, onClose, onMarkedInternal }: AdminSessionDrawerProps) {
   const [visible, setVisible] = useState(false);
   const [detail, setDetail] = useState<AdminSessionDetail | null>(null);
   const [signals, setSignals] = useState<OperationsAttentionItem[]>([]);
@@ -45,6 +47,7 @@ export default function AdminSessionDrawer({ sessionId, onClose }: AdminSessionD
   const [exportError, setExportError] = useState('');
   const [reviewingMessageId, setReviewingMessageId] = useState<number | null>(null);
   const [reviewNotice, setReviewNotice] = useState('');
+  const [excludingFromAnalytics, setExcludingFromAnalytics] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
 
   const requestClose = useCallback(() => {
@@ -123,6 +126,21 @@ export default function AdminSessionDrawer({ sessionId, onClose }: AdminSessionD
     }
   };
 
+  const handleExcludeFromAnalytics = async () => {
+    if (!window.confirm('이 대화를 내부 테스트로 분류하고 모든 운영 통계와 개선 검토에서 제외할까요?')) return;
+    setExcludingFromAnalytics(true);
+    setReviewNotice('');
+    try {
+      await adminApi.markInternalSessions([sessionId]);
+      setReviewNotice('내부 테스트 대화로 분리했습니다. 운영 통계에는 더 이상 포함되지 않습니다.');
+      onMarkedInternal?.();
+    } catch {
+      setReviewNotice('통계 제외 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setExcludingFromAnalytics(false);
+    }
+  };
+
   return (
     <div className={`fixed inset-0 z-[80] flex justify-end transition ${visible ? 'pointer-events-auto' : 'pointer-events-none'}`}>
       <button
@@ -169,15 +187,26 @@ export default function AdminSessionDrawer({ sessionId, onClose }: AdminSessionD
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-xs text-slate-500">메시지 {detail.messages.length}개</p>
-                <button
-                  type="button"
-                  onClick={() => void handleExportSession()}
-                  disabled={exporting}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  <Download className="h-4 w-4" />
-                  {exporting ? '내보내는 중...' : '이 세션 엑셀 다운로드'}
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleExcludeFromAnalytics()}
+                    disabled={excludingFromAnalytics}
+                    className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    <EyeOff className="h-4 w-4" />
+                    {excludingFromAnalytics ? '분리 중...' : '내부 테스트로 제외'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleExportSession()}
+                    disabled={exporting}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    <Download className="h-4 w-4" />
+                    {exporting ? '내보내는 중...' : '이 세션 엑셀 다운로드'}
+                  </button>
+                </div>
               </div>
 
               {exportError && <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{exportError}</p>}

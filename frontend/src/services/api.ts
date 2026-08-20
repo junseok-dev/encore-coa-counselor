@@ -51,18 +51,60 @@ const apiClient = axios.create({
 });
 
 const ADMIN_TOKEN_KEY = 'adminToken';
-const INTERNAL_ANALYTICS_KEY = 'coaInternalAnalytics';
+const ANALYTICS_CLIENT_ID_KEY = 'coaAnalyticsClientId';
+const ANALYTICS_SESSION_IDS_KEY = 'coaAnalyticsSessionIds';
+const CHAT_CONVERSATIONS_STORAGE_KEY = 'chatConversations:v2';
+
+export const getAnalyticsClientId = (): string => {
+  const stored = localStorage.getItem(ANALYTICS_CLIENT_ID_KEY)?.trim();
+  if (stored) return stored;
+  const generated = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `client_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
+  localStorage.setItem(ANALYTICS_CLIENT_ID_KEY, generated);
+  return generated;
+};
+
+export const rememberAnalyticsSessionId = (sessionId: string): void => {
+  const normalized = sessionId.trim();
+  if (!normalized) return;
+  let stored: string[] = [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ANALYTICS_SESSION_IDS_KEY) ?? '[]');
+    if (Array.isArray(parsed)) stored = parsed.filter((value): value is string => typeof value === 'string');
+  } catch {}
+  localStorage.setItem(
+    ANALYTICS_SESSION_IDS_KEY,
+    JSON.stringify([normalized, ...stored.filter((value) => value !== normalized)].slice(0, 500)),
+  );
+};
+
+export const getBrowserChatSessionIds = (): string[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ANALYTICS_SESSION_IDS_KEY) ?? '[]');
+    const remembered = Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === 'string' && !!value.trim())
+      : [];
+    const conversations = JSON.parse(sessionStorage.getItem(CHAT_CONVERSATIONS_STORAGE_KEY) ?? '[]');
+    const currentTab = Array.isArray(conversations)
+      ? conversations
+        .map((value) => value && typeof value === 'object' ? (value as { sessionId?: unknown }).sessionId : null)
+        .filter((value): value is string => typeof value === 'string' && !!value.trim())
+      : [];
+    const combined = [...new Set([...remembered, ...currentTab])].slice(0, 500);
+    localStorage.setItem(ANALYTICS_SESSION_IDS_KEY, JSON.stringify(combined));
+    return combined;
+  } catch {
+    return [];
+  }
+};
 export const getAdminToken = (): string => {
-  const token = sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? '';
-  if (token) localStorage.setItem(INTERNAL_ANALYTICS_KEY, 'true');
-  return token;
+  return sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? '';
 };
 export const saveAdminToken = (token: string) => {
   sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
-  localStorage.setItem(INTERNAL_ANALYTICS_KEY, 'true');
 };
 export const clearAdminToken = () => sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-const excludeBrowserFromAnalytics = () => localStorage.getItem(INTERNAL_ANALYTICS_KEY) === 'true';
 
 const adminApiClient = axios.create({ baseURL: API_BASE_URL });
 adminApiClient.interceptors.request.use((config) => {
@@ -83,14 +125,20 @@ adminApiClient.interceptors.response.use(
 
 export const chatApi = {
   trackCourseLinkClick: async (sessionId: string, url: string): Promise<void> => {
-    await apiClient.post('/chat/events/course-link', { session_id: sessionId, url });
+    rememberAnalyticsSessionId(sessionId);
+    await apiClient.post('/chat/events/course-link', {
+      session_id: sessionId,
+      url,
+      analytics_client_id: getAnalyticsClientId(),
+    });
   },
 
   sendMessage: async (sessionId: string, message: string): Promise<ChatResponse> => {
+    rememberAnalyticsSessionId(sessionId);
     const response = await apiClient.post<ChatResponse>('/chat', {
       session_id: sessionId,
       message,
-      exclude_from_analytics: excludeBrowserFromAnalytics(),
+      analytics_client_id: getAnalyticsClientId(),
     });
     return response.data;
   },
@@ -105,10 +153,16 @@ export const chatApi = {
     signal?: AbortSignal,
   ): Promise<void> => {
     try {
+      rememberAnalyticsSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, message, history, exclude_from_analytics: excludeBrowserFromAnalytics() }),
+        body: JSON.stringify({
+          session_id: sessionId,
+          message,
+          history,
+          analytics_client_id: getAnalyticsClientId(),
+        }),
         signal,
       });
 
@@ -154,6 +208,16 @@ export const chatApi = {
 };
 
 export const adminApi = {
+  registerInternalClient: async (
+    clientId: string,
+    sessionIds: string[],
+  ): Promise<{ registered: boolean; updated: number }> => {
+    const response = await adminApiClient.post('/admin/operations/internal-clients', {
+      client_id: clientId,
+      session_ids: sessionIds,
+    });
+    return response.data;
+  },
   markInternalSessions: async (sessionIds: string[]): Promise<{ updated: number }> => {
     const response = await adminApiClient.post('/admin/operations/internal-sessions', { session_ids: sessionIds });
     return response.data;

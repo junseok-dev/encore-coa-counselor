@@ -94,6 +94,7 @@ export interface AdminSession {
   updated_at: string | null;
   message_count: number;
   user_name: string | null;
+  is_internal: boolean;
 }
 
 export interface AdminSessionList {
