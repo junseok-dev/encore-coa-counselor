@@ -125,6 +125,14 @@ adminApiClient.interceptors.response.use(
 );
 
 export const chatApi = {
+  trackHandoffClick: async (sessionId: string): Promise<void> => {
+    rememberAnalyticsSessionId(sessionId);
+    await apiClient.post('/chat/events/handoff-click', {
+      session_id: sessionId,
+      analytics_client_id: getAnalyticsClientId(),
+    });
+  },
+
   trackCourseLinkClick: async (sessionId: string, url: string): Promise<void> => {
     rememberAnalyticsSessionId(sessionId);
     await apiClient.post('/chat/events/course-link', {

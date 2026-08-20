@@ -159,6 +159,14 @@ class CourseLinkEvent(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class HandoffClickEvent(Base):
+    __tablename__ = "handoff_click_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(64), unique=True, index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class OperationsAlert(Base):
     __tablename__ = "operations_alerts"
 

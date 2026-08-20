@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.db.migrations import migrate_database
-from app.db.models import ChatLog, ChatSession, CourseLinkEvent, InternalAnalyticsClient, OperationsAlert
+from app.db.models import ChatLog, ChatSession, CourseLinkEvent, HandoffClickEvent, InternalAnalyticsClient, OperationsAlert
 from app.routers import admin, chat
 
 
@@ -315,6 +315,18 @@ class OperationsContextDashboardTest(unittest.TestCase):
                 chat.CourseLinkEventRequest(session_id="session-1", url="https://example.com/course"),
                 self.db,
             )
+
+    def test_handoff_click_is_recorded_once_per_session(self):
+        self.db.add(ChatSession(id="handoff-click-session", message_count=1))
+        self.db.commit()
+        body = chat.HandoffClickEventRequest(session_id="handoff-click-session")
+
+        first = chat.record_handoff_click_event(body, self.db)
+        second = chat.record_handoff_click_event(body, self.db)
+
+        self.assertTrue(first["recorded"])
+        self.assertFalse(second["recorded"])
+        self.assertEqual(1, self.db.query(HandoffClickEvent).count())
 
     def test_legacy_chat_sessions_gain_internal_analytics_flag(self):
         legacy_engine = create_engine("sqlite://", poolclass=StaticPool)

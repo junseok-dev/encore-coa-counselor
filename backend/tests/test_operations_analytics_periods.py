@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
-from app.db.models import BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, OpenAiMonthlyCostRecord
+from app.db.models import BillingDailyCostRecord, CancelRequest, ChatLog, ChatSession, HandoffClickEvent, OpenAiMonthlyCostRecord
 from app.routers import admin
 
 
@@ -79,6 +79,10 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
             note="API Key Usage 확인",
             updated_by="admin",
         ))
+        self.db.add(HandoffClickEvent(
+            session_id="session-period",
+            created_at=datetime(2026, 8, 19, 6, 30),
+        ))
         self.db.commit()
 
     def tearDown(self):
@@ -104,6 +108,7 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
         self.assertEqual(1, result["period_summary"]["visitors"])
         self.assertEqual(3, result["period_summary"]["chats"])
         self.assertEqual(1, result["period_summary"]["handoffs"])
+        self.assertEqual(1, result["period_summary"]["handoff_clicks"])
         self.assertEqual(1, result["period_summary"]["consultation_requests"])
         self.assertEqual(1, result["period_summary"]["cancels"])
         self.assertEqual(1, result["period_summary"]["refunds"])
@@ -119,6 +124,59 @@ class OperationsAnalyticsPeriodTest(unittest.TestCase):
         self.assertEqual(1, result["hourly"][15]["consultation_requests"])
         self.assertEqual(1, result["hourly"][17]["cancels"])
         self.assertEqual(12000, result["daily"][0]["aws_cost_krw"])
+
+    def test_course_inquiries_count_broad_questions_for_all_courses(self):
+        created_at = datetime(2026, 8, 19, 10, 0)
+        self.db.add_all([
+            ChatSession(id="broad-course", message_count=1, created_at=created_at),
+            ChatSession(id="ml-course", message_count=1, created_at=created_at),
+            ChatLog(
+                session_id="broad-course",
+                question="세 과정 전체를 비교해 주세요",
+                answer="세 과정을 비교합니다.",
+                source="document",
+                processing_status="ready",
+                question_category="recommendation",
+                question_category_label="과정 추천·비교",
+                created_at=created_at,
+            ),
+            ChatLog(
+                session_id="ml-course",
+                question="머신러닝 과정이 궁금해요",
+                answer="머신러닝 과정을 안내합니다.",
+                source="document",
+                processing_status="ready",
+                question_category="curriculum",
+                question_category_label="과정·커리큘럼",
+                created_at=created_at,
+            ),
+        ])
+        self.db.commit()
+
+        result = self.analytics("day")
+        counts = {item["key"]: item["count"] for item in result["course_inquiries_by_course"]}
+
+        self.assertEqual({"orchestration": 1, "ml": 2, "mlops": 1}, counts)
+
+    def test_top_five_never_contains_generic_or_other_categories(self):
+        created_at = datetime(2026, 8, 19, 10, 0)
+        self.db.add(ChatLog(
+            session_id="session-period",
+            question="아무 질문",
+            answer="답변",
+            source="ai",
+            processing_status="ready",
+            question_category="other",
+            question_category_label="기타",
+            created_at=created_at,
+        ))
+        self.db.commit()
+
+        result = self.analytics("day")
+        labels = {item["label"] for item in result["question_categories_top5"]}
+
+        self.assertNotIn("기타", labels)
+        self.assertNotIn("일반", labels)
 
     def test_year_period_returns_twelve_months(self):
         result = self.analytics("year")

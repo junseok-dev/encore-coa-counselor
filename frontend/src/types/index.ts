@@ -363,6 +363,7 @@ export interface OperationsAnalyticsData {
     course_inquiries: number;
     course_page_views: number;
     handoffs: number;
+    handoff_clicks: number;
     consultation_requests: number;
     cancels: number;
     refunds: number;
@@ -380,6 +381,7 @@ export interface OperationsAnalyticsData {
     busiest_chat_hour: AnalyticsPeak | null;
   };
   question_categories_top5: QuestionCategoryMetric[];
+  course_inquiries_by_course: QuestionCategoryMetric[];
   answer_source_summary: AnswerSourceSummary;
   handoff_categories: HandoffCategoryMetric[];
   cost_summary: {

@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_FILE_PATH, get_settings
 from app.db.crud import get_session_messages
 from app.db.database import SessionLocal, get_db
-from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CourseLinkEvent, CustomColumn, CustomTable, DocumentRecord, FaqRecord, InternalAnalyticsClient, OpenAiMonthlyCostRecord, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, PromptVersion, SystemHealthProbe
+from app.db.models import AdminAuditLog, AdminSecretRecord, AdminUser, AppSetting, BillingCostUploadRecord, BillingDailyCostRecord, CancelRequest, ChatLog, ChatMessage, ChatSession, CourseLinkEvent, CustomColumn, CustomTable, DocumentRecord, FaqRecord, HandoffClickEvent, InternalAnalyticsClient, OpenAiMonthlyCostRecord, OperationsAiMessage, OperationsAlert, OperationsAlertHistory, ProcessingLog, PromptConfig, PromptVersion, SystemHealthProbe
 from app.models.chat import ChatRequest, HistoryMessage
 from app.models.session import MessageDetail, SessionDetail, SessionListResponse, SessionSummary
 from app.routers.chat import chat as run_chat_preview
@@ -77,6 +77,7 @@ from app.services.storage_service import (
     read_text_from_storage,
     storage_exists,
 )
+from app.services.website_course_service import COURSES
 from app.utils.crypto import ENCRYPTED_PREFIX, decrypt_if_needed, encrypt, maybe_encrypt
 from app.utils.datetime_utils import KOREA_TIMEZONE, UTC_TIMEZONE, as_korea, korea_now, utc_now
 from app.utils.data_names import clean_data_name, data_name_key
@@ -92,6 +93,7 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "chat_sessions": "사용자 채팅 세션 목록 — 세션 ID, 생성 시간, 메시지 수 등",
     "chat_messages": "채팅 메시지 내역 — 역할(user/assistant), 소스, 생성 시간 등",
     "chat_logs": "RAG 처리 로그 — 질문, 검색 청크, 답변, LLM 비용 등",
+    "handoff_click_events": "상담 매니저 연결 버튼을 실제로 클릭한 세션",
     "documents": "문서 관리 — 업로드·파싱·임베딩·승인 상태 추적",
     "chunks": "문서 청크 — RAG 검색에 사용되는 텍스트 조각",
     "cancel_requests": "취소 요청 내역",
@@ -775,6 +777,53 @@ def _operations_summary(
 def _question_category(question: str) -> tuple[str, str]:
     category = categorize_question_rule(question)
     return category.key, category.label
+
+
+EXCLUDED_TOP_CATEGORY_KEYS = {"general", "other", "unknown", "unclassified"}
+EXCLUDED_TOP_CATEGORY_LABELS = {"일반", "기타", "미분류", "알 수 없음"}
+GENERIC_COURSE_SIGNALS = (
+    "전체과정", "과정전체", "세과정", "3개과정", "과정들", "과정비교",
+    "과정종류", "어떤과정", "무슨과정", "모든과정",
+)
+
+
+def _is_meaningful_top_category(item: dict) -> bool:
+    key = str(item.get("key") or "").strip().lower()
+    label = str(item.get("label") or "").strip()
+    return key not in EXCLUDED_TOP_CATEGORY_KEYS and label not in EXCLUDED_TOP_CATEGORY_LABELS
+
+
+def _course_inquiry_summary(logs: list[ChatLog]) -> list[dict]:
+    """Count unique sessions related to each course; broad all-course questions count for all three."""
+    grouped: dict[str, list[ChatLog]] = {}
+    for row in logs:
+        grouped.setdefault(row.session_id, []).append(row)
+
+    course_sessions = {course.key: set() for course in COURSES}
+    for session_id, session_logs in grouped.items():
+        questions = [decrypt_if_needed(row.question) or "" for row in session_logs]
+        normalized = "".join(" ".join(questions).lower().split())
+        explicit = {
+            course.key
+            for course in COURSES
+            if any(alias.lower().replace(" ", "") in normalized for alias in course.aliases)
+        }
+        category_keys = {
+            row.question_category or categorize_question_rule(decrypt_if_needed(row.question) or "").key
+            for row in session_logs
+        }
+        broad_question = any(signal in normalized for signal in GENERIC_COURSE_SIGNALS)
+        if not explicit and "과정" in normalized and category_keys.intersection({"recommendation", "curriculum"}):
+            broad_question = True
+        matched = {course.key for course in COURSES} if broad_question else explicit
+        for course_key in matched:
+            course_sessions[course_key].add(session_id)
+
+    summary = [
+        {"key": course.key, "label": course.name, "count": len(course_sessions[course.key])}
+        for course in COURSES
+    ]
+    return sorted(summary, key=lambda item: (-item["count"], item["label"]))
 
 
 def _shift_month(month_start: date, offset: int) -> date:
@@ -1601,10 +1650,12 @@ def get_operations_analytics(
     session_range = db.query(func.min(ChatSession.created_at), func.max(ChatSession.created_at)).filter(ChatSession.is_internal.is_(False)).one()
     log_range_query = db.query(func.min(ChatLog.created_at), func.max(ChatLog.created_at))
     cancel_range_query = db.query(func.min(CancelRequest.created_at), func.max(CancelRequest.created_at))
+    handoff_click_range_query = db.query(func.min(HandoffClickEvent.created_at), func.max(HandoffClickEvent.created_at))
     if internal_ids:
         log_range_query = log_range_query.filter(ChatLog.session_id.notin_(internal_ids))
         cancel_range_query = cancel_range_query.filter(CancelRequest.session_id.notin_(internal_ids))
-    date_ranges = [session_range, log_range_query.one(), cancel_range_query.one()]
+        handoff_click_range_query = handoff_click_range_query.filter(HandoffClickEvent.session_id.notin_(internal_ids))
+    date_ranges = [session_range, log_range_query.one(), cancel_range_query.one(), handoff_click_range_query.one()]
     latest_values = [value for _, maximum in date_ranges if (value := maximum) is not None]
     latest_data_month = (
         max(_analysis_datetime(value).date() for value in latest_values).replace(day=1)
@@ -1690,13 +1741,19 @@ def get_operations_analytics(
         CourseLinkEvent.created_at >= query_start,
         CourseLinkEvent.created_at < query_end,
     )
+    handoff_click_query = db.query(HandoffClickEvent).filter(
+        HandoffClickEvent.created_at >= query_start,
+        HandoffClickEvent.created_at < query_end,
+    )
     if internal_ids:
         log_query = log_query.filter(ChatLog.session_id.notin_(internal_ids))
         cancel_query = cancel_query.filter(CancelRequest.session_id.notin_(internal_ids))
         link_query = link_query.filter(CourseLinkEvent.session_id.notin_(internal_ids))
+        handoff_click_query = handoff_click_query.filter(HandoffClickEvent.session_id.notin_(internal_ids))
     logs = log_query.all()
     cancels = cancel_query.all()
     link_events = link_query.all()
+    handoff_click_events = handoff_click_query.all()
 
     def in_analysis_period(value: datetime | None) -> bool:
         if not value:
@@ -1708,6 +1765,7 @@ def get_operations_analytics(
     analysis_logs = [row for row in logs if in_analysis_period(row.created_at)]
     analysis_cancels = [row for row in cancels if in_analysis_period(row.created_at)]
     analysis_link_events = [row for row in link_events if in_analysis_period(row.created_at)]
+    analysis_handoff_clicks = [row for row in handoff_click_events if in_analysis_period(row.created_at)]
     analysis_costs = db.query(BillingDailyCostRecord).filter(
         BillingDailyCostRecord.usage_date >= analysis_start.date(),
         BillingDailyCostRecord.usage_date < analysis_end.date(),
@@ -1917,7 +1975,7 @@ def get_operations_analytics(
         else:
             answer_source_summary["other"] += 1
 
-        is_handoff = row.processing_status in ("handoff", "handoff_offer") or row.source == "handoff"
+        is_handoff = row.processing_status == "handoff"
         if is_handoff:
             is_cancel = (row.session_id, question.strip()) in cancel_keys
             context = " ".join(session_context_map.get(row.session_id, []))
@@ -1941,16 +1999,22 @@ def get_operations_analytics(
         if "openai_cost_usd" in bucket:
             bucket["openai_cost_usd"] = round(float(bucket["openai_cost_usd"]), 6)
     question_categories_top5 = sorted(
-        (item for item in question_category_map.values() if item["key"] != "general"),
+        (item for item in question_category_map.values() if _is_meaningful_top_category(item)),
         key=lambda item: (-item["count"], item["label"]),
     )[:5]
-    handoff_categories = list(handoff_category_map.values())
-    handoff_categories.sort(key=lambda item: item["count"], reverse=True)
+    handoff_categories = sorted(
+        (
+            item for item in handoff_category_map.values()
+            if item["key"] not in {"review_needed", "bot_offer"} and _is_meaningful_top_category(item)
+        ),
+        key=lambda item: (-item["count"], item["label"]),
+    )[:5]
+    course_inquiries_by_course = _course_inquiry_summary(analysis_logs)
     chat_count = len(analysis_logs)
     visitor_count = len(analysis_sessions)
     handoff_count = sum(
         1 for row in analysis_logs
-        if row.processing_status == "handoff" or row.source == "handoff"
+        if row.processing_status == "handoff"
     )
     consultation_request_count = sum(
         1 for row in analysis_logs if row.processing_status == "handoff_offer"
@@ -1970,6 +2034,7 @@ def get_operations_analytics(
         "course_inquiries": len(context_metrics["course_sessions"]),
         "course_page_views": len({row.session_id for row in analysis_link_events}),
         "handoffs": handoff_count,
+        "handoff_clicks": len({row.session_id for row in analysis_handoff_clicks}),
         "consultation_requests": consultation_request_count,
         "cancels": len(analysis_cancels) - refund_count,
         "refunds": refund_count,
@@ -2020,6 +2085,7 @@ def get_operations_analytics(
             "busiest_chat_hour": _peak_item(hourly, "chats", "label"),
         },
         "question_categories_top5": question_categories_top5,
+        "course_inquiries_by_course": course_inquiries_by_course,
         "answer_source_summary": {
             **answer_source_summary,
             "total": sum(answer_source_summary.values()),

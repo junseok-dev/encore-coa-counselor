@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.crud import get_or_create_session, save_message
 from app.db.database import get_db
-from app.db.models import CancelRequest, ChatLog, ChatSession, CourseLinkEvent, InternalAnalyticsClient
+from app.db.models import CancelRequest, ChatLog, ChatSession, CourseLinkEvent, HandoffClickEvent, InternalAnalyticsClient
 from app.models.chat import ChatRequest, ChatResponse, SuggestedQuestionsResponse
 from app.services.document_service import search_documents
 from app.services.employment_service import (
@@ -84,6 +84,11 @@ class CourseLinkEventRequest(BaseModel):
     analytics_client_id: str | None = Field(default=None, max_length=64)
 
 
+class HandoffClickEventRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    analytics_client_id: str | None = Field(default=None, max_length=64)
+
+
 @router.post("/events/course-link", status_code=201)
 def record_course_link_event(body: CourseLinkEventRequest, db: Session = Depends(get_db)):
     parsed = urlparse(body.url)
@@ -99,6 +104,21 @@ def record_course_link_event(body: CourseLinkEventRequest, db: Session = Depends
         )
     course_slug = parsed.path.strip("/").split("/")[-1][:100] or None
     db.add(CourseLinkEvent(session_id=body.session_id, url=body.url, course_slug=course_slug))
+    db.commit()
+    return {"recorded": True}
+
+
+@router.post("/events/handoff-click", status_code=201)
+def record_handoff_click_event(body: HandoffClickEventRequest, db: Session = Depends(get_db)):
+    session = db.get(ChatSession, body.session_id)
+    if session:
+        _sync_session_analytics_scope(db, session, body.analytics_client_id)
+    existing = db.query(HandoffClickEvent).filter(
+        HandoffClickEvent.session_id == body.session_id,
+    ).first()
+    if existing:
+        return {"recorded": False}
+    db.add(HandoffClickEvent(session_id=body.session_id))
     db.commit()
     return {"recorded": True}
 

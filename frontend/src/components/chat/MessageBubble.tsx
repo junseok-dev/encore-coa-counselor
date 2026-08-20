@@ -142,6 +142,9 @@ const MessageBubble: React.FC<Props> = ({ message, isStreaming = false, sessionI
                 {message.handoff_url ? (
                   <a
                     href={message.handoff_url}
+                    onClick={() => {
+                      if (sessionId) void chatApi.trackHandoffClick(sessionId).catch(() => undefined);
+                    }}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex rounded-xl bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-600"
