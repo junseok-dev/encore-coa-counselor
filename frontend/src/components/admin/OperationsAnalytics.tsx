@@ -43,6 +43,7 @@ function MetricTrend({
   dotClass: string;
   unit: string;
 }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const width = Math.max(620, points.length * 34);
   const height = 250;
   const left = 44;
@@ -59,6 +60,14 @@ function MetricTrend({
   }));
   const labelEvery = Math.max(1, Math.ceil(points.length / 10));
   const total = points.reduce((sum, point) => sum + point[metric], 0);
+  const hoveredPoint = hoveredIndex === null ? null : coordinates[hoveredIndex];
+  const tooltipWidth = 116;
+  const tooltipX = hoveredPoint
+    ? Math.max(left, Math.min(width - right - tooltipWidth, hoveredPoint.x - tooltipWidth / 2))
+    : 0;
+  const tooltipY = hoveredPoint
+    ? (hoveredPoint.y > top + 52 ? hoveredPoint.y - 48 : hoveredPoint.y + 14)
+    : 0;
 
   return <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-4">
@@ -72,23 +81,39 @@ function MetricTrend({
           return <g key={ratio}><line x1={left} x2={width - right} y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="4 5" /><text x={left - 8} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{Math.round(maxValue * (1 - ratio))}</text></g>;
         })}
         <polyline points={coordinates.map((point) => `${point.x},${point.y}`).join(' ')} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-        {coordinates.map((point, index) => <g key={`${point.label}-${index}`}>
-          <circle cx={point.x} cy={point.y} r="4" fill="white" stroke={color} strokeWidth="2.5"><title>{point.label} · {point[metric].toLocaleString()}{unit}</title></circle>
+        {hoveredPoint && <line x1={hoveredPoint.x} x2={hoveredPoint.x} y1={top} y2={top + plotHeight} stroke={color} strokeWidth="1" strokeDasharray="3 4" opacity="0.35" />}
+        {coordinates.map((point, index) => <g key={`${point.label}-${index}`} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)}>
+          <circle cx={point.x} cy={point.y} r="12" fill="transparent" className="cursor-pointer" tabIndex={0} aria-label={`${point.label} ${point[metric].toLocaleString()}${unit}`} onFocus={() => setHoveredIndex(index)} onBlur={() => setHoveredIndex(null)} />
+          <circle cx={point.x} cy={point.y} r={hoveredIndex === index ? 5.5 : 4} fill={hoveredIndex === index ? color : 'white'} stroke={color} strokeWidth="2.5" pointerEvents="none" />
           {(index % labelEvery === 0 || index === coordinates.length - 1) && <text x={point.x} y={height - 14} textAnchor="middle" fontSize="10" fill="#64748b">{point.label}</text>}
         </g>)}
+        {hoveredPoint && <g transform={`translate(${tooltipX},${tooltipY})`} pointerEvents="none">
+          <rect width={tooltipWidth} height="38" rx="8" fill="#0f172a" opacity="0.96" />
+          <text x="10" y="15" fontSize="9" fontWeight="600" fill="#94a3b8">{hoveredPoint.label}</text>
+          <text x="10" y="30" fontSize="12" fontWeight="800" fill="white">{hoveredPoint[metric].toLocaleString()}{unit}</text>
+        </g>}
       </svg>
     </div>
   </section>;
 }
 
 function SourceDonut({ data }: { data: OperationsAnalyticsData }) {
+  const [hoveredSource, setHoveredSource] = useState<'faq' | 'llm' | null>(null);
   const faq = data.answer_source_summary.faq;
   const llm = data.answer_source_summary.llm;
   const total = faq + llm;
   const faqRate = total ? Math.round(faq / total * 100) : 0;
+  const activeCount = hoveredSource === 'faq' ? faq : hoveredSource === 'llm' ? llm : total;
+  const activeRate = hoveredSource === 'faq' ? faqRate : hoveredSource === 'llm' ? 100 - faqRate : null;
+  const activeLabel = hoveredSource === 'faq' ? 'FAQ 직접답변' : hoveredSource === 'llm' ? 'LLM 상담답변' : '정상 응답';
   return <div className="grid min-h-72 place-items-center gap-6 py-2 sm:grid-cols-[minmax(220px,0.8fr)_1fr]">
-    <div className="relative h-48 w-48 rounded-full" style={{ background: total ? `conic-gradient(#0891b2 0 ${faqRate}%, #2563eb ${faqRate}% 100%)` : '#e2e8f0' }}>
-      <div className="absolute inset-8 flex flex-col items-center justify-center rounded-full bg-white"><span className="text-xs font-bold text-slate-400">정상 응답</span><strong className="mt-1 text-3xl font-black text-slate-950">{total.toLocaleString()}</strong><span className="text-[10px] text-slate-400">건</span></div>
+    <div className="relative h-48 w-48">
+      <svg viewBox="0 0 120 120" className="h-full w-full" role="img" aria-label="FAQ와 LLM 답변 비율 도넛 그래프">
+        <circle cx="60" cy="60" r="46" fill="none" stroke="#e2e8f0" strokeWidth="22" />
+        {total > 0 && <circle cx="60" cy="60" r="46" fill="none" stroke={llm > 0 ? '#2563eb' : '#0891b2'} strokeWidth="22" pathLength="100" transform="rotate(-90 60 60)" className="cursor-pointer" tabIndex={0} aria-label={`${llm > 0 ? 'LLM 상담답변' : 'FAQ 직접답변'} ${(llm > 0 ? llm : faq).toLocaleString()}건`} onMouseEnter={() => setHoveredSource(llm > 0 ? 'llm' : 'faq')} onMouseLeave={() => setHoveredSource(null)} onFocus={() => setHoveredSource(llm > 0 ? 'llm' : 'faq')} onBlur={() => setHoveredSource(null)} />}
+        {faq > 0 && llm > 0 && <circle cx="60" cy="60" r="46" fill="none" stroke="#0891b2" strokeWidth="22" pathLength="100" strokeDasharray={`${faqRate} ${100 - faqRate}`} transform="rotate(-90 60 60)" className="cursor-pointer" tabIndex={0} aria-label={`FAQ 직접답변 ${faq.toLocaleString()}건`} onMouseEnter={() => setHoveredSource('faq')} onMouseLeave={() => setHoveredSource(null)} onFocus={() => setHoveredSource('faq')} onBlur={() => setHoveredSource(null)} />}
+      </svg>
+      <div className="pointer-events-none absolute inset-8 flex flex-col items-center justify-center rounded-full bg-white text-center"><span className="text-[11px] font-bold text-slate-400">{activeLabel}</span><strong className="mt-1 text-2xl font-black text-slate-950">{activeCount.toLocaleString()}건</strong><span className="mt-0.5 text-[10px] font-bold text-slate-400">{activeRate === null ? '전체' : `${activeRate}%`}</span></div>
     </div>
     <div className="w-full max-w-sm space-y-3">
       <div className="flex items-center justify-between rounded-xl bg-cyan-50 px-4 py-3"><span className="flex items-center gap-2 text-sm font-bold text-cyan-900"><i className="h-3 w-3 rounded-full bg-cyan-600" />FAQ 직접답변</span><strong className="text-lg text-cyan-900">{faq.toLocaleString()}건</strong></div>
