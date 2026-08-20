@@ -33,7 +33,7 @@ const VIEWS: { key: OperationsDashboardView; label: string; description: string 
 ];
 
 const SIGNAL_LABEL = {
-  enrollment: '수강 문의', handoff: '상담 연결', cancel: '취소 문의', refund: '환불 요청',
+  handoff: '상담 연결', cancel: '취소 문의', refund: '환불 요청',
   safety: '안전 감지', error: '처리 오류', quality: '답변 품질',
 };
 

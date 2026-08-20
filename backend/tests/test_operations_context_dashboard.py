@@ -74,6 +74,21 @@ class OperationsContextDashboardTest(unittest.TestCase):
         self.assertEqual(1, result["period_summary"]["course_page_views"])
         self.assertEqual(0, result["period_summary"]["handoffs"])
 
+        reviewed_log = self.db.query(ChatLog).filter_by(session_id="course-session").first()
+        self.db.add(OperationsAlert(
+            chat_log_id=reviewed_log.id,
+            session_id=reviewed_log.session_id,
+            signal_type="quality",
+            severity="medium",
+            reason="관리자가 선택한 답변 개선 검토",
+            status="open",
+        ))
+        self.db.commit()
+        dashboard = admin.get_operations_dashboard(days=30, attention_limit=500, db=self.db, _=None)
+        signal_types = {item["type"] for item in dashboard["attention"]}
+        self.assertNotIn("enrollment", signal_types)
+        self.assertIn("quality", signal_types)
+
     def test_internal_admin_and_test_sessions_are_excluded_everywhere(self):
         created_at = datetime(2026, 8, 19, 11, 0)
         self.db.add_all([

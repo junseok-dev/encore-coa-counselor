@@ -2363,8 +2363,6 @@ def get_operations_dashboard(
             decrypt_if_needed(context_row.question) or "",
             decrypt_if_needed(context_row.answer) or "",
         ])
-    review_context = _session_context_metrics(review_logs)
-    first_course_log_ids = {row.id for row in review_context["first_course_log"].values()}
     current_log_ids = {row.id for row in current_logs}
     attention = []
     log_ids = [row.id for row in review_logs]
@@ -2409,9 +2407,6 @@ def get_operations_dashboard(
             signal_type, severity, reason = "safety", "high", "안전 가드레일 감지"
         elif row.processing_status == "failed" or error:
             signal_type, severity, reason = "error", "high", "응답 처리 오류"
-        elif row.id in first_course_log_ids:
-            signal_type, severity, reason = "enrollment", "low", "수강 관심 대화 맥락 확인"
-
         if signal_type:
             if alert is None:
                 alert = OperationsAlert(

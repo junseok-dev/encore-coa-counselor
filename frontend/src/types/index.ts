@@ -221,7 +221,7 @@ export interface ChatLog {
   created_at: string;
 }
 
-export type OperationsSignalType = 'enrollment' | 'handoff' | 'cancel' | 'refund' | 'safety' | 'error' | 'quality';
+export type OperationsSignalType = 'handoff' | 'cancel' | 'refund' | 'safety' | 'error' | 'quality';
 
 export interface OperationsMetricSummary {
   visitors: number;
