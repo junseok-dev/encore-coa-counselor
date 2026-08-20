@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, CalendarDays, Download, ExternalLink, FileSpreadsheet, Info, RefreshCw, Upload, WalletCards } from 'lucide-react';
 import { adminApi } from '../../services/api';
 import { CostManagementData, OpenAiManualCostData } from '../../types';
-
-const SERVICE_COLORS = ['#7dd3fc', '#2563eb', '#06b6d4', '#10b981', '#f59e0b', '#94a3b8', '#f43f5e', '#6366f1', '#8b5cf6', '#14b8a6'];
+import { DailyStackedChart, MonthlyCostChart, OpenAiMonthlyChart, ServiceDonut } from './CostInteractiveCharts';
 const TARGET_ACCOUNT_ID = '249173798473';
 const TARGET_ACCOUNT_NAME = '엔코아 동작 캠퍼스 5반 30번 학생';
 
@@ -33,85 +32,9 @@ function dateTime(value: string) {
   }).format(new Date(value));
 }
 
-function ServiceDonut({ data }: { data: CostManagementData }) {
-  const total = Math.max(1, data.usage_total_krw);
-  const radius = 66;
-  const circumference = Math.PI * 2 * radius;
-  let offset = 0;
-  let angleOffset = 0;
-  return (
-    <div className="grid min-w-0 gap-6 md:grid-cols-[minmax(230px,1fr)_minmax(145px,0.65fr)] md:items-center">
-      <div className="relative mx-auto h-60 w-60 shrink-0">
-        <svg viewBox="0 0 180 180" className="h-full w-full">
-          <circle cx="90" cy="90" r={radius} fill="none" stroke="#f1f5f9" strokeWidth="28" />
-          {data.service_totals.map((service, index) => {
-            const ratio = service.amount_krw / total;
-            const length = ratio * circumference;
-            const node = <circle key={service.service_name} cx="90" cy="90" r={radius} fill="none" stroke={SERVICE_COLORS[index % SERVICE_COLORS.length]} strokeWidth="28" strokeDasharray={`${length} ${circumference - length}`} strokeDashoffset={-offset} transform="rotate(-90 90 90)" />;
-            offset += length;
-            return node;
-          })}
-          {data.service_totals.map((service) => {
-            const ratio = service.amount_krw / total;
-            const midAngle = -90 + angleOffset + ratio * 180;
-            angleOffset += ratio * 360;
-            if (ratio < 0.035) return null;
-            const radians = (midAngle * Math.PI) / 180;
-            const x = 90 + Math.cos(radians) * radius;
-            const y = 90 + Math.sin(radians) * radius;
-            return <text key={`${service.service_name}-ratio`} x={x} y={y} textAnchor="middle" dominantBaseline="central" fill="white" fontSize="9" fontWeight="800">{(ratio * 100).toFixed(1)}%</text>;
-          })}
-        </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="text-sm font-medium text-slate-500">Total</span><strong className="mt-1 text-2xl font-black tracking-tight text-red-500">{data.usage_total_krw.toLocaleString()}</strong><span className="mt-0.5 text-[11px] font-bold text-slate-400">KRW</span></div>
-      </div>
-      <div className="grid min-w-0 content-center gap-2.5">
-        {data.service_totals.map((service, index) => (
-          <div key={service.service_name} className="flex min-w-0 items-center gap-2 text-[11px] text-slate-600" title={`${service.service_name}: ${krw(service.amount_krw)}`}><span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} /><span className="min-w-0 break-words font-medium leading-4">{service.service_name}</span></div>
-        ))}
-        {data.service_totals.length === 0 && <p className="col-span-full py-10 text-center text-sm text-slate-400">업로드된 서비스 비용이 없습니다.</p>}
-      </div>
-    </div>
-  );
-}
-
-function DailyStackedChart({ data }: { data: CostManagementData }) {
-  const maxValue = Math.max(1, ...data.daily_totals.map((item) => item.total_krw));
-  const scaleMax = Math.ceil(maxValue / 1000) * 1000 || 1000;
-  const ticks = Array.from({ length: 6 }, (_, index) => Math.round(scaleMax - (scaleMax / 5) * index));
-  const services = data.service_totals.map((item) => item.service_name);
-  return (
-    <div className="max-w-full overflow-x-auto pb-1">
-      <div className="grid min-w-[640px] grid-cols-[44px_minmax(570px,1fr)] gap-3">
-        <div className="flex h-56 flex-col justify-between pb-0 text-right text-[10px] tabular-nums text-slate-500">{ticks.map((tick) => <span key={tick}>{tick.toLocaleString()}</span>)}</div>
-        <div className="relative h-64">
-          <div className="absolute inset-x-0 top-0 h-56 border-b border-slate-300">
-            {ticks.map((tick, index) => <span key={tick} className="absolute inset-x-0 border-t border-slate-200" style={{ top: `${(index / (ticks.length - 1)) * 100}%` }} />)}
-          </div>
-          <div className="absolute inset-0 flex items-end gap-1.5">
-            {data.daily_totals.map((day) => {
-              const weekday = new Intl.DateTimeFormat('ko-KR', { weekday: 'short' }).format(new Date(`${day.date}T00:00:00`));
-              return (
-                <div key={day.date} className="flex h-full min-w-4 flex-1 flex-col items-center justify-end">
-                  <div className="flex w-full max-w-7 flex-col-reverse overflow-hidden" style={{ height: `${Math.max(day.total_krw ? 4 : 0, (day.total_krw / scaleMax) * 224)}px` }} title={`${day.date} ${krw(day.total_krw)}`}>
-                    {services.map((service, index) => {
-                      const value = day.services[service] ?? 0;
-                      if (!value || !day.total_krw) return null;
-                      return <span key={service} style={{ height: `${(value / day.total_krw) * 100}%`, background: SERVICE_COLORS[index % SERVICE_COLORS.length] }} />;
-                    })}
-                  </div>
-                  <span className="mt-2 h-6 -rotate-45 whitespace-nowrap text-[9px] text-slate-500">{String(day.day).padStart(2, '0')}({weekday.replace('요일', '')})</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function CostManagement() {
   const [costTab, setCostTab] = useState<'aws' | 'openai'>('aws');
+  const [selectedService, setSelectedService] = useState<string | null>(null);
   const [billingMonth, setBillingMonth] = useState(currentMonth);
   const [data, setData] = useState<CostManagementData | null>(null);
   const [openAiData, setOpenAiData] = useState<OpenAiManualCostData | null>(null);
@@ -158,6 +81,10 @@ export default function CostManagement() {
     }
     void load();
   }, [billingMonth]);
+
+  useEffect(() => {
+    setSelectedService(null);
+  }, [billingMonth, costTab]);
 
   const importFile = async () => {
     if (!file) return;
@@ -275,7 +202,7 @@ export default function CostManagement() {
         </div>
         <div className="grid gap-px bg-slate-200 lg:grid-cols-[0.72fr_1.28fr]">
           <div className="bg-white p-5"><p className="text-xs font-bold text-slate-500">{isAllPeriod ? '전체 입력 합계' : `${billingMonth} 실제 비용`}</p><p className="mt-2 text-3xl font-black text-emerald-700">{usd(openAiData?.total_usd)}</p><p className="mt-3 text-xs leading-5 text-slate-400">{openAiData?.record?.updated_at ? `${dateTime(openAiData.record.updated_at)} 수정 · ${openAiData.record.updated_by ?? '관리자'}` : isAllPeriod ? '저장된 월별 OpenAI 비용의 합계입니다.' : '아직 이 월의 실제 비용이 입력되지 않았습니다.'}</p>{openAiData?.record?.note && <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{openAiData.record.note}</p>}</div>
-          {isAllPeriod ? <div className="bg-white p-5"><p className="text-xs font-bold text-slate-500">월별 입력 내역</p>{openAiData?.monthly_history.length ? <div className="mt-4 flex h-36 items-end gap-2 overflow-x-auto border-b border-slate-200 pb-1">{openAiData.monthly_history.map((item) => <button key={item.billing_month} onClick={() => setBillingMonth(item.billing_month)} className="flex h-full min-w-14 flex-1 flex-col items-center justify-end gap-1" title={`${item.billing_month} ${usd(item.amount_usd)}`}><span className="text-[9px] font-bold text-slate-600">{usd(item.amount_usd)}</span><span className="w-8 rounded-t bg-emerald-500" style={{ height: `${Math.max(5, item.amount_usd / openAiMonthlyMax * 88)}px` }} /><span className="whitespace-nowrap text-[9px] text-slate-500">{item.billing_month}</span></button>)}</div> : <p className="py-12 text-center text-sm text-slate-400">입력된 OpenAI 월 비용이 없습니다.</p>}</div> : <div className="bg-white p-5"><div className="grid gap-3 sm:grid-cols-[0.7fr_1.3fr_auto] sm:items-end"><label className="text-xs font-bold text-slate-600">실제 비용(USD)<input type="number" min="0" step="0.000001" inputMode="decimal" value={openAiAmount} onChange={(event) => setOpenAiAmount(event.target.value)} placeholder="예: 32.41" className="mt-2 block w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="text-xs font-bold text-slate-600">메모<input value={openAiNote} onChange={(event) => setOpenAiNote(event.target.value)} maxLength={1000} placeholder="API Key Usage 확인값" className="mt-2 block w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" /></label><button onClick={() => void saveOpenAiCost()} disabled={openAiSaving || !openAiAmount.trim()} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40">{openAiSaving ? '저장 중' : openAiData?.record ? '수정 저장' : '비용 저장'}</button></div><div className="mt-4 flex flex-wrap items-center justify-between gap-2"><a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700">OpenAI Usage 확인<ExternalLink className="h-3.5 w-3.5" /></a>{openAiData?.record && <button onClick={() => void deleteOpenAiCost()} disabled={openAiSaving} className="text-xs font-bold text-rose-600 disabled:opacity-40">입력값 삭제</button>}</div></div>}
+          {isAllPeriod ? <div className="bg-white p-5"><p className="text-xs font-bold text-slate-500">월별 입력 내역</p>{openAiData?.monthly_history.length ? <OpenAiMonthlyChart history={openAiData.monthly_history} maxValue={openAiMonthlyMax} onSelectMonth={setBillingMonth} /> : <p className="py-12 text-center text-sm text-slate-400">입력된 OpenAI 월 비용이 없습니다.</p>}</div> : <div className="bg-white p-5"><div className="grid gap-3 sm:grid-cols-[0.7fr_1.3fr_auto] sm:items-end"><label className="text-xs font-bold text-slate-600">실제 비용(USD)<input type="number" min="0" step="0.000001" inputMode="decimal" value={openAiAmount} onChange={(event) => setOpenAiAmount(event.target.value)} placeholder="예: 32.41" className="mt-2 block w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="text-xs font-bold text-slate-600">메모<input value={openAiNote} onChange={(event) => setOpenAiNote(event.target.value)} maxLength={1000} placeholder="API Key Usage 확인값" className="mt-2 block w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" /></label><button onClick={() => void saveOpenAiCost()} disabled={openAiSaving || !openAiAmount.trim()} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40">{openAiSaving ? '저장 중' : openAiData?.record ? '수정 저장' : '비용 저장'}</button></div><div className="mt-4 flex flex-wrap items-center justify-between gap-2"><a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700">OpenAI Usage 확인<ExternalLink className="h-3.5 w-3.5" /></a>{openAiData?.record && <button onClick={() => void deleteOpenAiCost()} disabled={openAiSaving} className="text-xs font-bold text-rose-600 disabled:opacity-40">입력값 삭제</button>}</div></div>}
         </div>
       </section>}
 
@@ -286,11 +213,11 @@ export default function CostManagement() {
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold text-slate-500">{isAllPeriod ? '월평균 사용 비용' : '비용 발생 일수'}</p><p className="mt-2 text-3xl font-black text-emerald-600">{isAllPeriod ? krw(monthlyAverage) : `${activeDays.toLocaleString()}일`}</p><p className="mt-3 text-xs text-slate-400">{isAllPeriod ? `비용 자료가 있는 ${history.length.toLocaleString()}개월 기준` : '0원 초과 사용일 기준'}</p></div>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-blue-600" /><div><h2 className="font-bold text-slate-950">월별 사용 비용</h2><p className="mt-1 text-xs text-slate-500">업로드한 일별 서비스 비용을 월별로 합산했습니다. 막대를 누르면 해당 월 상세로 이동합니다.</p></div></div>{history.length ? <div className="mt-5 overflow-x-auto"><div className="flex h-48 items-end gap-3 border-b border-slate-200 px-2" style={{ minWidth: `${Math.max(600, history.length * 86)}px` }}>{history.map((item) => <button type="button" key={item.billing_month} onClick={() => setBillingMonth(item.billing_month)} className="group flex h-full min-w-16 flex-1 flex-col items-center justify-end gap-1" title={`${item.billing_month} ${krw(item.amount_krw)}`}><span className="whitespace-nowrap text-[10px] font-bold tabular-nums text-slate-600">{item.amount_krw.toLocaleString()}원</span><span className={`w-full max-w-16 rounded-t transition ${billingMonth === item.billing_month ? 'bg-blue-700' : 'bg-blue-400 group-hover:bg-blue-600'}`} style={{ height: `${Math.max(8, (item.amount_krw / monthlyMax) * 120)}px` }} /><span className="text-[10px] font-semibold text-slate-500">{item.billing_month}</span></button>)}</div></div> : <p className="py-14 text-center text-sm text-slate-400">업로드된 월별 비용 데이터가 없습니다.</p>}</section>
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-blue-600" /><div><h2 className="font-bold text-slate-950">월별 사용 비용</h2><p className="mt-1 text-xs text-slate-500">막대에 마우스를 올리면 금액을 확인하고, 누르면 해당 월 상세로 이동합니다.</p></div></div>{history.length ? <MonthlyCostChart history={history} maxValue={monthlyMax} selectedMonth={billingMonth} onSelectMonth={setBillingMonth} /> : <p className="py-14 text-center text-sm text-slate-400">업로드된 월별 비용 데이터가 없습니다.</p>}</section>
 
       <div className={`grid min-w-0 gap-5 ${isAllPeriod ? '' : 'xl:grid-cols-[minmax(460px,0.85fr)_minmax(0,1.35fr)]'}`}>
-        <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">{isAllPeriod ? '전체 기간' : billingMonth} 서비스별 사용 금액</h2></div><div className="min-w-0 p-5">{data && <ServiceDonut data={data} />}</div></section>
-        {!isAllPeriod && <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">일자별 사용금액 그래프</h2></div><div className="min-w-0 p-5">{data && <DailyStackedChart data={data} />}</div></section>}
+        <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">{isAllPeriod ? '전체 기간' : billingMonth} 서비스별 사용 금액</h2><p className="mt-1 text-[11px] text-slate-500">조각이나 범례를 누르면 해당 서비스를 고정해서 볼 수 있습니다.</p></div><div className="min-w-0 p-5">{data && <ServiceDonut data={data} selectedService={selectedService} onSelectService={setSelectedService} />}</div></section>
+        {!isAllPeriod && <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="font-bold text-slate-950">일자별 사용금액 그래프</h2><p className="mt-1 text-[11px] text-slate-500">막대 항목에 마우스를 올리거나 누르면 날짜별 서비스 금액을 확인할 수 있습니다.</p></div><div className="min-w-0 p-5">{data && <DailyStackedChart data={data} selectedService={selectedService} onSelectService={setSelectedService} />}</div></section>}
       </div>
 
       {!isAllPeriod && <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3"><div className="flex items-center gap-3"><h2 className="font-bold text-slate-950">서비스별 사용금액 리스트</h2><span className="rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-black text-white">KRW</span></div><p className="hidden text-xs text-slate-500 sm:block">{billingMonth} · {TARGET_ACCOUNT_NAME}</p></div><div className="overflow-x-auto p-4"><table className="min-w-max border-separate border-spacing-0 text-xs"><thead><tr className="text-slate-700"><th className="sticky left-0 z-10 min-w-44 border-y border-l border-slate-300 bg-slate-100 px-4 py-3 text-left">서비스</th><th className="min-w-24 border-y border-l border-slate-300 bg-slate-100 px-3 py-3 text-right">합계</th>{data?.daily_totals.map((day, index) => <th key={day.date} className={`min-w-20 border-y border-l border-slate-300 bg-slate-100 px-3 py-3 text-right ${index === data.daily_totals.length - 1 ? 'border-r' : ''}`}>{String(day.day).padStart(2, '0')}일</th>)}</tr></thead><tbody><tr className="font-black text-cyan-950"><td className="sticky left-0 border-b border-l border-cyan-200 bg-cyan-200 px-4 py-3">Total</td><td className="border-b border-l border-cyan-200 bg-cyan-200 px-3 py-3 text-right tabular-nums">{data?.usage_total_krw.toLocaleString()}</td>{data?.daily_totals.map((day, index) => <td key={day.date} className={`border-b border-l border-cyan-200 bg-cyan-200 px-3 py-3 text-right tabular-nums ${index === data.daily_totals.length - 1 ? 'border-r' : ''}`}>{day.total_krw.toLocaleString()}</td>)}</tr>{data?.service_daily_rows.map((row, rowIndex) => <tr key={row.service_name} className="hover:bg-blue-50"><td className={`sticky left-0 border-b border-l border-slate-200 px-4 py-3 font-semibold text-slate-700 ${rowIndex % 2 ? 'bg-slate-50' : 'bg-white'}`}>{row.service_name}</td><td className={`border-b border-l border-slate-200 px-3 py-3 text-right font-bold tabular-nums ${rowIndex % 2 ? 'bg-slate-50' : 'bg-white'}`}>{row.total_krw.toLocaleString()}</td>{data.daily_totals.map((day, index) => <td key={day.date} className={`border-b border-l border-slate-200 px-3 py-3 text-right tabular-nums text-slate-700 ${rowIndex % 2 ? 'bg-slate-50' : 'bg-white'} ${index === data.daily_totals.length - 1 ? 'border-r' : ''}`}>{(row.daily[String(day.day).padStart(2, '0')] ?? 0).toLocaleString()}</td>)}</tr>)}</tbody></table></div></section>}
