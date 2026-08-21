@@ -61,6 +61,9 @@ import { dateTimeMillis, formatKoreaDate, formatKoreaDateTime, koreaDateStamp } 
 type TabKey = 'dashboard' | 'improvements' | 'costs' | 'documents' | 'faqs' | 'prompts' | 'chats' | 'data' | 'db' | 'security' | 'settings' | 'permissions';
 type NavGroupKey = 'operations' | 'content' | 'tools';
 type LogViewKey = 'conversations' | 'system';
+type SettingsTabKey = 'encryption' | 'models' | 'channel-talk';
+type ModelSettingsTabKey = 'generation' | 'embedding';
+type LinkSettingsTabKey = 'channel-talk' | 'tracking';
 
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
 const CHAT_SESSION_PAGE_SIZE = 20;
@@ -108,6 +111,10 @@ interface StoredAdminView {
   chatStartDate: string;
   chatEndDate: string;
   chatSessionPage: number;
+  logView: LogViewKey;
+  settingsTab: SettingsTabKey;
+  modelSettingsTab: ModelSettingsTabKey;
+  linkSettingsTab: LinkSettingsTabKey;
 }
 
 function readStoredAdminView(): StoredAdminView {
@@ -116,6 +123,10 @@ function readStoredAdminView(): StoredAdminView {
     chatStartDate: '',
     chatEndDate: '',
     chatSessionPage: 1,
+    logView: 'conversations',
+    settingsTab: 'encryption',
+    modelSettingsTab: 'generation',
+    linkSettingsTab: 'channel-talk',
   };
   try {
     const raw = window.sessionStorage.getItem(ADMIN_VIEW_STORAGE_KEY);
@@ -129,6 +140,12 @@ function readStoredAdminView(): StoredAdminView {
       chatSessionPage: typeof stored.chatSessionPage === 'number' && stored.chatSessionPage >= 1
         ? Math.floor(stored.chatSessionPage)
         : 1,
+      logView: stored.logView === 'system' ? 'system' : 'conversations',
+      settingsTab: ['encryption', 'models', 'channel-talk'].includes(stored.settingsTab || '')
+        ? stored.settingsTab as SettingsTabKey
+        : 'encryption',
+      modelSettingsTab: stored.modelSettingsTab === 'embedding' ? 'embedding' : 'generation',
+      linkSettingsTab: stored.linkSettingsTab === 'tracking' ? 'tracking' : 'channel-talk',
     };
   } catch {
     return fallback;
@@ -378,7 +395,7 @@ export default function AdminPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatExporting, setChatExporting] = useState(false);
   const [chatReviewingId, setChatReviewingId] = useState<number | null>(null);
-  const [logView, setLogView] = useState<LogViewKey>('conversations');
+  const [logView, setLogView] = useState<LogViewKey>(initialAdminView.logView);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionPage, setSessionPage] = useState(initialAdminView.chatSessionPage);
   const [sessionTotal, setSessionTotal] = useState(0);
@@ -399,7 +416,7 @@ export default function AdminPage() {
   const [modelSaving, setModelSaving] = useState(false);
   const [embeddingModelSelection, setEmbeddingModelSelection] = useState('');
   const [embeddingModelSaving, setEmbeddingModelSaving] = useState(false);
-  const [modelSettingsTab, setModelSettingsTab] = useState<'generation' | 'embedding'>('generation');
+  const [modelSettingsTab, setModelSettingsTab] = useState<ModelSettingsTabKey>(initialAdminView.modelSettingsTab);
   const [modelLoadError, setModelLoadError] = useState('');
   const [modelSortKey, setModelSortKey] = useState<ModelSortKey>('recommend');
   const [modelSortDir, setModelSortDir] = useState<'asc' | 'desc'>('desc');
@@ -435,8 +452,8 @@ export default function AdminPage() {
   const [encryptionSettings, setEncryptionSettings] = useState<EncryptionSettings | null>(null);
   const [encryptionLoading, setEncryptionLoading] = useState(false);
   const [migrating, setMigrating] = useState<string | null>(null);
-  const [settingsTab, setSettingsTab] = useState<'encryption' | 'models' | 'channel-talk'>('encryption');
-  const [linkSettingsTab, setLinkSettingsTab] = useState<'channel-talk' | 'tracking'>('channel-talk');
+  const [settingsTab, setSettingsTab] = useState<SettingsTabKey>(initialAdminView.settingsTab);
+  const [linkSettingsTab, setLinkSettingsTab] = useState<LinkSettingsTabKey>(initialAdminView.linkSettingsTab);
 
   // 데이터 관리
   const [selectedTable, setSelectedTable] = useState<CustomTableDetail | null>(null);
@@ -669,8 +686,12 @@ export default function AdminPage() {
       chatStartDate,
       chatEndDate,
       chatSessionPage: sessionPage,
+      logView,
+      settingsTab,
+      modelSettingsTab,
+      linkSettingsTab,
     } satisfies StoredAdminView));
-  }, [activeTab, authenticated, chatEndDate, chatStartDate, sessionPage]);
+  }, [activeTab, authenticated, chatEndDate, chatStartDate, linkSettingsTab, logView, modelSettingsTab, sessionPage, settingsTab]);
 
   useEffect(() => {
     if (!authenticated || activeTab !== 'chats') return;
