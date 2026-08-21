@@ -64,6 +64,10 @@ type LogViewKey = 'conversations' | 'system';
 type SettingsTabKey = 'encryption' | 'models' | 'channel-talk';
 type ModelSettingsTabKey = 'generation' | 'embedding';
 type LinkSettingsTabKey = 'channel-talk' | 'tracking';
+type EditableTrackingLink = LinkTrackingItem & {
+  editorKey: string;
+  persistedIndex: number | null;
+};
 
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
 const CHAT_SESSION_PAGE_SIZE = 20;
@@ -74,6 +78,12 @@ const DEFAULT_TRACKING_LINKS: LinkTrackingItem[] = [
   { label: '머신러닝 엔지니어', url: 'https://encorecampus.ai/ml?utm_source=chatbot&utm_medium=referral&utm_campaign=ml' },
   { label: 'MLOps 엔지니어', url: 'https://encorecampus.ai/mlops?utm_source=chatbot&utm_medium=referral&utm_campaign=mlops' },
 ];
+let trackingLinkEditorSequence = 0;
+
+function createEditableTrackingLink(item: LinkTrackingItem, persistedIndex: number | null): EditableTrackingLink {
+  trackingLinkEditorSequence += 1;
+  return { ...item, editorKey: `tracking-link-${trackingLinkEditorSequence}`, persistedIndex };
+}
 
 function analyticsQuery(filters: OperationsPeriodFilters): { period?: OperationsPeriodMode; anchor?: string } {
   if (filters.day) return { period: 'day', anchor: filters.day };
@@ -427,9 +437,12 @@ export default function AdminPage() {
   const [channelTalkLoading, setChannelTalkLoading] = useState(false);
   const [channelTalkSaving, setChannelTalkSaving] = useState(false);
   const [linkTrackingSettings, setLinkTrackingSettings] = useState<LinkTrackingSettings | null>(null);
-  const [trackingLinks, setTrackingLinks] = useState<LinkTrackingItem[]>(DEFAULT_TRACKING_LINKS.map((item) => ({ ...item })));
+  const [trackingLinks, setTrackingLinks] = useState<EditableTrackingLink[]>(
+    DEFAULT_TRACKING_LINKS.map((item, index) => createEditableTrackingLink(item, index)),
+  );
   const [linkTrackingLoading, setLinkTrackingLoading] = useState(false);
-  const [linkTrackingSaving, setLinkTrackingSaving] = useState(false);
+  const [linkTrackingSavingKey, setLinkTrackingSavingKey] = useState<string | null>(null);
+  const linkTrackingSaving = linkTrackingSavingKey !== null;
 
   // 권한 관리
   const [permissionsData, setPermissionsData] = useState<PermissionsData | null>(null);
@@ -645,11 +658,77 @@ export default function AdminPage() {
         throw new Error('Invalid link tracking settings response');
       }
       setLinkTrackingSettings(data);
-      setTrackingLinks(data.links.map((item) => ({ ...item })));
+      setTrackingLinks(data.links.map((item, index) => createEditableTrackingLink(item, index)));
     } catch {
       setNotice('과정 링크 추적 설정을 불러오지 못했습니다.');
     } finally {
       setLinkTrackingLoading(false);
+    }
+  };
+
+  const appliedTrackingLinks = linkTrackingSettings?.links || DEFAULT_TRACKING_LINKS;
+  const hasTrackingLinkChanges = trackingLinks.some((item) => {
+    if (item.persistedIndex === null) return true;
+    const appliedItem = appliedTrackingLinks[item.persistedIndex];
+    return !appliedItem || item.label !== appliedItem.label || item.url !== appliedItem.url;
+  });
+
+  const saveTrackingLink = async (editorKey: string) => {
+    const item = trackingLinks.find((candidate) => candidate.editorKey === editorKey);
+    if (!item || !item.label.trim() || !item.url.trim()) return;
+
+    setLinkTrackingSavingKey(editorKey);
+    try {
+      const nextLinks = appliedTrackingLinks.map((candidate) => ({ ...candidate }));
+      const persistedIndex = item.persistedIndex ?? nextLinks.length;
+      const payload = { label: item.label.trim(), url: item.url.trim() };
+      if (item.persistedIndex === null) nextLinks.push(payload);
+      else nextLinks[item.persistedIndex] = payload;
+
+      const result = await adminApi.setLinkTrackingSettings(nextLinks);
+      setLinkTrackingSettings(result);
+      setTrackingLinks((current) => current.map((candidate) => (
+        candidate.editorKey === editorKey
+          ? { ...result.links[persistedIndex], editorKey, persistedIndex }
+          : candidate
+      )));
+      setNotice(result.message);
+    } catch {
+      setNotice('해당 과정의 추적 링크 저장에 실패했습니다. 입력값을 확인해 주세요.');
+    } finally {
+      setLinkTrackingSavingKey(null);
+    }
+  };
+
+  const deleteTrackingLink = async (editorKey: string) => {
+    const item = trackingLinks.find((candidate) => candidate.editorKey === editorKey);
+    if (!item) return;
+    if (item.persistedIndex === null) {
+      setTrackingLinks((current) => current.filter((candidate) => candidate.editorKey !== editorKey));
+      return;
+    }
+    if (!window.confirm(`'${item.label}' 추적 링크를 운영 설정에서 삭제할까요?`)) return;
+
+    const deletedIndex = item.persistedIndex;
+    setLinkTrackingSavingKey(editorKey);
+    try {
+      const result = await adminApi.setLinkTrackingSettings(
+        appliedTrackingLinks.filter((_, index) => index !== deletedIndex),
+      );
+      setLinkTrackingSettings(result);
+      setTrackingLinks((current) => current
+        .filter((candidate) => candidate.editorKey !== editorKey)
+        .map((candidate) => ({
+          ...candidate,
+          persistedIndex: candidate.persistedIndex !== null && candidate.persistedIndex > deletedIndex
+            ? candidate.persistedIndex - 1
+            : candidate.persistedIndex,
+        })));
+      setNotice(`'${item.label}' 추적 링크를 삭제하고 운영에 적용했습니다.`);
+    } catch {
+      setNotice('해당 과정의 추적 링크 삭제에 실패했습니다.');
+    } finally {
+      setLinkTrackingSavingKey(null);
     }
   };
 
@@ -3430,7 +3509,7 @@ export default function AdminPage() {
                   <button
                     type="button"
                     onClick={() => void loadLinkTrackingSettings()}
-                    disabled={linkTrackingLoading}
+                    disabled={linkTrackingLoading || linkTrackingSaving}
                     className="min-h-10 shrink-0 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600 disabled:opacity-50"
                   >
                     새로고침
@@ -3464,18 +3543,21 @@ export default function AdminPage() {
                 <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5">
                   <div className="text-sm font-semibold text-slate-800">교체할 추적 링크</div>
                   <p className="mt-1 break-keep text-xs leading-5 text-slate-500">과정명과 전달받은 전체 URL을 수정하거나 과정을 추가·삭제하세요. 저장하기 전까지 현재 운영 링크는 바뀌지 않습니다.</p>
+                  <p className={`mt-2 text-xs font-medium ${hasTrackingLinkChanges ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    {hasTrackingLinkChanges ? '변경한 항목 안의 저장·적용 버튼을 눌러 주세요. 다른 항목의 작성 중인 내용은 함께 저장되지 않습니다.' : '모든 입력값이 운영 링크에 저장되어 있습니다.'}
+                  </p>
                   <div className="mt-4 space-y-4">
                     {trackingLinks.map((item, index) => (
-                      <div key={index} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div key={item.editorKey} className="rounded-xl border border-slate-200 bg-white p-4">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <label htmlFor={`tracking-label-${index}`} className="text-sm font-semibold text-slate-700">과정 이름</label>
                           <button
                             type="button"
-                            onClick={() => setTrackingLinks((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                            onClick={() => void deleteTrackingLink(item.editorKey)}
                             disabled={linkTrackingSaving}
                             className="text-xs font-medium text-rose-600 disabled:opacity-40"
                           >
-                            삭제
+                            {item.persistedIndex === null ? '작성 취소' : '삭제·적용'}
                           </button>
                         </div>
                         <input
@@ -3497,12 +3579,46 @@ export default function AdminPage() {
                           disabled={linkTrackingLoading || linkTrackingSaving}
                           className="mt-2 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 font-mono text-sm text-slate-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100 disabled:opacity-60"
                         />
+                        <div className="mt-4 flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            disabled={
+                              linkTrackingLoading
+                              || linkTrackingSaving
+                              || !item.label.trim()
+                              || !item.url.trim()
+                              || (
+                                item.persistedIndex !== null
+                                && item.label === appliedTrackingLinks[item.persistedIndex]?.label
+                                && item.url === appliedTrackingLinks[item.persistedIndex]?.url
+                              )
+                            }
+                            onClick={() => void saveTrackingLink(item.editorKey)}
+                            className="min-h-10 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+                          >
+                            {linkTrackingSavingKey === item.editorKey
+                              ? '저장 중...'
+                              : item.persistedIndex === null
+                                ? '이 항목 추가·적용'
+                                : '이 항목 저장·적용'}
+                          </button>
+                          <span className="text-xs text-slate-500">
+                            {item.persistedIndex === null
+                              ? '아직 운영에 등록되지 않은 항목입니다.'
+                              : item.label === appliedTrackingLinks[item.persistedIndex]?.label && item.url === appliedTrackingLinks[item.persistedIndex]?.url
+                                ? '운영에 적용된 상태입니다.'
+                                : '저장하지 않은 변경사항이 있습니다.'}
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
                   <button
                     type="button"
-                    onClick={() => setTrackingLinks((current) => [...current, { label: '', url: '' }])}
+                    onClick={() => setTrackingLinks((current) => [
+                      ...current,
+                      createEditableTrackingLink({ label: '', url: '' }, null),
+                    ])}
                     disabled={linkTrackingSaving || trackingLinks.length >= 100}
                     className="mt-4 min-h-10 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-40"
                   >
@@ -3511,26 +3627,6 @@ export default function AdminPage() {
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    disabled={linkTrackingSaving || linkTrackingLoading || trackingLinks.some((item) => !item.label.trim() || !item.url.trim())}
-                    onClick={async () => {
-                      setLinkTrackingSaving(true);
-                      try {
-                        const result = await adminApi.setLinkTrackingSettings(trackingLinks);
-                        setLinkTrackingSettings(result);
-                        setTrackingLinks(result.links.map((item) => ({ ...item })));
-                        setNotice(result.message);
-                      } catch {
-                        setNotice('과정 링크 추적 설정 저장에 실패했습니다. 입력값을 확인해 주세요.');
-                      } finally {
-                        setLinkTrackingSaving(false);
-                      }
-                    }}
-                    className="min-h-11 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-                  >
-                    {linkTrackingSaving ? '저장 중...' : `추적 링크 ${trackingLinks.length}개 저장·적용`}
-                  </button>
                   {linkTrackingSettings && (
                     <span className="text-xs text-slate-500">
                       현재 {linkTrackingSettings.source === 'database' ? '관리자 운영 설정' : '기본 설정'} 사용 중
