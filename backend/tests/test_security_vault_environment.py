@@ -27,7 +27,13 @@ class SecurityVaultEnvironmentTest(unittest.TestCase):
         self.env_path.write_text("UNRELATED_VALUE='keep-me'\nAWS_REGION='ap-northeast-2'\n", encoding="utf-8")
         self.original_environment = {
             key: os.environ.get(key)
-            for key in ("AWS_REGION", "CUSTOM_SERVICE_TOKEN", "JWT_SECRET")
+            for key in (
+                "AWS_REGION",
+                "CUSTOM_SERVICE_TOKEN",
+                "ENCRYPTION_KEY",
+                "JWT_SECRET",
+                "ADMIN_PASSWORD",
+            )
         }
         os.environ["AWS_REGION"] = "ap-northeast-2"
         self.path_patch = patch.object(admin, "ENV_PATH", self.env_path)
@@ -128,6 +134,22 @@ class SecurityVaultEnvironmentTest(unittest.TestCase):
             )
 
         self.assertEqual(400, context.exception.status_code)
+
+    def test_protected_environment_keys_are_visible_as_sensitive_built_ins(self):
+        values = {
+            "ENCRYPTION_KEY": "encryption-value",
+            "JWT_SECRET": "jwt-value",
+            "ADMIN_PASSWORD": "password-value",
+        }
+        os.environ.update(values)
+
+        items = {item["key"]: item for item in admin._vault_environment_items(self.db)}
+
+        for key, value in values.items():
+            self.assertEqual(value, items[key]["value"])
+            self.assertTrue(items[key]["configured"])
+            self.assertTrue(items[key]["sensitive"])
+            self.assertFalse(items[key]["custom"])
 
 
 if __name__ == "__main__":

@@ -278,6 +278,9 @@ VAULT_DEFAULTS = {
 }
 VAULT_ENV_FIELDS = (
     ("OPENAI_API_KEY", "OpenAI API 키", True),
+    ("ENCRYPTION_KEY", "데이터 암호화 키", True),
+    ("JWT_SECRET", "관리자 세션 서명 키", True),
+    ("ADMIN_PASSWORD", "관리자 비밀번호", True),
     ("DATABASE_URL", "데이터베이스 연결 주소", True),
     ("AWS_ACCESS_KEY_ID", "AWS 액세스 키 ID", True),
     ("AWS_SECRET_ACCESS_KEY", "AWS 시크릿 액세스 키", True),

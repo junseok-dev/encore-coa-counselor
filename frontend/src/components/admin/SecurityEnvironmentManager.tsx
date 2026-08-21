@@ -183,6 +183,7 @@ export default function SecurityEnvironmentManager({
         {items.map((item) => {
           const visible = revealed.has(item.key);
           const busy = savingKey === item.key || deletingKey === item.key;
+          const protectedItem = protectedKeys.includes(item.key);
           return (
             <article key={item.key} className="min-w-0 rounded-2xl border border-slate-200 p-4">
               <div className="flex items-start justify-between gap-3">
@@ -196,6 +197,7 @@ export default function SecurityEnvironmentManager({
                 </div>
                 <div className="flex shrink-0 gap-1.5">
                   {item.custom && <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-blue-700">사용자 등록</span>}
+                  {protectedItem && <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-700">읽기 전용</span>}
                   <span className={`rounded-full px-2 py-1 text-[10px] font-black ${item.configured ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{item.configured ? '설정됨' : '미설정'}</span>
                 </div>
               </div>
@@ -207,6 +209,7 @@ export default function SecurityEnvironmentManager({
                     <input
                       type={item.sensitive && !visible ? 'password' : 'text'}
                       value={item.value}
+                      readOnly={protectedItem}
                       onChange={(event) => updateItem(item.key, { value: event.target.value, configured: Boolean(event.target.value) })}
                       placeholder="값을 입력해 주세요"
                       className={`${INPUT_CLASS} pr-10 font-mono`}
@@ -228,12 +231,14 @@ export default function SecurityEnvironmentManager({
                     민감한 값
                   </label>
                 )}
-                <button type="button" onClick={() => void saveItem(item)} disabled={busy || !item.value || !item.label.trim()} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:opacity-40">
-                  <Save className="h-3.5 w-3.5" />{savingKey === item.key ? '저장 중...' : '저장'}
-                </button>
-                <button type="button" onClick={() => void deleteItem(item)} disabled={busy || (!item.custom && !item.configured)} className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 disabled:opacity-30">
-                  <Trash2 className="h-3.5 w-3.5" />{deletingKey === item.key ? '삭제 중...' : '삭제'}
-                </button>
+                {!protectedItem && <>
+                  <button type="button" onClick={() => void saveItem(item)} disabled={busy || !item.value || !item.label.trim()} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:opacity-40">
+                    <Save className="h-3.5 w-3.5" />{savingKey === item.key ? '저장 중...' : '저장'}
+                  </button>
+                  <button type="button" onClick={() => void deleteItem(item)} disabled={busy || (!item.custom && !item.configured)} className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 disabled:opacity-30">
+                    <Trash2 className="h-3.5 w-3.5" />{deletingKey === item.key ? '삭제 중...' : '삭제'}
+                  </button>
+                </>}
               </div>
             </article>
           );
@@ -241,7 +246,7 @@ export default function SecurityEnvironmentManager({
       </div>
 
       <div className="border-t border-slate-100 bg-slate-50 px-5 py-4 text-xs leading-5 text-slate-500 sm:px-6">
-        <strong className="text-slate-700">화면에서 관리할 수 없는 보호 키:</strong> {protectedKeys.join(', ')}
+        <strong className="text-slate-700">읽기 전용 보호 키:</strong> {protectedKeys.join(', ')} · 값 변경은 GitHub Secrets에서 진행합니다.
       </div>
     </section>
   );
