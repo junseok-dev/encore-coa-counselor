@@ -24,7 +24,13 @@ class SecurityVaultEnvironmentTest(unittest.TestCase):
         self.db = sessionmaker(bind=self.engine)()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.env_path = Path(self.temp_dir.name) / ".env"
-        self.env_path.write_text("UNRELATED_VALUE='keep-me'\nAWS_REGION='ap-northeast-2'\n", encoding="utf-8")
+        self.env_path.write_text(
+            "UNRELATED_VALUE='keep-me'\n"
+            "AWS_REGION='ap-northeast-2'\n"
+            "GOOGLE_CLIENT_ID='runtime-google-client'\n"
+            "ADMIN_EMAIL='runtime-owner@example.com'\n",
+            encoding="utf-8",
+        )
         self.original_environment = {
             key: os.environ.get(key)
             for key in (
@@ -33,9 +39,13 @@ class SecurityVaultEnvironmentTest(unittest.TestCase):
                 "ENCRYPTION_KEY",
                 "JWT_SECRET",
                 "ADMIN_PASSWORD",
+                "GOOGLE_CLIENT_ID",
+                "ADMIN_EMAIL",
             )
         }
         os.environ["AWS_REGION"] = "ap-northeast-2"
+        os.environ["GOOGLE_CLIENT_ID"] = "runtime-google-client"
+        os.environ["ADMIN_EMAIL"] = "runtime-owner@example.com"
         self.path_patch = patch.object(admin, "ENV_PATH", self.env_path)
         self.token_patch = patch.object(admin, "_require_vault_token")
         self.path_patch.start()
@@ -135,11 +145,10 @@ class SecurityVaultEnvironmentTest(unittest.TestCase):
 
         self.assertEqual(400, context.exception.status_code)
 
-    def test_protected_environment_keys_are_visible_as_sensitive_built_ins(self):
+    def test_protected_environment_keys_show_their_runtime_values(self):
         values = {
             "ENCRYPTION_KEY": "encryption-value",
             "JWT_SECRET": "jwt-value",
-            "ADMIN_PASSWORD": "password-value",
         }
         os.environ.update(values)
 
@@ -150,6 +159,46 @@ class SecurityVaultEnvironmentTest(unittest.TestCase):
             self.assertTrue(items[key]["configured"])
             self.assertTrue(items[key]["sensitive"])
             self.assertFalse(items[key]["custom"])
+            self.assertFalse(items[key]["handover_only"])
+
+        self.assertNotIn("ADMIN_PASSWORD", items)
+        status = admin.get_security_vault_status(db=self.db, current_user="owner@example.com")
+        self.assertEqual(["ENCRYPTION_KEY", "JWT_SECRET"], status["protected_keys"])
+
+    def test_handover_values_default_to_blank_without_changing_runtime_environment(self):
+        items = {item["key"]: item for item in admin._vault_environment_items(self.db)}
+
+        for key in ("GOOGLE_CLIENT_ID", "ADMIN_EMAIL"):
+            self.assertEqual("", items[key]["value"])
+            self.assertFalse(items[key]["configured"])
+            self.assertTrue(items[key]["handover_only"])
+
+        updated = admin.update_security_vault_environment(
+            "ADMIN_EMAIL",
+            admin.VaultEnvironmentPayload(
+                label="무시되는 이름",
+                value="handover-owner@example.com",
+                sensitive=False,
+            ),
+            x_vault_token="token",
+            db=self.db,
+            current_user="owner@example.com",
+        )
+        item = next(row for row in updated["environment"] if row["key"] == "ADMIN_EMAIL")
+        self.assertEqual("handover-owner@example.com", item["value"])
+        self.assertIn("ADMIN_EMAIL='runtime-owner@example.com'", self.env_path.read_text(encoding="utf-8"))
+        self.assertEqual("runtime-owner@example.com", os.environ["ADMIN_EMAIL"])
+
+        deleted = admin.delete_security_vault_environment(
+            "ADMIN_EMAIL",
+            x_vault_token="token",
+            db=self.db,
+            current_user="owner@example.com",
+        )
+        item = next(row for row in deleted["environment"] if row["key"] == "ADMIN_EMAIL")
+        self.assertEqual("", item["value"])
+        self.assertIn("ADMIN_EMAIL='runtime-owner@example.com'", self.env_path.read_text(encoding="utf-8"))
+        self.assertEqual("runtime-owner@example.com", os.environ["ADMIN_EMAIL"])
 
 
 if __name__ == "__main__":

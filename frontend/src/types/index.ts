@@ -46,6 +46,7 @@ export interface SecurityVaultEnvironmentItem {
   configured: boolean;
   sensitive: boolean;
   custom: boolean;
+  handover_only: boolean;
 }
 
 export interface SecurityVaultData {

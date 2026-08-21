@@ -261,6 +261,7 @@ class VaultEnvironmentCreatePayload(VaultEnvironmentPayload):
 
 VAULT_PASSWORD_SETTING_KEY = "admin_security_vault_password_hash"
 VAULT_CUSTOM_ENV_SETTING_KEY = "admin_security_vault_custom_env_fields"
+VAULT_HANDOVER_ENV_SETTING_KEY = "admin_security_vault_handover_environment_values"
 VAULT_TOKEN_MINUTES = 30
 VAULT_DEFAULTS = {
     "nxavis": {
@@ -280,7 +281,6 @@ VAULT_ENV_FIELDS = (
     ("OPENAI_API_KEY", "OpenAI API 키", True),
     ("ENCRYPTION_KEY", "데이터 암호화 키", True),
     ("JWT_SECRET", "관리자 세션 서명 키", True),
-    ("ADMIN_PASSWORD", "관리자 비밀번호", True),
     ("DATABASE_URL", "데이터베이스 연결 주소", True),
     ("AWS_ACCESS_KEY_ID", "AWS 액세스 키 ID", True),
     ("AWS_SECRET_ACCESS_KEY", "AWS 시크릿 액세스 키", True),
@@ -294,6 +294,10 @@ VAULT_ENV_FIELDS = (
     ("ADMIN_EMAIL", "최상위 관리자 이메일", False),
 )
 VAULT_PROTECTED_ENV_KEYS = {"ENCRYPTION_KEY", "JWT_SECRET", "ADMIN_PASSWORD"}
+VAULT_HANDOVER_ENV_KEYS = {
+    "GOOGLE_CLIENT_ID",
+    "ADMIN_EMAIL",
+}
 VAULT_RESERVED_ENV_KEYS = {
     "COMSPEC",
     "HOME",
@@ -455,6 +459,34 @@ def _save_vault_custom_environment_fields(db: Session, fields: dict[str, dict]) 
     setting.value = json.dumps(payload, ensure_ascii=False)
 
 
+def _vault_handover_environment_values(db: Session) -> dict[str, str]:
+    setting = db.query(AppSetting).filter(AppSetting.key == VAULT_HANDOVER_ENV_SETTING_KEY).first()
+    if setting is None or not setting.value:
+        return {}
+    try:
+        raw_values = json.loads(setting.value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw_values, dict):
+        return {}
+    return {
+        key: str(raw_values.get(key) or "")
+        for key in VAULT_HANDOVER_ENV_KEYS
+        if key in raw_values
+    }
+
+
+def _save_vault_handover_environment_values(db: Session, values: dict[str, str]) -> None:
+    setting = db.query(AppSetting).filter(AppSetting.key == VAULT_HANDOVER_ENV_SETTING_KEY).first()
+    if setting is None:
+        setting = AppSetting(key=VAULT_HANDOVER_ENV_SETTING_KEY)
+        db.add(setting)
+    setting.value = json.dumps(
+        {key: str(values.get(key) or "") for key in sorted(VAULT_HANDOVER_ENV_KEYS)},
+        ensure_ascii=False,
+    )
+
+
 def _validate_vault_environment_key(value: str) -> str:
     key = value.strip().upper()
     if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,99}", key):
@@ -504,11 +536,15 @@ def _vault_environment_items(db: Session) -> list[dict]:
         for key, label, sensitive in VAULT_ENV_FIELDS
     }
     custom_fields = _vault_custom_environment_fields(db)
+    handover_values = _vault_handover_environment_values(db)
     items = []
     for key, metadata in [*built_in_fields.items(), *custom_fields.items()]:
-        value = os.getenv(key)
-        if value is None:
-            value = file_values.get(key)
+        if key in VAULT_HANDOVER_ENV_KEYS:
+            value = handover_values.get(key, "")
+        else:
+            value = os.getenv(key)
+            if value is None:
+                value = file_values.get(key)
         text_value = str(value or "")
         items.append({
             "key": key,
@@ -517,6 +553,7 @@ def _vault_environment_items(db: Session) -> list[dict]:
             "configured": bool(text_value),
             "sensitive": bool(metadata["sensitive"]),
             "custom": key in custom_fields,
+            "handover_only": key in VAULT_HANDOVER_ENV_KEYS,
         })
     return items
 
@@ -4505,7 +4542,9 @@ def get_security_vault_status(
         "configured": configured,
         "can_setup": not configured and current_user == get_settings().admin_email,
         "unlock_minutes": VAULT_TOKEN_MINUTES,
-        "protected_keys": sorted(VAULT_PROTECTED_ENV_KEYS),
+        "protected_keys": sorted(
+            VAULT_PROTECTED_ENV_KEYS & {key for key, _, _ in VAULT_ENV_FIELDS}
+        ),
     }
 
 
@@ -4716,18 +4755,23 @@ def update_security_vault_environment(
     else:
         label = built_in_fields[key]["label"]
         sensitive = bool(built_in_fields[key]["sensitive"])
-    _write_vault_environment_value(key, value)
+    if key in VAULT_HANDOVER_ENV_KEYS:
+        handover_values = _vault_handover_environment_values(db)
+        handover_values[key] = value
+        _save_vault_handover_environment_values(db, handover_values)
+    else:
+        _write_vault_environment_value(key, value)
     db.commit()
     create_audit_log(
         db,
         "security_vault_environment_updated",
         "security_vault",
         key,
-        f"label={label}, sensitive={str(sensitive).lower()}",
+        f"label={label}, sensitive={str(sensitive).lower()}, handover_only={str(key in VAULT_HANDOVER_ENV_KEYS).lower()}",
         actor=current_user,
     )
     return {
-        "message": f"{label} 환경설정을 저장했습니다.",
+        "message": f"{label} {'인계 정보를' if key in VAULT_HANDOVER_ENV_KEYS else '환경설정을'} 저장했습니다.",
         "environment": _vault_environment_items(db),
     }
 
@@ -4747,7 +4791,12 @@ def delete_security_vault_environment(
         raise HTTPException(status_code=404, detail="등록된 환경설정을 찾을 수 없습니다.")
 
     label = custom_fields.get(key, built_in_fields.get(key, {})).get("label", key)
-    _delete_vault_environment_value(key)
+    if key in VAULT_HANDOVER_ENV_KEYS:
+        handover_values = _vault_handover_environment_values(db)
+        handover_values[key] = ""
+        _save_vault_handover_environment_values(db, handover_values)
+    else:
+        _delete_vault_environment_value(key)
     if key in custom_fields:
         del custom_fields[key]
         _save_vault_custom_environment_fields(db, custom_fields)
@@ -4757,11 +4806,11 @@ def delete_security_vault_environment(
         "security_vault_environment_deleted",
         "security_vault",
         key,
-        f"label={label}",
+        f"label={label}, handover_only={str(key in VAULT_HANDOVER_ENV_KEYS).lower()}",
         actor=current_user,
     )
     return {
-        "message": f"{label} 환경설정을 삭제했습니다.",
+        "message": f"{label} {'인계 정보를' if key in VAULT_HANDOVER_ENV_KEYS else '환경설정을'} 삭제했습니다.",
         "environment": _vault_environment_items(db),
     }
 

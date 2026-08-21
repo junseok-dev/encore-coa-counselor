@@ -87,9 +87,11 @@ export default function SecurityEnvironmentManager({
   };
 
   const deleteItem = async (item: SecurityVaultEnvironmentItem) => {
-    const description = item.custom
-      ? '항목과 저장된 값이 모두 삭제됩니다.'
-      : '저장된 값이 삭제되고 이 항목은 미설정 상태로 남습니다.';
+    const description = item.handover_only
+      ? '관리자 페이지의 인계 정보만 비워지며 실제 운영 환경변수는 변경되지 않습니다.'
+      : item.custom
+        ? '항목과 저장된 값이 모두 삭제됩니다.'
+        : '저장된 값이 삭제되고 이 항목은 미설정 상태로 남습니다.';
     if (!window.confirm(`${item.label} 환경설정을 삭제할까요?\n${description}`)) return;
     setDeletingKey(item.key);
     try {
@@ -133,8 +135,8 @@ export default function SecurityEnvironmentManager({
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col gap-4 border-b border-slate-200 bg-slate-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div>
-          <h3 className="font-black text-slate-950">운영 환경설정</h3>
-          <p className="mt-1 text-xs leading-5 text-slate-500">값을 변경하거나 삭제하고 새로운 환경변수를 등록할 수 있습니다. 일부 설정은 서비스 재시작 후 완전히 반영됩니다.</p>
+          <h3 className="font-black text-slate-950">운영 환경설정 및 인계 정보</h3>
+          <p className="mt-1 text-xs leading-5 text-slate-500">운영 환경설정은 서버에 반영됩니다. 인계 정보 항목은 실제 환경변수와 분리되어 이 화면에만 저장됩니다.</p>
         </div>
         <button
           type="button"
@@ -197,6 +199,7 @@ export default function SecurityEnvironmentManager({
                 </div>
                 <div className="flex shrink-0 gap-1.5">
                   {item.custom && <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-blue-700">사용자 등록</span>}
+                  {item.handover_only && <span className="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-700">인계 정보</span>}
                   {protectedItem && <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-700">읽기 전용</span>}
                   <span className={`rounded-full px-2 py-1 text-[10px] font-black ${item.configured ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{item.configured ? '설정됨' : '미설정'}</span>
                 </div>
