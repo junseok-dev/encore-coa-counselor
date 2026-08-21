@@ -21,6 +21,18 @@ interface NewEnvironmentItem {
 
 const EMPTY_NEW_ITEM: NewEnvironmentItem = { key: '', label: '', value: '', sensitive: true };
 const INPUT_CLASS = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
+const GITHUB_SECRET_NAMES: Record<string, string> = {
+  OPENAI_API_KEY: 'OPENAI_API_KEY',
+  ENCRYPTION_KEY: 'ENCRYPTION_KEY',
+  JWT_SECRET: 'JWT_SECRET',
+  DATABASE_URL: 'DATABASE_URL',
+  AWS_ACCESS_KEY_ID: 'AWS_ACCESS_KEY_ID',
+  AWS_SECRET_ACCESS_KEY: 'AWS_SECRET_ACCESS_KEY',
+  AWS_S3_BUCKET: 'AWS_S3_BUCKET',
+  GOOGLE_CLIENT_ID: 'VITE_GOOGLE_CLIENT_ID',
+  CHANNEL_TALK_URL: 'CHANNEL_TALK_URL',
+  ADMIN_EMAIL: 'ADMIN_EMAIL',
+};
 
 function errorDetail(error: unknown, fallback: string) {
   return (error as { response?: { data?: { detail?: string } } }).response?.data?.detail || fallback;
@@ -186,6 +198,7 @@ export default function SecurityEnvironmentManager({
           const visible = revealed.has(item.key);
           const busy = savingKey === item.key || deletingKey === item.key;
           const protectedItem = protectedKeys.includes(item.key);
+          const githubSecretName = GITHUB_SECRET_NAMES[item.key];
           return (
             <article key={item.key} className="min-w-0 rounded-2xl border border-slate-200 p-4">
               <div className="flex items-start justify-between gap-3">
@@ -196,10 +209,16 @@ export default function SecurityEnvironmentManager({
                     <h4 className="px-2 py-1 font-bold text-slate-900">{item.label}</h4>
                   )}
                   <p className="mt-1 truncate px-2 font-mono text-[11px] text-slate-400">{item.key}</p>
+                  {githubSecretName && (
+                    <p className="mt-1 px-2 text-[11px] font-semibold text-indigo-700">
+                      GitHub Secret: <code className="font-mono">{githubSecretName}</code>
+                    </p>
+                  )}
                 </div>
-                <div className="flex shrink-0 gap-1.5">
+                <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
                   {item.custom && <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-blue-700">사용자 등록</span>}
                   {item.handover_only && <span className="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-700">인계 정보</span>}
+                  {githubSecretName && <span className="rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-black text-indigo-700">GitHub Secret 필요</span>}
                   {protectedItem && <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-700">읽기 전용</span>}
                   <span className={`rounded-full px-2 py-1 text-[10px] font-black ${item.configured ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{item.configured ? '설정됨' : '미설정'}</span>
                 </div>
@@ -249,6 +268,7 @@ export default function SecurityEnvironmentManager({
       </div>
 
       <div className="border-t border-slate-100 bg-slate-50 px-5 py-4 text-xs leading-5 text-slate-500 sm:px-6">
+        <strong className="text-slate-700">GitHub Secret 필요</strong> 표시가 있는 값은 새 회사 저장소의 <strong>Settings → Secrets and variables → Actions</strong>에 등록합니다.<br />
         <strong className="text-slate-700">읽기 전용 보호 키:</strong> {protectedKeys.join(', ')} · 값 변경은 GitHub Secrets에서 진행합니다.
       </div>
     </section>
