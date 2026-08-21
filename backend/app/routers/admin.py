@@ -58,6 +58,11 @@ from app.services.model_settings import (
     set_active_embedding_model,
     set_active_model,
 )
+from app.services.channel_talk_settings import (
+    CHANNEL_TALK_URL_KEY,
+    get_channel_talk_url,
+    set_channel_talk_url,
+)
 from app.services.admin_ai_service import analyze_improvement_case
 from app.services.prompt_service import (
     PROMPT_DEFAULTS,
@@ -145,6 +150,10 @@ class ModelChangeRequest(BaseModel):
 
 class EmbeddingModelChangeRequest(BaseModel):
     model_name: str
+
+
+class ChannelTalkUrlChangeRequest(BaseModel):
+    url: str = Field(default="", max_length=2000)
 
 
 class OpenAiMonthlyCostPayload(BaseModel):
@@ -4529,6 +4538,42 @@ def change_embedding_model(
             "문서 검토에서 FAISS 변경 확인 후 재구성해야 검색에 적용됩니다."
         ),
         "model_name": applied_model,
+    }
+
+
+@router.get("/settings/channel-talk")
+def get_channel_talk_settings(db: Session = Depends(get_db), _: str = Depends(verify_admin)):
+    row = db.get(AppSetting, CHANNEL_TALK_URL_KEY)
+    return {
+        "url": get_channel_talk_url(db),
+        "source": "database" if row is not None else "environment",
+        "environment_fallback_configured": bool((get_settings().channel_talk_url or "").strip()),
+    }
+
+
+@router.put("/settings/channel-talk")
+def change_channel_talk_settings(
+    body: ChannelTalkUrlChangeRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    try:
+        applied_url = set_channel_talk_url(db, body.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    create_audit_log(
+        db,
+        "channel_talk_url_changed",
+        "system",
+        CHANNEL_TALK_URL_KEY,
+        "상담 연결 링크 활성화" if applied_url else "상담 연결 링크 비활성화",
+        actor=current_user,
+    )
+    return {
+        "message": "상담 연결 링크를 저장했습니다. 다음 상담 연결부터 적용됩니다." if applied_url else "상담 연결 링크를 비활성화했습니다.",
+        "url": applied_url,
+        "source": "database",
+        "environment_fallback_configured": bool((get_settings().channel_talk_url or "").strip()),
     }
 
 

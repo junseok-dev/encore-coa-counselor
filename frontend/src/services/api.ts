@@ -8,6 +8,7 @@ import {
   AdminSessionDetail,
   ChatLog,
   ChatResponse,
+  ChannelTalkSettings,
   CostManagementData,
   CustomColumnDef,
   CustomRowData,
@@ -853,6 +854,16 @@ export const adminApi = {
 
   setEmbeddingModel: async (model_name: string): Promise<{ message: string; model_name: string }> => {
     const response = await adminApiClient.put('/admin/settings/embedding-model', { model_name });
+    return response.data;
+  },
+
+  getChannelTalkSettings: async (): Promise<ChannelTalkSettings> => {
+    const response = await adminApiClient.get<ChannelTalkSettings>('/admin/settings/channel-talk');
+    return response.data;
+  },
+
+  setChannelTalkUrl: async (url: string): Promise<ChannelTalkSettings & { message: string }> => {
+    const response = await adminApiClient.put('/admin/settings/channel-talk', { url });
     return response.data;
   },
 

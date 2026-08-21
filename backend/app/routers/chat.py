@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
 from app.db.crud import get_or_create_session, save_message
 from app.db.database import get_db
 from app.db.models import CancelRequest, ChatLog, ChatSession, CourseLinkEvent, HandoffClickEvent, InternalAnalyticsClient
@@ -29,6 +28,7 @@ from app.services.openai_service import restyle_faq_answer, stream_ai_response
 from app.services.router_service import route
 from app.services.question_category_service import categorize_question_rule
 from app.services.response_review_service import evaluate_chat_log
+from app.services.channel_talk_settings import get_channel_talk_url
 from app.services.prompt_service import get_prompt_value
 from app.services.response_formatter import apply_link_tracking, course_link_for, format_chat_response, _strip_meta_disclaimer
 from app.services.website_course_service import is_live_course_fact_query
@@ -132,7 +132,7 @@ _CHANNEL_MARKDOWN_LINK = re.compile(
 )
 
 
-def _sanitize_and_promote(answer: str, current_source: str) -> tuple[str, str]:
+def _sanitize_and_promote(answer: str, current_source: str, channel_talk_url: str | None = None) -> tuple[str, str]:
     """LLM 본문에서 채널톡 URL/마크다운 링크를 제거하고, 채널톡 안내가 있으면 source를 handoff로 승격."""
     cleaned = answer or ""
     detected = False
@@ -141,7 +141,7 @@ def _sanitize_and_promote(answer: str, current_source: str) -> tuple[str, str]:
         cleaned = _CHANNEL_MARKDOWN_LINK.sub(" ", cleaned)
         detected = True
 
-    url = (get_settings().channel_talk_url or "").strip()
+    url = (channel_talk_url or "").strip()
     if url and url in cleaned:
         cleaned = cleaned.replace(url, "")
         detected = True
@@ -156,11 +156,11 @@ def _sanitize_and_promote(answer: str, current_source: str) -> tuple[str, str]:
     return cleaned, new_source
 
 
-def _clean_stream_segment(text: str) -> str:
+def _clean_stream_segment(text: str, channel_talk_url: str | None = None) -> str:
     """스트리밍 중 한 조각(라인)에서 채널톡 마크다운 링크/URL만 제거한다.
     (채널톡 언급 감지에 따른 handoff 승격은 전체 누적 텍스트로 별도 판단)"""
     cleaned = _CHANNEL_MARKDOWN_LINK.sub(" ", text or "")
-    url = (get_settings().channel_talk_url or "").strip()
+    url = (channel_talk_url or "").strip()
     if url and url in cleaned:
         cleaned = cleaned.replace(url, "")
     cleaned = _strip_meta_disclaimer(cleaned)  # 금지된 '자료 확인 한계' 프레이밍 제거(라인 경계에서 처리)
@@ -325,6 +325,7 @@ def is_cancel_request(message: str) -> bool:
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
+    channel_talk_url = get_channel_talk_url(db) or None
     session = get_or_create_session(db, request.session_id, None)
     _sync_session_analytics_scope(
         db,
@@ -345,11 +346,10 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     async def _run_rag(search_query: str | None = None) -> None:
         nonlocal answer, llm_cost, source, retrieval_chunks, processing_status, error_message
         try:
-            channel_talk_url = (get_settings().channel_talk_url or "").strip() or None
             answer, llm_cost, source, retrieval_chunks = await run_rag_graph(
                 request.message, history, channel_talk_url, search_query=search_query
             )
-            answer, source = _sanitize_and_promote(answer, source)
+            answer, source = _sanitize_and_promote(answer, source, channel_talk_url)
             if source == "handoff":
                 # 답변 본문이 '채널톡' 언급으로 승격된 경우(=봇이 권유) — 사용자가 명시 요청한
                 # cancel/handoff(_set_cancel/_set_handoff: "handoff")와 구분해 지표 오염을 막는다.
@@ -463,8 +463,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 
     handoff_url: str | None = None
     if source == "handoff":
-        url = get_settings().channel_talk_url
-        handoff_url = url if url else None
+        handoff_url = channel_talk_url
 
     return ChatResponse(
         answer=answer,
@@ -476,6 +475,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 
 @router.post("/stream")
 async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
+    channel_talk_url = get_channel_talk_url(db) or None
     session = get_or_create_session(db, request.session_id, None)
     _sync_session_analytics_scope(
         db,
@@ -509,7 +509,6 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
         async def _stream_rag(search_query: str | None = None):
             nonlocal full_answer, source, retrieval_chunks, processing_status, error_message
-            channel_talk_url = (get_settings().channel_talk_url or "").strip() or None
             try:
                 # 재설계: 검색 점수가 낮아도 하드 거절하지 않는다. 핵심 사실 시트가 프롬프트에 상주하므로
                 # LLM이 사실+상식 추론으로 답하거나, 모르면 프롬프트 가드대로 솔직히 넘긴다.
@@ -525,11 +524,11 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     pending += delta
                     while "\n" in pending:
                         line, pending = pending.split("\n", 1)
-                        seg = _clean_stream_segment(line) + "\n"
+                        seg = _clean_stream_segment(line, channel_talk_url) + "\n"
                         full_answer += seg
                         yield _sse({"token": seg})
                 if pending:
-                    seg = _clean_stream_segment(pending)
+                    seg = _clean_stream_segment(pending, channel_talk_url)
                     full_answer += seg
                     yield _sse({"token": seg})
 
@@ -650,8 +649,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
         handoff_url: str | None = None
         if source == "handoff":
-            url = get_settings().channel_talk_url
-            handoff_url = url if url else None
+            handoff_url = channel_talk_url
 
         yield _sse({"done": True, "source": source, "handoff_url": handoff_url})
 

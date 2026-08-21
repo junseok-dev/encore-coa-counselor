@@ -6,6 +6,12 @@ export interface ModelSettings {
   indexed_embedding_model: string | null;
 }
 
+export interface ChannelTalkSettings {
+  url: string;
+  source: 'database' | 'environment';
+  environment_fallback_configured: boolean;
+}
+
 export interface EncryptionCategory {
   key: string;
   label: string;

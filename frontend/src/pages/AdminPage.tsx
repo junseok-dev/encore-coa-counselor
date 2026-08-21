@@ -36,6 +36,7 @@ import {
   AdminFaq,
   AdminSession,
   AuditLog,
+  ChannelTalkSettings,
   ChatLog,
   CustomTableDetail,
   DbTableData,
@@ -395,6 +396,12 @@ export default function AdminPage() {
   const [modelSortKey, setModelSortKey] = useState<ModelSortKey>('recommend');
   const [modelSortDir, setModelSortDir] = useState<'asc' | 'desc'>('desc');
 
+  // 상담 연결 설정
+  const [channelTalkSettings, setChannelTalkSettings] = useState<ChannelTalkSettings | null>(null);
+  const [channelTalkUrl, setChannelTalkUrl] = useState('');
+  const [channelTalkLoading, setChannelTalkLoading] = useState(false);
+  const [channelTalkSaving, setChannelTalkSaving] = useState(false);
+
   // 권한 관리
   const [permissionsData, setPermissionsData] = useState<PermissionsData | null>(null);
   const [permissionAccess, setPermissionAccess] = useState<PermissionAccess | null>(null);
@@ -416,7 +423,7 @@ export default function AdminPage() {
   const [encryptionSettings, setEncryptionSettings] = useState<EncryptionSettings | null>(null);
   const [encryptionLoading, setEncryptionLoading] = useState(false);
   const [migrating, setMigrating] = useState<string | null>(null);
-  const [settingsTab, setSettingsTab] = useState<'encryption' | 'models'>('encryption');
+  const [settingsTab, setSettingsTab] = useState<'encryption' | 'models' | 'channel-talk'>('encryption');
 
   // 데이터 관리
   const [selectedTable, setSelectedTable] = useState<CustomTableDetail | null>(null);
@@ -579,6 +586,19 @@ export default function AdminPage() {
     }
   };
 
+  const loadChannelTalkSettings = async () => {
+    setChannelTalkLoading(true);
+    try {
+      const data = await adminApi.getChannelTalkSettings();
+      setChannelTalkSettings(data);
+      setChannelTalkUrl(data.url);
+    } catch {
+      setNotice('상담 연결 설정을 불러오지 못했습니다.');
+    } finally {
+      setChannelTalkLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (authenticated) {
       void loadDashboard();
@@ -642,6 +662,7 @@ export default function AdminPage() {
     if (activeTab === 'settings') {
       if (!modelSettings) void loadModelSettings();
       if (!encryptionSettings) void loadEncryptionSettings();
+      if (!channelTalkSettings) void loadChannelTalkSettings();
     }
   }, [activeTab]);
 
@@ -2913,10 +2934,11 @@ export default function AdminPage() {
 
         {activeTab === 'settings' && (
           <div className="mt-6 space-y-6">
-            <div className="grid gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-2" role="tablist" aria-label="설정 구분">
+            <div className="grid gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-3" role="tablist" aria-label="설정 구분">
               {([
                 ['encryption', '암호화 설정'],
                 ['models', '모델 설정'],
+                ['channel-talk', '상담 연결 설정'],
               ] as const).map(([key, label]) => (
                 <button
                   key={key}
@@ -2926,6 +2948,7 @@ export default function AdminPage() {
                   onClick={() => {
                     setSettingsTab(key);
                     if (key === 'models' && !modelSettings) void loadModelSettings();
+                    if (key === 'channel-talk' && !channelTalkSettings) void loadChannelTalkSettings();
                   }}
                   className={`min-h-12 whitespace-normal break-keep rounded-xl px-4 py-3 text-center text-sm font-semibold leading-5 transition ${settingsTab === key ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
                 >
@@ -3211,6 +3234,102 @@ export default function AdminPage() {
                 </div>
               )}
             </section>
+            )}
+
+            {settingsTab === 'channel-talk' && (
+              <section className="rounded-3xl bg-white p-6 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-semibold text-slate-900">채널톡 상담 연결</h2>
+                    <p className="mt-1 break-keep text-sm leading-6 text-slate-500">
+                      현재 적용 중인 상담 링크를 확인하고, 기존 URL이 만료되거나 폐기된 경우에만 새로 발급받은 URL로 교체합니다.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void loadChannelTalkSettings()}
+                    disabled={channelTalkLoading}
+                    className="min-h-10 shrink-0 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600 disabled:opacity-50"
+                  >
+                    새로고침
+                  </button>
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-cyan-200 bg-cyan-50 p-5">
+                  <div className="text-sm font-semibold text-cyan-900">현재 적용 중인 링크</div>
+                  <div className="mt-2 break-all rounded-xl bg-white px-4 py-3 font-mono text-sm text-slate-700">
+                    {channelTalkSettings?.url || '등록된 상담 연결 링크가 없습니다.'}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!channelTalkSettings?.url}
+                    onClick={() => window.open(channelTalkSettings?.url, '_blank', 'noopener,noreferrer')}
+                    className="mt-3 min-h-10 rounded-xl border border-cyan-300 bg-white px-4 py-2 text-sm font-medium text-cyan-800 disabled:opacity-40"
+                  >
+                    현재 링크 열기
+                  </button>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                  <label htmlFor="channel-talk-url" className="text-sm font-semibold text-slate-800">등록·교체할 상담 링크</label>
+                  <input
+                    id="channel-talk-url"
+                    type="url"
+                    inputMode="url"
+                    autoComplete="off"
+                    placeholder="https://..."
+                    value={channelTalkUrl}
+                    onChange={(event) => setChannelTalkUrl(event.target.value)}
+                    disabled={channelTalkLoading || channelTalkSaving}
+                    className="mt-2 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100 disabled:opacity-60"
+                  />
+                  <p className="mt-2 break-keep text-xs leading-5 text-slate-500">
+                    정상 작동 중인 링크는 변경할 필요가 없습니다. 기존 URL이 만료·폐기되어 연결되지 않을 때 채널톡에서 새 링크를 발급받아 입력해 주세요. 만료 여부는 자동 확인하지 않으며, 빈 값으로 저장하면 상담 연결 버튼이 표시되지 않습니다.
+                  </p>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={channelTalkSaving || channelTalkLoading}
+                      onClick={async () => {
+                        setChannelTalkSaving(true);
+                        try {
+                          const result = await adminApi.setChannelTalkUrl(channelTalkUrl);
+                          setChannelTalkSettings(result);
+                          setChannelTalkUrl(result.url);
+                          setNotice(result.message);
+                        } catch {
+                          setNotice('상담 연결 링크 저장에 실패했습니다. https://로 시작하는 URL인지 확인해 주세요.');
+                        } finally {
+                          setChannelTalkSaving(false);
+                        }
+                      }}
+                      className="min-h-11 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                      {channelTalkSaving ? '저장 중...' : '상담 연결 링크 저장'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!channelTalkUrl.trim()}
+                      onClick={() => window.open(channelTalkUrl.trim(), '_blank', 'noopener,noreferrer')}
+                      className="min-h-11 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-40"
+                    >
+                      연결 테스트
+                    </button>
+                  </div>
+                </div>
+
+                {channelTalkSettings && (
+                  <div className="mt-4 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm leading-6 text-cyan-900">
+                    현재 값은 {channelTalkSettings.source === 'database' ? '관리자 페이지에서 저장한 운영 설정' : 'GitHub Secret으로 배포된 기본 설정'}을 사용하고 있습니다.
+                    {channelTalkSettings.environment_fallback_configured && channelTalkSettings.source === 'database' && ' GitHub Secret 값은 비상용 기본값으로 유지됩니다.'}
+                  </div>
+                )}
+
+                <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-600">
+                  <strong className="text-slate-800">과정 페이지 추적 링크</strong>는 기존 코드가 링크에 추적 파라미터를 자동으로 붙여 동작하므로 이 화면에서 등록하거나 교체하지 않습니다.
+                </div>
+              </section>
             )}
           </div>
         )}

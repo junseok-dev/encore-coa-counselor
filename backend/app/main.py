@@ -15,6 +15,7 @@ from app.db.database import SessionLocal, engine
 from app.db.migrations import migrate_database
 from app.routers import admin, auth, chat
 from app.services.faq_service import seed_faqs
+from app.services.channel_talk_settings import seed_initial_channel_talk_url
 from app.services.prompt_service import seed_prompt_configs
 from app.services.rag_service import get_rag_service
 from app.services.storage_service import ensure_storage_dirs
@@ -46,6 +47,7 @@ async def lifespan(app: FastAPI):
     try:
         seed_faqs(db)
         seed_prompt_configs(db)
+        seed_initial_channel_talk_url(db)
         # 과거 여기서 update_counseling_prompt/update_handoff_prompts로 매 재시작마다 프롬프트를
         # 코드 기본값으로 강제 덮어써 관리자 편집분이 사라지는 버그가 있어 제거함.
         # 기본값은 seed_prompt_configs가 레코드가 없을 때만 시드한다.
