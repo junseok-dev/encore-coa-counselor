@@ -9,6 +9,8 @@ import {
   ChatLog,
   ChatResponse,
   ChannelTalkSettings,
+  LinkTrackingSettings,
+  LinkTrackingItem,
   CostManagementData,
   CustomColumnDef,
   CustomRowData,
@@ -864,6 +866,16 @@ export const adminApi = {
 
   setChannelTalkUrl: async (url: string): Promise<ChannelTalkSettings & { message: string }> => {
     const response = await adminApiClient.put('/admin/settings/channel-talk', { url });
+    return response.data;
+  },
+
+  getLinkTrackingSettings: async (): Promise<LinkTrackingSettings> => {
+    const response = await adminApiClient.get<LinkTrackingSettings>('/admin/settings/link-tracking');
+    return response.data;
+  },
+
+  setLinkTrackingSettings: async (links: LinkTrackingItem[]): Promise<LinkTrackingSettings & { message: string }> => {
+    const response = await adminApiClient.put('/admin/settings/link-tracking', { links });
     return response.data;
   },
 

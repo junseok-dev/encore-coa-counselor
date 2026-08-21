@@ -100,7 +100,7 @@ function auditTargetName(
   faqs: AdminFaq[],
   prompts: PromptConfig[],
 ): string {
-  if ((log.action === 'model_changed' || log.action === 'embedding_model_changed' || log.action === 'channel_talk_url_changed') && log.detail) return log.detail;
+  if ((log.action === 'model_changed' || log.action === 'embedding_model_changed' || log.action === 'channel_talk_url_changed' || log.action === 'link_tracking_changed') && log.detail) return log.detail;
   if (log.target_type === 'document') {
     const document = documents.find((item) => String(item.id) === log.target_id);
     return document ? `${document.original_filename} v${document.version}` : `문서 #${log.target_id ?? '-'}`;
@@ -160,6 +160,7 @@ function auditSentence(action: string, target: string): string {
     model_changed: `답변 모델을 ${target}(으)로 변경했습니다.`,
     embedding_model_changed: `임베딩 모델을 ${target}(으)로 변경했습니다.`,
     channel_talk_url_changed: '상담 연결 링크 설정을 변경했습니다.',
+    link_tracking_changed: '과정 링크 추적 설정을 변경했습니다.',
     security_vault_configured: '보안 정보 보관함을 설정했습니다.',
     security_vault_unlock_failed: '보안 정보 보관함 잠금 해제에 실패했습니다.',
     security_vault_unlocked: '보안 정보 보관함 잠금을 해제했습니다.',
@@ -188,7 +189,7 @@ function auditTargetButtonLabel(log: AuditLog): string | null {
   if (log.target_type === 'custom_table') return '데이터 보기';
   if (log.target_type === 'admin_user') return '권한 보기';
   if (log.target_type === 'security_vault') return '보안 정보 보기';
-  if (log.target_type === 'system' && /model|embedding|channel_talk/.test(log.action)) return '설정 보기';
+  if (log.target_type === 'system' && /model|embedding|channel_talk|link_tracking/.test(log.action)) return '설정 보기';
   return null;
 }
 

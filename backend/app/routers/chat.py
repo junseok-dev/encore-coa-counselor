@@ -29,6 +29,7 @@ from app.services.router_service import route
 from app.services.question_category_service import categorize_question_rule
 from app.services.response_review_service import evaluate_chat_log
 from app.services.channel_talk_settings import get_channel_talk_url
+from app.services.link_tracking_settings import get_link_tracking_urls
 from app.services.prompt_service import get_prompt_value
 from app.services.response_formatter import apply_link_tracking, course_link_for, format_chat_response, _strip_meta_disclaimer
 from app.services.website_course_service import is_live_course_fact_query
@@ -156,7 +157,11 @@ def _sanitize_and_promote(answer: str, current_source: str, channel_talk_url: st
     return cleaned, new_source
 
 
-def _clean_stream_segment(text: str, channel_talk_url: str | None = None) -> str:
+def _clean_stream_segment(
+    text: str,
+    channel_talk_url: str | None = None,
+    tracking_urls: list[dict[str, str]] | None = None,
+) -> str:
     """스트리밍 중 한 조각(라인)에서 채널톡 마크다운 링크/URL만 제거한다.
     (채널톡 언급 감지에 따른 handoff 승격은 전체 누적 텍스트로 별도 판단)"""
     cleaned = _CHANNEL_MARKDOWN_LINK.sub(" ", text or "")
@@ -164,7 +169,7 @@ def _clean_stream_segment(text: str, channel_talk_url: str | None = None) -> str
     if url and url in cleaned:
         cleaned = cleaned.replace(url, "")
     cleaned = _strip_meta_disclaimer(cleaned)  # 금지된 '자료 확인 한계' 프레이밍 제거(라인 경계에서 처리)
-    return apply_link_tracking(cleaned)  # encorecampus.ai 링크에 트래킹 파라미터 자동 부착(설정 시)
+    return apply_link_tracking(cleaned, tracking_urls)  # 과정 링크를 현재 추적 URL로 교체
 
 
 def _faq_answer_for(message: str) -> str | None:
@@ -326,6 +331,7 @@ def is_cancel_request(message: str) -> bool:
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     channel_talk_url = get_channel_talk_url(db) or None
+    tracking_urls = get_link_tracking_urls(db)
     session = get_or_create_session(db, request.session_id, None)
     _sync_session_analytics_scope(
         db,
@@ -431,16 +437,20 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         else:  # "rag" 및 그 외
             await _run_rag(search_query=decision.search_query or None)
 
-    answer = format_chat_response(answer, max_bubbles=10 if source == "faq" else 8)
+    answer = format_chat_response(
+        answer,
+        max_bubbles=10 if source == "faq" else 8,
+        tracking_urls=tracking_urls,
+    )
     # 특정 과정 질문이면 해당 과정 상세페이지 링크를 '포맷 후' 마지막에 덧붙임(말풍선 캡에 잘리지 않게). 차단만 제외.
     if source != "guardrail":
         if _cl := course_link_for(request.message, answer):
-            answer = f"{answer}\n\n{apply_link_tracking(_cl)}"
+            answer = f"{answer}\n\n{apply_link_tracking(_cl, tracking_urls)}"
     if not (answer or "").strip():
         # 빈 말풍선 방지: 어떤 경로도 실제 답변을 만들지 못하면 안전 폴백으로 대체
         if source != "handoff":
             source = "fallback"
-        answer = format_chat_response(EMPTY_FALLBACK_ANSWER, max_bubbles=2)
+        answer = format_chat_response(EMPTY_FALLBACK_ANSWER, max_bubbles=2, tracking_urls=tracking_urls)
     save_message(db, request.session_id, "assistant", answer, source=source)
     chat_log = ChatLog(
         session_id=request.session_id,
@@ -476,6 +486,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 @router.post("/stream")
 async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
     channel_talk_url = get_channel_talk_url(db) or None
+    tracking_urls = get_link_tracking_urls(db)
     session = get_or_create_session(db, request.session_id, None)
     _sync_session_analytics_scope(
         db,
@@ -499,7 +510,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
 
         async def _stream_static(text: str, max_bubbles: int = 8):
             nonlocal full_answer
-            full_answer = format_chat_response(text, max_bubbles=max_bubbles)
+            full_answer = format_chat_response(text, max_bubbles=max_bubbles, tracking_urls=tracking_urls)
             bubbles = full_answer.split("\n\n")
             for bubble_index, bubble in enumerate(bubbles):
                 if bubble_index > 0:
@@ -524,11 +535,11 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
                     pending += delta
                     while "\n" in pending:
                         line, pending = pending.split("\n", 1)
-                        seg = _clean_stream_segment(line, channel_talk_url) + "\n"
+                        seg = _clean_stream_segment(line, channel_talk_url, tracking_urls) + "\n"
                         full_answer += seg
                         yield _sse({"token": seg})
                 if pending:
-                    seg = _clean_stream_segment(pending, channel_talk_url)
+                    seg = _clean_stream_segment(pending, channel_talk_url, tracking_urls)
                     full_answer += seg
                     yield _sse({"token": seg})
 
@@ -635,7 +646,7 @@ async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
         # 특정 과정 질문이면 해당 과정 상세페이지 링크를 마지막에 덧붙임(핸들러 무관, 결정적). 차단/범위밖만 제외.
         if source != "guardrail":
             if _cl := course_link_for(request.message, full_answer):
-                seg = "\n\n" + apply_link_tracking(_cl)
+                seg = "\n\n" + apply_link_tracking(_cl, tracking_urls)
                 full_answer += seg
                 yield _sse({"token": seg})
 

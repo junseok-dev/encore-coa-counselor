@@ -12,6 +12,16 @@ export interface ChannelTalkSettings {
   environment_fallback_configured: boolean;
 }
 
+export interface LinkTrackingItem {
+  label: string;
+  url: string;
+}
+
+export interface LinkTrackingSettings {
+  links: LinkTrackingItem[];
+  source: 'database' | 'default';
+}
+
 export interface EncryptionCategory {
   key: string;
   label: string;

@@ -42,6 +42,8 @@ import {
   DbTableData,
   DbTableMeta,
   EncryptionSettings,
+  LinkTrackingSettings,
+  LinkTrackingItem,
   ModelSettings,
   OperationsDashboardData,
   OperationsAnalyticsData,
@@ -63,6 +65,12 @@ type LogViewKey = 'conversations' | 'system';
 const ADMIN_VIEW_STORAGE_KEY = 'coa-admin-view';
 const CHAT_SESSION_PAGE_SIZE = 20;
 const EMPTY_ANALYTICS_FILTERS: OperationsPeriodFilters = { year: null, month: null, weekStart: null, day: null };
+const DEFAULT_TRACKING_LINKS: LinkTrackingItem[] = [
+  { label: '코스 허브페이지', url: 'https://encorecampus.ai/course?utm_source=chatbot&utm_medium=referral&utm_campaign=course' },
+  { label: '오케스트레이션', url: 'https://encorecampus.ai/orchestration?utm_source=chatbot&utm_medium=referral&utm_campaign=orchestration' },
+  { label: '머신러닝 엔지니어', url: 'https://encorecampus.ai/ml?utm_source=chatbot&utm_medium=referral&utm_campaign=ml' },
+  { label: 'MLOps 엔지니어', url: 'https://encorecampus.ai/mlops?utm_source=chatbot&utm_medium=referral&utm_campaign=mlops' },
+];
 
 function analyticsQuery(filters: OperationsPeriodFilters): { period?: OperationsPeriodMode; anchor?: string } {
   if (filters.day) return { period: 'day', anchor: filters.day };
@@ -169,7 +177,7 @@ const PAGE_META: Record<TabKey, { title: string; description: string }> = {
   data: { title: '데이터 콘솔', description: '시스템 데이터는 안전하게 조회하고 업무 데이터는 직접 구성하고 관리합니다.' },
   db: { title: '데이터 콘솔', description: '시스템 데이터는 안전하게 조회하고 업무 데이터는 직접 구성하고 관리합니다.' },
   security: { title: '보안 정보', description: '운영 접속 계정과 허용된 환경설정을 별도 잠금으로 관리합니다.' },
-  settings: { title: '설정', description: 'AI 모델과 데이터 암호화 정책을 설정합니다.' },
+  settings: { title: '설정', description: 'AI 모델, 데이터 암호화와 운영 링크를 설정합니다.' },
   permissions: { title: '권한 관리', description: '관리자 계정과 최상위 관리자 권한을 관리합니다.' },
 };
 
@@ -401,6 +409,10 @@ export default function AdminPage() {
   const [channelTalkUrl, setChannelTalkUrl] = useState('');
   const [channelTalkLoading, setChannelTalkLoading] = useState(false);
   const [channelTalkSaving, setChannelTalkSaving] = useState(false);
+  const [linkTrackingSettings, setLinkTrackingSettings] = useState<LinkTrackingSettings | null>(null);
+  const [trackingLinks, setTrackingLinks] = useState<LinkTrackingItem[]>(DEFAULT_TRACKING_LINKS.map((item) => ({ ...item })));
+  const [linkTrackingLoading, setLinkTrackingLoading] = useState(false);
+  const [linkTrackingSaving, setLinkTrackingSaving] = useState(false);
 
   // 권한 관리
   const [permissionsData, setPermissionsData] = useState<PermissionsData | null>(null);
@@ -424,6 +436,7 @@ export default function AdminPage() {
   const [encryptionLoading, setEncryptionLoading] = useState(false);
   const [migrating, setMigrating] = useState<string | null>(null);
   const [settingsTab, setSettingsTab] = useState<'encryption' | 'models' | 'channel-talk'>('encryption');
+  const [linkSettingsTab, setLinkSettingsTab] = useState<'channel-talk' | 'tracking'>('channel-talk');
 
   // 데이터 관리
   const [selectedTable, setSelectedTable] = useState<CustomTableDetail | null>(null);
@@ -590,12 +603,36 @@ export default function AdminPage() {
     setChannelTalkLoading(true);
     try {
       const data = await adminApi.getChannelTalkSettings();
+      if (!data || typeof data.url !== 'string' || !['database', 'environment'].includes(data.source)) {
+        throw new Error('Invalid channel talk settings response');
+      }
       setChannelTalkSettings(data);
       setChannelTalkUrl(data.url);
     } catch {
       setNotice('상담 연결 설정을 불러오지 못했습니다.');
     } finally {
       setChannelTalkLoading(false);
+    }
+  };
+
+  const loadLinkTrackingSettings = async () => {
+    setLinkTrackingLoading(true);
+    try {
+      const data = await adminApi.getLinkTrackingSettings();
+      if (
+        !data
+        || !Array.isArray(data.links)
+        || data.links.some((item) => typeof item?.label !== 'string' || typeof item?.url !== 'string')
+        || !['database', 'default'].includes(data.source)
+      ) {
+        throw new Error('Invalid link tracking settings response');
+      }
+      setLinkTrackingSettings(data);
+      setTrackingLinks(data.links.map((item) => ({ ...item })));
+    } catch {
+      setNotice('과정 링크 추적 설정을 불러오지 못했습니다.');
+    } finally {
+      setLinkTrackingLoading(false);
     }
   };
 
@@ -663,6 +700,7 @@ export default function AdminPage() {
       if (!modelSettings) void loadModelSettings();
       if (!encryptionSettings) void loadEncryptionSettings();
       if (!channelTalkSettings) void loadChannelTalkSettings();
+      if (!linkTrackingSettings) void loadLinkTrackingSettings();
     }
   }, [activeTab]);
 
@@ -2938,7 +2976,7 @@ export default function AdminPage() {
               {([
                 ['encryption', '암호화 설정'],
                 ['models', '모델 설정'],
-                ['channel-talk', '상담 연결 설정'],
+                ['channel-talk', '링크 설정'],
               ] as const).map(([key, label]) => (
                 <button
                   key={key}
@@ -2949,6 +2987,7 @@ export default function AdminPage() {
                     setSettingsTab(key);
                     if (key === 'models' && !modelSettings) void loadModelSettings();
                     if (key === 'channel-talk' && !channelTalkSettings) void loadChannelTalkSettings();
+                    if (key === 'channel-talk' && !linkTrackingSettings) void loadLinkTrackingSettings();
                   }}
                   className={`min-h-12 whitespace-normal break-keep rounded-xl px-4 py-3 text-center text-sm font-semibold leading-5 transition ${settingsTab === key ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
                 >
@@ -3238,6 +3277,30 @@ export default function AdminPage() {
 
             {settingsTab === 'channel-talk' && (
               <section className="rounded-3xl bg-white p-6 shadow-sm">
+                <div className="grid gap-2 rounded-2xl bg-slate-100 p-2 sm:grid-cols-2" role="tablist" aria-label="링크 설정 구분">
+                  {([
+                    ['channel-talk', '상담 연결 링크'],
+                    ['tracking', '추적 링크'],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      role="tab"
+                      aria-selected={linkSettingsTab === key}
+                      onClick={() => {
+                        setLinkSettingsTab(key);
+                        if (key === 'channel-talk' && !channelTalkSettings) void loadChannelTalkSettings();
+                        if (key === 'tracking' && !linkTrackingSettings) void loadLinkTrackingSettings();
+                      }}
+                      className={`min-h-11 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${linkSettingsTab === key ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:bg-white/70'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {linkSettingsTab === 'channel-talk' && (
+                <div className="mt-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h2 className="text-lg font-semibold text-slate-900">채널톡 상담 연결</h2>
@@ -3268,6 +3331,10 @@ export default function AdminPage() {
                   >
                     현재 링크 열기
                   </button>
+                </div>
+
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                  <strong>교체 시점:</strong> 현재 링크가 정상 작동하면 변경하지 않습니다. 기존 URL이 만료·폐기되어 상담 화면이 열리지 않을 때만 채널톡에서 새 URL을 발급받아 교체합니다.
                 </div>
 
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5">
@@ -3326,9 +3393,131 @@ export default function AdminPage() {
                   </div>
                 )}
 
-                <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-600">
-                  <strong className="text-slate-800">과정 페이지 추적 링크</strong>는 기존 코드가 링크에 추적 파라미터를 자동으로 붙여 동작하므로 이 화면에서 등록하거나 교체하지 않습니다.
                 </div>
+                )}
+
+                {linkSettingsTab === 'tracking' && (
+                <div className="mt-6">
+
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-semibold text-slate-900">추적 링크 관리</h2>
+                    <p className="mt-1 break-keep text-sm leading-6 text-slate-500">
+                      전달받은 코스 허브·오케스트레이션·머신러닝·MLOps 추적 링크 전체를 확인하고 새 URL로 교체합니다.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void loadLinkTrackingSettings()}
+                    disabled={linkTrackingLoading}
+                    className="min-h-10 shrink-0 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600 disabled:opacity-50"
+                  >
+                    새로고침
+                  </button>
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-violet-200 bg-violet-50 p-5">
+                  <div className="text-sm font-semibold text-violet-900">현재 적용 중인 추적 링크</div>
+                  <p className="mt-1 break-keep text-xs leading-5 text-violet-700">아래 전체 URL 목록이 현재 챗봇 답변에 적용됩니다.</p>
+                  <div className="mt-3 space-y-2">
+                    {(linkTrackingSettings?.links || DEFAULT_TRACKING_LINKS).map((item, index) => (
+                      <div key={`${item.url}-${index}`} className="rounded-xl bg-white px-4 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-xs font-semibold text-slate-600">{item.label}</div>
+                          <button
+                            type="button"
+                            onClick={() => window.open(item.url, '_blank', 'noopener,noreferrer')}
+                            className="text-xs font-medium text-violet-700 underline"
+                          >
+                            열기
+                          </button>
+                        </div>
+                        <div className="mt-1 break-all font-mono text-xs text-slate-700">
+                          {item.url}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                  <div className="text-sm font-semibold text-slate-800">교체할 추적 링크</div>
+                  <p className="mt-1 break-keep text-xs leading-5 text-slate-500">과정명과 전달받은 전체 URL을 수정하거나 과정을 추가·삭제하세요. 저장하기 전까지 현재 운영 링크는 바뀌지 않습니다.</p>
+                  <div className="mt-4 space-y-4">
+                    {trackingLinks.map((item, index) => (
+                      <div key={index} className="rounded-xl border border-slate-200 bg-white p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label htmlFor={`tracking-label-${index}`} className="text-sm font-semibold text-slate-700">과정 이름</label>
+                          <button
+                            type="button"
+                            onClick={() => setTrackingLinks((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                            disabled={linkTrackingSaving}
+                            className="text-xs font-medium text-rose-600 disabled:opacity-40"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                        <input
+                          id={`tracking-label-${index}`}
+                          type="text"
+                          value={item.label}
+                          onChange={(event) => setTrackingLinks((current) => current.map((currentItem, itemIndex) => itemIndex === index ? { ...currentItem, label: event.target.value } : currentItem))}
+                          disabled={linkTrackingLoading || linkTrackingSaving}
+                          placeholder="과정 이름"
+                          className="mt-2 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100 disabled:opacity-60"
+                        />
+                        <label htmlFor={`tracking-url-${index}`} className="mt-3 block text-sm font-semibold text-slate-700">전체 추적 URL</label>
+                        <input
+                          id={`tracking-url-${index}`}
+                          type="url"
+                          inputMode="url"
+                          value={item.url}
+                          onChange={(event) => setTrackingLinks((current) => current.map((currentItem, itemIndex) => itemIndex === index ? { ...currentItem, url: event.target.value } : currentItem))}
+                          disabled={linkTrackingLoading || linkTrackingSaving}
+                          className="mt-2 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 font-mono text-sm text-slate-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100 disabled:opacity-60"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTrackingLinks((current) => [...current, { label: '', url: '' }])}
+                    disabled={linkTrackingSaving || trackingLinks.length >= 100}
+                    className="mt-4 min-h-10 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-40"
+                  >
+                    + 과정 추적 링크 추가
+                  </button>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={linkTrackingSaving || linkTrackingLoading || trackingLinks.some((item) => !item.label.trim() || !item.url.trim())}
+                    onClick={async () => {
+                      setLinkTrackingSaving(true);
+                      try {
+                        const result = await adminApi.setLinkTrackingSettings(trackingLinks);
+                        setLinkTrackingSettings(result);
+                        setTrackingLinks(result.links.map((item) => ({ ...item })));
+                        setNotice(result.message);
+                      } catch {
+                        setNotice('과정 링크 추적 설정 저장에 실패했습니다. 입력값을 확인해 주세요.');
+                      } finally {
+                        setLinkTrackingSaving(false);
+                      }
+                    }}
+                    className="min-h-11 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {linkTrackingSaving ? '저장 중...' : `추적 링크 ${trackingLinks.length}개 저장·적용`}
+                  </button>
+                  {linkTrackingSettings && (
+                    <span className="text-xs text-slate-500">
+                      현재 {linkTrackingSettings.source === 'database' ? '관리자 운영 설정' : '기본 설정'} 사용 중
+                    </span>
+                  )}
+                </div>
+                </div>
+                )}
               </section>
             )}
           </div>

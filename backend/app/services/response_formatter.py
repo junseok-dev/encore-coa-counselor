@@ -1,50 +1,40 @@
 import re
+from urllib.parse import urlsplit, urlunsplit
 
-from app.config import get_settings
+from app.services.link_tracking_settings import get_link_tracking_urls
 
 MAX_BUBBLES = 8
 
 # 답변 내 encorecampus.ai 링크(마크다운/일반 모두) — 트래킹 파라미터 부착 대상
 _TRACK_URL_RE = re.compile(r"https?://[^\s)\]]*encorecampus\.ai[^\s)\]]*")
 
-
-def _campaign_for(url_without_query: str) -> str:
-    """encorecampus.ai 링크의 마지막 경로 세그먼트를 utm_campaign 값으로 사용한다.
-    예: .../course → course, .../orchestration → orchestration, .../ml → ml, .../mlops → mlops.
-    루트(.../) 처럼 경로 세그먼트가 없으면 빈 문자열(캠페인 미부착). 과정 페이지별 유입 구분용."""
-    after_host = url_without_query.split("encorecampus.ai", 1)[-1].strip("/")
-    return after_host.split("/")[-1] if after_host else ""
-
-
-def apply_link_tracking(text: str) -> str:
-    """답변의 encorecampus.ai 링크에 트래킹 파라미터(LINK_TRACKING_PARAMS)를 자동 부착한다.
-    설정이 비어 있으면 원문을 그대로 반환(no-op) — 규칙이 들어오면 설정만 채우면 즉시 적용된다.
-    공통 파라미터(utm_source·utm_medium 등)는 LINK_TRACKING_PARAMS에서 오고, utm_campaign은
-    링크의 마지막 경로 세그먼트(course/orchestration/ml/mlops…)로 자동 결정해 과정별 유입을 구분한다.
-    경로·기존 쿼리·#fragment를 보존하며, 쿼리 유무에 따라 ? 또는 &로 이어붙인다.
-    이미 utm_source가 붙은 링크는 다시 부착하지 않는다(idempotent — 중복 스트리밍/이중 포맷 방어).
-    """
+def apply_link_tracking(text: str, tracking_urls: list[dict[str, str]] | None = None) -> str:
+    """답변의 과정 URL을 관리자 페이지에 저장된 완성형 추적 URL로 교체한다."""
     if not text:
         return text
-    base = (get_settings().link_tracking_params or "").strip().lstrip("?&")
-    if not base:
-        return text
+    active_urls = get_link_tracking_urls() if tracking_urls is None else tracking_urls
+    configured_by_path = {
+        urlsplit(item["url"]).path.rstrip("/"): item["url"]
+        for item in active_urls
+        if item.get("url")
+    }
 
     def _rewrite(match: re.Match) -> str:
-        url = match.group(0)
-        fragment = ""
-        if "#" in url:
-            url, frag = url.split("#", 1)
-            fragment = "#" + frag
-        if "utm_source=" in url:  # 이미 트래킹된 링크 → 중복 부착 방지
-            return f"{url}{fragment}"
-        params = base
-        if "utm_campaign=" not in base:  # 공통 설정에 캠페인이 없으면 경로 기반으로 자동 부여
-            seg = _campaign_for(url.split("?", 1)[0])
-            if seg:
-                params = f"{base}&utm_campaign={seg}"
-        separator = "&" if "?" in url else "?"
-        return f"{url}{separator}{params}{fragment}"
+        original = urlsplit(match.group(0))
+        normalized_path = original.path.rstrip("/")
+        configured_url = configured_by_path.get(normalized_path)
+        if not configured_url:
+            return match.group(0)
+        configured = urlsplit(configured_url)
+        return urlunsplit(
+            (
+                configured.scheme,
+                configured.netloc,
+                configured.path,
+                configured.query,
+                original.fragment or configured.fragment,
+            )
+        )
 
     return _TRACK_URL_RE.sub(_rewrite, text)
 
@@ -153,7 +143,11 @@ def _split_paragraph(paragraph: str) -> list[str]:
     return sentences or ([paragraph.strip()] if paragraph.strip() else [])
 
 
-def format_chat_response(text: str, max_bubbles: int = MAX_BUBBLES) -> str:
+def format_chat_response(
+    text: str,
+    max_bubbles: int = MAX_BUBBLES,
+    tracking_urls: list[dict[str, str]] | None = None,
+) -> str:
     cleaned = _clean_text(text)
     if not cleaned:
         return ""
@@ -171,4 +165,4 @@ def format_chat_response(text: str, max_bubbles: int = MAX_BUBBLES) -> str:
     else:
         bubbles = _split_paragraph(paragraphs[0])[:max_bubbles]
 
-    return apply_link_tracking("\n\n".join(bubbles))
+    return apply_link_tracking("\n\n".join(bubbles), tracking_urls)

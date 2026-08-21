@@ -1,19 +1,31 @@
-import sys
-import types
 import unittest
-from types import SimpleNamespace
 
-
-# response_formatter의 링크 설정 외 기능만 독립적으로 검증한다.
-if "app.config" not in sys.modules:
-    config_stub = types.ModuleType("app.config")
-    config_stub.get_settings = lambda: SimpleNamespace(link_tracking_params="")
-    sys.modules["app.config"] = config_stub
-
-from app.services.response_formatter import format_chat_response
+from app.services.response_formatter import apply_link_tracking, format_chat_response
 
 
 class ResponseFormatterTest(unittest.TestCase):
+    def test_runtime_tracking_params_are_applied_with_path_campaign(self):
+        tracked = apply_link_tracking(
+            "https://encorecampus.ai/ml#apply",
+            [{"label": "머신러닝", "url": "https://encorecampus.ai/ml?utm_source=admin&utm_medium=chat&utm_campaign=ml"}],
+        )
+
+        self.assertEqual(
+            "https://encorecampus.ai/ml?utm_source=admin&utm_medium=chat&utm_campaign=ml#apply",
+            tracked,
+        )
+
+    def test_existing_tracking_values_are_replaced_by_runtime_settings(self):
+        tracked = apply_link_tracking(
+            "https://encorecampus.ai/ml?utm_source=old&utm_medium=old-medium&utm_campaign=ml#apply",
+            [{"label": "머신러닝", "url": "https://encorecampus.ai/ml?utm_source=admin&utm_medium=chat&utm_campaign=ml"}],
+        )
+
+        self.assertEqual(
+            "https://encorecampus.ai/ml?utm_source=admin&utm_medium=chat&utm_campaign=ml#apply",
+            tracked,
+        )
+
     def test_bold_list_items_stay_in_one_bubble(self):
         answer = (
             "다음과 같은 취업 지원을 제공하고 있어요.\n"

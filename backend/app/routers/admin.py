@@ -63,6 +63,11 @@ from app.services.channel_talk_settings import (
     get_channel_talk_url,
     set_channel_talk_url,
 )
+from app.services.link_tracking_settings import (
+    LINK_TRACKING_URLS_KEY,
+    get_link_tracking_urls,
+    set_link_tracking_urls,
+)
 from app.services.admin_ai_service import analyze_improvement_case
 from app.services.prompt_service import (
     PROMPT_DEFAULTS,
@@ -154,6 +159,15 @@ class EmbeddingModelChangeRequest(BaseModel):
 
 class ChannelTalkUrlChangeRequest(BaseModel):
     url: str = Field(default="", max_length=2000)
+
+
+class LinkTrackingItemPayload(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+    url: str = Field(min_length=1, max_length=2000)
+
+
+class LinkTrackingChangeRequest(BaseModel):
+    links: list[LinkTrackingItemPayload] = Field(max_length=100)
 
 
 class OpenAiMonthlyCostPayload(BaseModel):
@@ -4574,6 +4588,41 @@ def change_channel_talk_settings(
         "url": applied_url,
         "source": "database",
         "environment_fallback_configured": bool((get_settings().channel_talk_url or "").strip()),
+    }
+
+
+@router.get("/settings/link-tracking")
+def get_link_tracking_settings(db: Session = Depends(get_db), _: str = Depends(verify_admin)):
+    links = get_link_tracking_urls(db)
+    row = db.get(AppSetting, LINK_TRACKING_URLS_KEY)
+    return {
+        "links": links,
+        "source": "database" if row is not None else "default",
+    }
+
+
+@router.put("/settings/link-tracking")
+def change_link_tracking_settings(
+    body: LinkTrackingChangeRequest,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(verify_admin),
+):
+    try:
+        links = set_link_tracking_urls(db, [item.model_dump() for item in body.links])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    create_audit_log(
+        db,
+        "link_tracking_changed",
+        "system",
+        LINK_TRACKING_URLS_KEY,
+        f"과정별 추적 링크 {len(links)}개 저장",
+        actor=current_user,
+    )
+    return {
+        "message": "과정 링크 추적 설정을 저장했습니다. 다음 답변부터 적용됩니다.",
+        "links": links,
+        "source": "database",
     }
 
 
